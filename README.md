@@ -9,13 +9,15 @@ DragonBreath mirrors OpenVent's ESP-IDF + `components/` layout on purpose, so th
 shared core (WiFi, captive portal, Moonraker client) is lifted in rather than
 re-implemented.
 
-> ⚠️ **Hardware validated on board revisions V1.0.1 and V1.0.** The pin map,
-> sensor conversion, and heater/fan actuation were reverse-engineered on a V1.0.1
-> board and are **confirmed working on a V1.0 board** as well (boot, OTA, heat
-> cycle, and the element-foldback limiter all validated on V1.0). Other Panda
-> Breath revisions are untested — **verify the pinout against your own board
-> before flashing.** This is community firmware with no warranty — read
-> [`docs/SAFETY.md`](docs/SAFETY.md) and supervise early runs.
+> ⚠️ **Hardware validated on board revision V1.0.1 only.** The pin map, sensor
+> conversion, and heater/fan actuation were reverse-engineered and validated on a
+> V1.0.1 board (boot, OTA, heat cycle, and the element-foldback limiter). A V1.0
+> board appears functionally identical (same PSU, SSR, NTCs, and pinout) and is
+> **expected** to work, but that is **not yet confirmed on hardware** — feedback
+> from a V1.0 user is pending. Other Panda Breath revisions are untested —
+> **verify the pinout against your own board before flashing.** This is community
+> firmware with no warranty — read [`docs/SAFETY.md`](docs/SAFETY.md) and
+> supervise early runs.
 
 **Docs:** full feature set → [`docs/FEATURES.md`](docs/FEATURES.md) · control API →
 [`docs/api-v2.md`](docs/api-v2.md) · safety model → [`docs/SAFETY.md`](docs/SAFETY.md) ·
@@ -26,7 +28,7 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 ## Status
 | Component | State |
 |---|---|
-| `pb_board` | ✅ Pinout RE'd (V1.0.1); boots on hardware (V1.0.1 + V1.0 confirmed) |
+| `pb_board` | ✅ Pinout RE'd (V1.0.1); boots on hardware (V1.0.1 confirmed; V1.0 pending) |
 | `pb_ntc` | ✅ Stock conversion ported; **hardware-validated** (reads chamber temp matching the printer) |
 | `pb_heater` | ✅ Bang-bang + full safety cutoffs; SSR confirmed, heat cycle validated on hardware |
 | `pb_fan` | ✅ TRIAC **on/off held-gate** (stock model — the gate is never PWM'd/phase-chopped) |
@@ -70,7 +72,8 @@ auto / light / dark toggle are built in.
 ESP32-C3-MINI-1, mains PSU, PTC heater via SSR (GPIO18), ~220 VAC blower switched
 by a **TRIAC held on/off** (GPIO3 gate + GPIO7 zero-cross — **never** phase-angle
 PWM'd), two NTCs on ADC1. Full map: [`docs/HARDWARE.md`](docs/HARDWARE.md).
-Reverse-engineered from a **V1.0.1** board; also confirmed working on **V1.0**.
+Reverse-engineered and validated on a **V1.0.1** board (**V1.0** looks identical
+but is not yet hardware-confirmed).
 
 ## Safety
 Two independent **hardware** over-temp backstops (a bonded thermal cutoff in the
