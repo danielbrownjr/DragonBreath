@@ -67,6 +67,33 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 #define PB_HEATER_PTC_CUTOFF_C   105.0f   // element over-temp -> force off (stock parity)
 #define PB_HEATER_CHAMBER_MAX_C  85.0f    // chamber over-temp -> force off
 #define PB_HEATER_HYSTERESIS_C   1.0f
+// Soft element-temperature FOLDBACK, a layer strictly BELOW the hard cutoff: once the
+// PTC element climbs into [FOLDBACK_START, CUTOFF) the SSR duty is linearly reduced so
+// the element HOLDS just under the cutoff instead of slamming into the latching trip.
+// This never adds heat and never delays the hard cutoff — if the element still reaches
+// PB_HEATER_PTC_CUTOFF_C (welded SSR, runaway, sensor issue) the latching trip fires
+// exactly as before. It only shapes power below the wall so a marginal/hot install can
+// hold set-point instead of tripping and needing a manual clear.
+#define PB_HEATER_PTC_FOLDBACK_START_C  100.0f
+
+// Pure element-temperature foldback, inline so it is host-testable without hardware.
+// Given the base demand duty `base_duty` (0..1, from the chamber bang-bang) and the
+// current PTC element temperature, returns the duty to apply: unchanged below
+// FOLDBACK_START, then linearly ramped to 0 as ptc_c -> CUTOFF. It can only ever
+// REDUCE base_duty (a cool element never boosts power). The hard cutoff (ptc >= CUTOFF)
+// is enforced separately as a latching trip; this shapes power strictly below it.
+static inline float pb_heater_foldback_duty(float base_duty, float ptc_c)
+{
+    float duty = base_duty;
+    if (ptc_c > PB_HEATER_PTC_FOLDBACK_START_C) {
+        const float span = PB_HEATER_PTC_CUTOFF_C - PB_HEATER_PTC_FOLDBACK_START_C;
+        float f = (PB_HEATER_PTC_CUTOFF_C - ptc_c) / span;   // 1 at start -> 0 at cutoff
+        if (f < 0.0f) f = 0.0f;
+        else if (f > 1.0f) f = 1.0f;
+        if (f < duty) duty = f;                              // only ever reduces
+    }
+    return duty;
+}
 // Settable set-point ceiling: default + absolute cap + floor. Raising the
 // production cap above 70 C is a separate hw-validation item (80 C leaves only
 // 5 C below the fixed 85 C chamber trip — not enough margin without measured

@@ -11,6 +11,6 @@ cc -std=c11 -Wall -Wextra -Werror \
   -I"$root/components/pb_heater/include" \
   -I"$root/tests/stubs" \
   "$root/tests/pb_heater_fault_host_test.c" \
-  -o "$out"
+  -lm -o "$out"
 
 "$out"

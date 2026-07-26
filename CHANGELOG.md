@@ -7,6 +7,19 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Added
+- **Element-temperature foldback limiter.** Instead of driving the heater full-power
+  into the 105 °C PTC-element cutoff and hard-faulting, the SSR duty is now linearly
+  folded back once the element climbs into `[100 °C, 105 °C)`, so it *holds* just under
+  the cutoff and the chamber keeps warming instead of tripping. On a hot/marginal
+  install this replaces the "trip → clear → trip again" loop with a stable (if slower)
+  approach to set-point. Because the SSR is a zero-cross type, the duty is applied by
+  time-proportioning (a first-order sigma-delta) across the 2 Hz control ticks. **Safety
+  is unchanged:** the foldback can only ever *reduce* power, and the hard 105 °C cutoff
+  remains the first, unconditional, latching check — if the element still reaches it
+  (welded SSR, runaway, sensor fault) it latches off exactly as before. The pure
+  foldback curve is covered by host tests.
+
 ## [0.6.2] - 2026-07-26
 
 ### Added
