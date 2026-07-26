@@ -20,6 +20,22 @@ below into the GitHub Release notes.
   (welded SSR, runaway, sensor fault) it latches off exactly as before. The pure
   foldback curve is covered by host tests.
 
+### Fixed
+- **Rref strap misread on a floating GPIO19 (both NTC readings ~15 °C off).** The
+  thermistor divider's reference resistor (82 kΩ vs 33 kΩ) is selected by a strap on
+  GPIO19, read once at boot — previously with both internal pulls disabled. On a board
+  that doesn't firmly drive the pin it **floats** and can latch the wrong value,
+  **differently on a cold power-on vs a warm OTA reboot** — silently choosing the wrong
+  Rref and shifting **both** the chamber and PTC readings by ~15 °C (observed on a V1.0
+  board: 27 °C after a USB flash, 12 °C after an OTA update; a couple of hard resets read
+  27 °C again). The strap is now sampled under an internal pull-up **and** an internal
+  pull-down: a firmly strapped pin reads identically both ways and is trusted, while a
+  floating pin disagrees and falls back to the **fail-safe 33 kΩ** default (a smaller
+  Rref biases readings *warm*, so the fixed 105 °C/85 °C over-temp cutoffs trip early
+  rather than late). The resolved value is exposed at `GET /api/v2/info` as `rref_kohm`
+  for diagnostics. Firmly-strapped boards are unaffected (V1.0.1 bench verified: firm →
+  82 kΩ, reading unchanged).
+
 ## [0.6.2] - 2026-07-26
 
 ### Added

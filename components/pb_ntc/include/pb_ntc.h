@@ -27,6 +27,11 @@ typedef enum {
 // Rref from the board strap. Returns ESP_OK on success.
 esp_err_t pb_ntc_init(void);
 
+// The divider reference resistor (82 or 33 kOhm) resolved from the GPIO19 strap at
+// init. Exposed for diagnostics — confirms which Rref branch a board came up on (a
+// floating strap resolves to the fail-safe default). 0 before pb_ntc_init().
+int pb_ntc_rref_kohm(void);
+
 // Take one calibrated reading of the given channel. Returns the status; on
 // PB_NTC_OK *out_c holds the INSTANTANEOUS temperature in C (NAN on any fault),
 // so safety cutoffs act on the freshest sample. A successful read also feeds the
