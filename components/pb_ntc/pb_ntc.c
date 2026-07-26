@@ -275,6 +275,11 @@ esp_err_t pb_ntc_init(void)
     return ESP_OK;
 }
 
+// The divider reference resistor resolved at init (82 or 33 kOhm). Exposed for
+// diagnostics: a board whose GPIO19 strap floats comes up at the fail-safe default,
+// and seeing this value confirms which branch was selected. 0 before pb_ntc_init().
+int pb_ntc_rref_kohm(void) { return s_rref_kohm; }
+
 // Returns the INSTANTANEOUS temperature in *out_c (NAN on any fault) so the
 // heater over-temp cutoffs act on the freshest sample, not a lagged average.
 // A successful read still feeds the moving-average filter that backs
