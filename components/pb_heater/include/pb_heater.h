@@ -74,7 +74,11 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 // PB_HEATER_PTC_CUTOFF_C (welded SSR, runaway, sensor issue) the latching trip fires
 // exactly as before. It only shapes power below the wall so a marginal/hot install can
 // hold set-point instead of tripping and needing a manual clear.
-#define PB_HEATER_PTC_FOLDBACK_START_C  100.0f
+// Start point bench-tuned to 102 C (3 C bleed-off band): a 100 C start trimmed power
+// noticeably earlier than needed given how fast the element responds to a duty cut,
+// costing chamber-heating performance; 102 keeps full power longer while still leaving
+// a 3 C margin to catch a hard-airflow-block climb before the 105 C trip.
+#define PB_HEATER_PTC_FOLDBACK_START_C  102.0f
 
 // Pure element-temperature foldback, inline so it is host-testable without hardware.
 // Given the base demand duty `base_duty` (0..1, from the chamber bang-bang) and the
