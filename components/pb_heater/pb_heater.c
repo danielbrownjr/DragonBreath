@@ -34,6 +34,12 @@ static bool        s_persist_pending;  // guarded by s_mux — a latch persist n
                                        // to NVS; retried from pb_heater_tick until it lands
 static int64_t     s_persist_retry_us; // guarded by s_mux — last persist-retry timestamp
 static bool        s_on;            // written only by the control task; atomic read
+static bool        s_heat_intent;   // control-task only — chamber-hysteresis latch (the
+                                    // "want heat at all" decision, distinct from the
+                                    // momentary SSR state s_on)
+static bool        s_fb_cut;        // control-task only — element-foldback hysteresis latch:
+                                    // true while the SSR is force-cut for element over-temp
+                                    // (holds until the element cools below the resume point)
 static float       s_max_target_c;      // guarded by s_mux — settable set-point ceiling
 static int64_t     s_comms_timeout_us;  // guarded by s_mux — comms deadman (microseconds)
 static float       s_cool_release_c;    // guarded by s_mux — residual-heat purge "cool down to" temp
@@ -527,13 +533,29 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
 
     if (latched || !armed) {
         if (s_on) ssr_set(false);
+        s_heat_intent = false;   // drop the chamber + foldback latches so the next arm
+        s_fb_cut      = false;   // starts clean rather than mid-cycle
         return;
     }
 
-    // Here: armed && !latched && cs==OK && ps==OK — bang-bang with hysteresis.
-    if (!s_on && chamber_c < (target - PB_HEATER_HYSTERESIS_C)) {
-        ssr_set(true);
-    } else if (s_on && chamber_c >= target) {
-        ssr_set(false);
+    // Here: armed && !latched && cs==OK && ps==OK.
+    // Step 1 — chamber bang-bang with hysteresis decides the BASE demand (do we want
+    // heat at all). s_heat_intent holds across the hysteresis band; it is the steady
+    // "want heat" latch, distinct from the momentary SSR state s_on.
+    if (chamber_c < (target - PB_HEATER_HYSTERESIS_C)) {
+        s_heat_intent = true;
+    } else if (chamber_c >= target) {
+        s_heat_intent = false;
     }
+
+    // Step 2 — element-temperature foldback (hysteresis hard-cut). While the PTC element
+    // is too hot we force the SSR fully OFF and hold it off until the element cools below
+    // the resume point — a real cool-down cycle rather than half-power hovering near the
+    // 105 C hard cutoff. Pure + host-tested; ps==OK is guaranteed here (checked above).
+    s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut);
+
+    // Step 3 — drive the SSR: heat only when the chamber wants it AND the element is not
+    // in foldback cut. (Zero-cross SSR: plain on/off, no phase-cut.)
+    bool drive = s_heat_intent && !s_fb_cut;
+    if (drive != s_on) ssr_set(drive);
 }

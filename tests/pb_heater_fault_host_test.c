@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define CHECK(expr) do { \
     if (!(expr)) { \
@@ -15,6 +16,9 @@
         exit(1); \
     } \
 } while (0)
+
+// Float-equality check for the foldback duty (values are exact-ish ratios of 5).
+#define FEQ(a, b) (fabsf((a) - (b)) < 1e-4f)
 
 int main(void)
 {
@@ -61,5 +65,30 @@ int main(void)
     CHECK(code == PB_FAULT_NVS_UNREADABLE);
 
     puts("pb_heater fault-restore checks: PASS");
+
+    // --- Element-foldback hysteresis (pb_heater_foldback_cut) -------------------
+    // Thresholds derived from the defines so they can be retuned without editing the
+    // test. cut >= CUT_C, resume < RESUME_C, hold in the band, hold on a bad read.
+    const float cut_c = PB_HEATER_PTC_FOLDBACK_CUT_C;
+    const float resume_c = PB_HEATER_PTC_FOLDBACK_RESUME_C;
+    const float band_mid = (cut_c + resume_c) * 0.5f;    // inside the hysteresis band
+    // At/above CUT_C -> cut, regardless of previous state.
+    CHECK(pb_heater_foldback_cut(true, cut_c,        false) == true);
+    CHECK(pb_heater_foldback_cut(true, cut_c + 5.0f, false) == true);
+    CHECK(pb_heater_foldback_cut(true, cut_c,        true)  == true);
+    // Below RESUME_C -> allow (release the cut), regardless of previous state.
+    CHECK(pb_heater_foldback_cut(true, resume_c - 0.1f, true)  == false);
+    CHECK(pb_heater_foldback_cut(true, 25.0f,           true)  == false);
+    CHECK(pb_heater_foldback_cut(true, resume_c - 0.1f, false) == false);
+    // Inside [RESUME_C, CUT_C) -> HOLD the previous state (this is the hysteresis).
+    CHECK(pb_heater_foldback_cut(true, band_mid, true)  == true);    // still cutting
+    CHECK(pb_heater_foldback_cut(true, band_mid, false) == false);   // still allowing
+    CHECK(pb_heater_foldback_cut(true, resume_c, true)  == true);    // resume is exclusive
+    // A bad/unknown PTC read holds the previous state (sensor-fault trip owns bad reads).
+    CHECK(pb_heater_foldback_cut(false, 0.0f, true)  == true);
+    CHECK(pb_heater_foldback_cut(false, 0.0f, false) == false);
+    // Sanity: both thresholds sit below the hard cutoff so a cut always precedes a trip.
+    CHECK(cut_c < PB_HEATER_PTC_CUTOFF_C && resume_c < cut_c);
+    puts("pb_heater element-foldback checks: PASS");
     return 0;
 }

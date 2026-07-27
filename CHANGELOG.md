@@ -7,6 +7,19 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Added
+- **Element-temperature foldback limiter (hysteresis).** Instead of driving the heater
+  full-power into the 105 °C PTC-element cutoff and hard-faulting, the SSR is now cut off
+  when the element reaches **99 °C** and held off until it cools below **96 °C**, so the
+  element repeatedly cools back down instead of pinning against the cutoff — the chamber
+  keeps warming and a hot/marginal install no longer trips into the "clear → trip again"
+  loop. (An earlier proportional-duty ramp proved too gentle on a hot-running board: ~50 %
+  duty at 102–103 °C kept feeding the element so it ratcheted to ~104.8 °C; the hysteresis
+  forces a genuine cool-down cycle instead.) **Safety is unchanged:** the foldback can
+  only ever *remove* power, and the hard 105 °C cutoff remains the first, unconditional,
+  latching check — if the element still reaches it (welded SSR, runaway, sensor fault) it
+  latches off exactly as before. The pure hysteresis decision is covered by host tests.
+
 ### Fixed
 - **Rref strap misread on a floating GPIO19 (both NTC readings ~15 °C off).** The
   thermistor divider's reference resistor (82 kΩ vs 33 kΩ) is selected by a strap on

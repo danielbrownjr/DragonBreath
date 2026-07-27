@@ -67,6 +67,37 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 #define PB_HEATER_PTC_CUTOFF_C   105.0f   // element over-temp -> force off (stock parity)
 #define PB_HEATER_CHAMBER_MAX_C  85.0f    // chamber over-temp -> force off
 #define PB_HEATER_HYSTERESIS_C   1.0f
+// Soft element-temperature FOLDBACK, a layer strictly BELOW the hard cutoff: it holds
+// the PTC element just under the 105 C trip so a marginal/hot install can reach set-point
+// instead of tripping and needing a manual clear. It never adds heat and never delays the
+// hard cutoff — if the element still reaches PB_HEATER_PTC_CUTOFF_C (welded SSR, runaway,
+// sensor issue) the latching trip fires exactly as before.
+//
+// Implemented as a HYSTERESIS hard-cut rather than a proportional duty ramp: a linear
+// ramp (full power at 100 C -> 0 only at 105 C) proved too gentle on a hot-running board
+// — ~50% duty at 102-103 C kept feeding the element so it ratcheted up to ~104.8 C (just
+// shy of the 105 C watchdog) with no real cool-down between the fast on/off ticks. The
+// hysteresis instead forces the SSR FULLY OFF at CUT_C and keeps it off until the element
+// cools below RESUME_C, giving a genuine cool-down cycle and capping the peak with margin.
+// Starting thresholds (to be tuned from field data); both stay below the 105 C cutoff.
+#define PB_HEATER_PTC_FOLDBACK_CUT_C      99.0f   // element >= this -> force SSR off
+#define PB_HEATER_PTC_FOLDBACK_RESUME_C   96.0f   // hold off until element cools below this
+
+// Pure element-foldback hysteresis, inline so it is host-testable without hardware.
+// Returns whether to FORCE the SSR off this tick given the element temperature, whether
+// its reading is valid, and the previous cut-latch state:
+//   ptc >= CUT_C               -> cut  (true)
+//   ptc <  RESUME_C            -> allow (false)
+//   RESUME_C <= ptc < CUT_C    -> hold the previous state (the hysteresis band)
+//   reading not OK             -> hold the previous state (a bad read is owned by the
+//                                 sensor-fault trip / hard cutoff, not by the foldback)
+static inline bool pb_heater_foldback_cut(bool ptc_ok, float ptc_c, bool prev_cut)
+{
+    if (!ptc_ok)                                    return prev_cut;
+    if (ptc_c >= PB_HEATER_PTC_FOLDBACK_CUT_C)      return true;
+    if (ptc_c <  PB_HEATER_PTC_FOLDBACK_RESUME_C)   return false;
+    return prev_cut;
+}
 // Settable set-point ceiling: default + absolute cap + floor. Raising the
 // production cap above 70 C is a separate hw-validation item (80 C leaves only
 // 5 C below the fixed 85 C chamber trip — not enough margin without measured
