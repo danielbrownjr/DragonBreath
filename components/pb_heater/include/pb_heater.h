@@ -77,25 +77,40 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 // ramp (full power at 100 C -> 0 only at 105 C) proved too gentle on a hot-running board
 // — ~50% duty at 102-103 C kept feeding the element so it ratcheted up to ~104.8 C (just
 // shy of the 105 C watchdog) with no real cool-down between the fast on/off ticks. The
-// hysteresis instead forces the SSR FULLY OFF at CUT_C and keeps it off until the element
-// cools below RESUME_C, giving a genuine cool-down cycle and capping the peak with margin.
-// Starting thresholds (to be tuned from field data); both stay below the 105 C cutoff.
-#define PB_HEATER_PTC_FOLDBACK_CUT_C      99.0f   // element >= this -> force SSR off
-#define PB_HEATER_PTC_FOLDBACK_RESUME_C   96.0f   // hold off until element cools below this
+// hysteresis instead forces the SSR FULLY OFF at the cut point and keeps it off until the
+// element cools below the resume point, giving a genuine cool-down cycle and capping the
+// peak with margin. The thresholds are PER BOARD VARIANT (selected by the Rref strap, see
+// pb_ntc_rref_kohm()): the 33 kOhm (V1.0) board runs the element hotter / ratchets, so it
+// gets a lower, more conservative cut; the 82 kOhm (V1.0.1) board tops out cooler and can
+// hold a higher cut without approaching 105. Both stay below the 105 C hard cutoff.
+#define PB_HEATER_PTC_FOLDBACK_CUT_82K_C     102.0f   // 82k board: element >= this -> cut
+#define PB_HEATER_PTC_FOLDBACK_RESUME_82K_C   99.0f   //           hold off until below this
+#define PB_HEATER_PTC_FOLDBACK_CUT_33K_C      99.0f   // 33k board: element >= this -> cut
+#define PB_HEATER_PTC_FOLDBACK_RESUME_33K_C   96.0f   //           hold off until below this
+
+// Resolve the foldback cut/resume thresholds for a board's Rref (kOhm). The 33 kOhm
+// variant (incl. a floating strap defaulted to 33k) gets the conservative pair; anything
+// else uses the 82 kOhm pair (the higher, more permissive default).
+static inline void pb_heater_foldback_thresholds(int rref_kohm, float *cut_c, float *resume_c)
+{
+    if (rref_kohm == 33) { *cut_c = PB_HEATER_PTC_FOLDBACK_CUT_33K_C; *resume_c = PB_HEATER_PTC_FOLDBACK_RESUME_33K_C; }
+    else                 { *cut_c = PB_HEATER_PTC_FOLDBACK_CUT_82K_C; *resume_c = PB_HEATER_PTC_FOLDBACK_RESUME_82K_C; }
+}
 
 // Pure element-foldback hysteresis, inline so it is host-testable without hardware.
 // Returns whether to FORCE the SSR off this tick given the element temperature, whether
-// its reading is valid, and the previous cut-latch state:
-//   ptc >= CUT_C               -> cut  (true)
-//   ptc <  RESUME_C            -> allow (false)
-//   RESUME_C <= ptc < CUT_C    -> hold the previous state (the hysteresis band)
+// its reading is valid, the previous cut-latch state, and the board's cut/resume points:
+//   ptc >= cut_c               -> cut  (true)
+//   ptc <  resume_c            -> allow (false)
+//   resume_c <= ptc < cut_c    -> hold the previous state (the hysteresis band)
 //   reading not OK             -> hold the previous state (a bad read is owned by the
 //                                 sensor-fault trip / hard cutoff, not by the foldback)
-static inline bool pb_heater_foldback_cut(bool ptc_ok, float ptc_c, bool prev_cut)
+static inline bool pb_heater_foldback_cut(bool ptc_ok, float ptc_c, bool prev_cut,
+                                          float cut_c, float resume_c)
 {
-    if (!ptc_ok)                                    return prev_cut;
-    if (ptc_c >= PB_HEATER_PTC_FOLDBACK_CUT_C)      return true;
-    if (ptc_c <  PB_HEATER_PTC_FOLDBACK_RESUME_C)   return false;
+    if (!ptc_ok)            return prev_cut;
+    if (ptc_c >= cut_c)     return true;
+    if (ptc_c <  resume_c)  return false;
     return prev_cut;
 }
 // Settable set-point ceiling: default + absolute cap + floor. Raising the

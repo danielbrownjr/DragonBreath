@@ -10,10 +10,12 @@ below into the GitHub Release notes.
 ### Added
 - **Element-temperature foldback limiter (hysteresis).** Instead of driving the heater
   full-power into the 105 °C PTC-element cutoff and hard-faulting, the SSR is now cut off
-  when the element reaches **99 °C** and held off until it cools below **96 °C**, so the
-  element repeatedly cools back down instead of pinning against the cutoff — the chamber
-  keeps warming and a hot/marginal install no longer trips into the "clear → trip again"
-  loop. (An earlier proportional-duty ramp proved too gentle on a hot-running board: ~50 %
+  when the element reaches a per-board **cut** point and held off until it cools below the
+  **resume** point, so the element repeatedly cools back down instead of pinning against
+  the cutoff — the chamber keeps warming and a hot/marginal install no longer trips into
+  the "clear → trip again" loop. Thresholds are selected by the board's Rref strap:
+  **82 kΩ (V1.0.1) cut 102 / resume 99**; **33 kΩ (V1.0, runs the element hotter) cut 99
+  / resume 96** (a floating strap defaults to the conservative 33 kΩ pair). (An earlier proportional-duty ramp proved too gentle on a hot-running board: ~50 %
   duty at 102–103 °C kept feeding the element so it ratcheted to ~104.8 °C; the hysteresis
   forces a genuine cool-down cycle instead.) **Safety is unchanged:** the foldback can
   only ever *remove* power, and the hard 105 °C cutoff remains the first, unconditional,

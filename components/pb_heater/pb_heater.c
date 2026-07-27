@@ -551,8 +551,11 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     // Step 2 — element-temperature foldback (hysteresis hard-cut). While the PTC element
     // is too hot we force the SSR fully OFF and hold it off until the element cools below
     // the resume point — a real cool-down cycle rather than half-power hovering near the
-    // 105 C hard cutoff. Pure + host-tested; ps==OK is guaranteed here (checked above).
-    s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut);
+    // 105 C hard cutoff. Thresholds are per board Rref variant (33k boards run hotter, so
+    // they get a lower cut). Pure + host-tested; ps==OK is guaranteed here (checked above).
+    float fb_cut, fb_resume;
+    pb_heater_foldback_thresholds(pb_ntc_rref_kohm(), &fb_cut, &fb_resume);
+    s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut, fb_cut, fb_resume);
 
     // Step 3 — drive the SSR: heat only when the chamber wants it AND the element is not
     // in foldback cut. (Zero-cross SSR: plain on/off, no phase-cut.)
