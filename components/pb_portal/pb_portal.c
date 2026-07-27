@@ -196,19 +196,36 @@ static const char FW_BODY[] =
     // Stream the chosen .bin to /update with the auth header; device validates,
     // reports the SHA-256 it computed over the received image, and reboots. A
     // dropped connection on .catch is the expected reboot path.
+    // XHR (not fetch) so upload.onprogress can show a live %; the device writes bytes to
+    // flash as it receives them, so upload progress tracks flashing. On success we poll
+    // the rebooting device and return to the main screen automatically (waitBack).
     "function doUpdate(){var f=document.getElementById('fw').files[0];"
     "var m=document.getElementById('fwmsg');"
     "if(!f){m.innerHTML='<small>Choose a .bin file first.</small>';return;}"
-    "m.innerHTML='<small>Uploading &amp; flashing\\u2026 do not power off.</small>';"
-    "fetch('/update',{method:'POST',headers:hdr(),body:f})"
-    ".then(function(r){return r.json().then(function(j){return {s:r.status,j:j};})"
-    ".catch(function(){return {s:r.status,j:{}};});})"
-    ".then(function(x){if(x.j&&x.j.ok){m.innerHTML='<h3>Flashed \\u2713</h3>"
-    "<small>SHA-256 of uploaded image:<br><code>'+(x.j.sha256||'?')+'</code><br>"
-    "Rebooting into the new firmware\\u2026</small>';}"
-    "else{m.innerHTML='<small>Update failed: '+((x.j&&x.j.error)||('HTTP '+x.s))+'</small>';}})"
-    ".catch(function(){m.innerHTML='<small>Connection lost \\u2014 if it was flashing, "
-    "the device is rebooting into the new firmware.</small>';});}"
+    "document.getElementById('fwbtn').disabled=true;"
+    "m.innerHTML='<small>Uploading &amp; flashing\\u2026 0%<br>do not power off.</small>';"
+    "var up=false;var x=new XMLHttpRequest();x.open('POST','/update');"
+    "x.setRequestHeader('X-DragonBreath-Auth',tok());"
+    "x.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded/e.total*100);"
+    "m.innerHTML='<small>Uploading &amp; flashing\\u2026 '+p+'%<br>do not power off.</small>';}};"
+    "x.upload.onload=function(){up=true;m.innerHTML='<small>Verifying image\\u2026 do not power off.</small>';};"
+    "x.onload=function(){var j={};try{j=JSON.parse(x.responseText);}catch(e){}"
+    "if(j&&j.ok){m.innerHTML='<h3>Flashed \\u2713</h3><small>SHA-256 of uploaded image:<br>"
+    "<code>'+(j.sha256||'?')+'</code><br>Rebooting into the new firmware\\u2026 reconnecting.</small>';waitBack();}"
+    "else{document.getElementById('fwbtn').disabled=false;"
+    "m.innerHTML='<small>Update failed: '+((j&&j.error)||('HTTP '+x.status))+'</small>';}};"
+    // A dropped connection AFTER the upload finished is the expected reboot; before it,
+    // it's a genuine upload failure.
+    "x.onerror=function(){if(up){m.innerHTML='<h3>Flashed \\u2713</h3><small>Connection lost \\u2014 the "
+    "device is rebooting into the new firmware\\u2026 reconnecting.</small>';waitBack();}"
+    "else{document.getElementById('fwbtn').disabled=false;"
+    "m.innerHTML='<small>Update failed: connection lost during upload \\u2014 try again.</small>';}};"
+    "x.send(f);}"
+    // Poll the rebooting device until it answers on the new firmware, then go to the main
+    // screen automatically. ~2 min fallback if we can't confirm (redirect anyway).
+    "function waitBack(){var n=0;var iv=setInterval(function(){n++;"
+    "fetch('/api/v2/info',{cache:'no-store'}).then(function(r){if(r.ok){clearInterval(iv);location.href='/';}})"
+    ".catch(function(){});if(n>60){clearInterval(iv);location.href='/';}},2000);}"
     // Update check (Flow A): only on OFFICIAL builds (clean vX.Y.Z), ask GitHub for
     // the latest release; if newer, show a download link + expected SHA-256. The
     // browser can't read release-asset bytes (no CORS), so the user downloads then

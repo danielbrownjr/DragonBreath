@@ -7,6 +7,16 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Changed
+- **OTA update page shows upload progress and returns to the dashboard automatically.**
+  The firmware-update page (`/fw`) now streams the image via `XMLHttpRequest` and shows a
+  live **percent complete** while uploading/flashing (the device writes bytes as it
+  receives them, so the upload % tracks the flash), then — once the image is accepted —
+  **polls the rebooting device and redirects to the main screen** when it comes back on
+  the new firmware (with a ~2-minute fallback). A connection drop after the upload
+  finishes is treated as the expected reboot; a drop mid-upload is reported as a failure
+  so it can be retried.
+
 ## [0.6.2] - 2026-07-26
 
 ### Added
