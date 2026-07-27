@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define CHECK(expr) do { \
     if (!(expr)) { \
@@ -15,6 +16,9 @@
         exit(1); \
     } \
 } while (0)
+
+// Float-equality check for the foldback duty (values are exact-ish ratios of 5).
+#define FEQ(a, b) (fabsf((a) - (b)) < 1e-4f)
 
 int main(void)
 {
@@ -61,5 +65,34 @@ int main(void)
     CHECK(code == PB_FAULT_NVS_UNREADABLE);
 
     puts("pb_heater fault-restore checks: PASS");
+
+    // --- Element-foldback hysteresis (pb_heater_foldback_cut) -------------------
+    // Per-Rref thresholds: 33k board gets the conservative pair, anything else the 82k
+    // pair. Resolve both via the helper and exercise the hysteresis on each.
+    float cut82, res82, cut33, res33;
+    pb_heater_foldback_thresholds(82, &cut82, &res82);
+    pb_heater_foldback_thresholds(33, &cut33, &res33);
+    CHECK(cut82 == PB_HEATER_PTC_FOLDBACK_CUT_82K_C && res82 == PB_HEATER_PTC_FOLDBACK_RESUME_82K_C);
+    CHECK(cut33 == PB_HEATER_PTC_FOLDBACK_CUT_33K_C && res33 == PB_HEATER_PTC_FOLDBACK_RESUME_33K_C);
+    CHECK(cut33 < cut82);                                   // 33k board cuts earlier
+    // Unknown/other Rref (incl. 0) falls back to the 82k pair.
+    float cutx, resx; pb_heater_foldback_thresholds(0, &cutx, &resx);
+    CHECK(cutx == cut82 && resx == res82);
+    // Hysteresis behavior against each board's own thresholds.
+    for (int b = 0; b < 2; b++) {
+        float cut_c    = b ? cut33 : cut82;
+        float resume_c = b ? res33 : res82;
+        float band_mid = (cut_c + resume_c) * 0.5f;
+        CHECK(pb_heater_foldback_cut(true, cut_c,        false, cut_c, resume_c) == true);   // at cut -> cut
+        CHECK(pb_heater_foldback_cut(true, cut_c + 5.0f, false, cut_c, resume_c) == true);
+        CHECK(pb_heater_foldback_cut(true, resume_c-0.1f, true, cut_c, resume_c) == false);  // below resume -> allow
+        CHECK(pb_heater_foldback_cut(true, band_mid,      true,  cut_c, resume_c) == true);  // band holds prev
+        CHECK(pb_heater_foldback_cut(true, band_mid,      false, cut_c, resume_c) == false);
+        CHECK(pb_heater_foldback_cut(false, 0.0f,         true,  cut_c, resume_c) == true);  // bad read holds prev
+        CHECK(pb_heater_foldback_cut(false, 0.0f,         false, cut_c, resume_c) == false);
+        // Every board's cut/resume stays below the hard cutoff.
+        CHECK(cut_c < PB_HEATER_PTC_CUTOFF_C && resume_c < cut_c);
+    }
+    puts("pb_heater element-foldback checks: PASS");
     return 0;
 }

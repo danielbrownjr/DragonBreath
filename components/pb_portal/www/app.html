@@ -178,11 +178,26 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   transition: width .3s ease; }
 .target{ color: var(--muted-foreground); font-size: 12px; }
 
-.temp-chart{ position: absolute; inset: 28px 7px 7px; width: calc(100% - 14px);
-  height: calc(100% - 35px); color: var(--viz-series-1); opacity: .28; pointer-events: none; }
+.temp-head{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.legend{ display: flex; gap: 10px; font-size: 10px; color: var(--muted-foreground);
+  text-transform: uppercase; letter-spacing: .02em; }
+.legend .lg{ display: inline-flex; align-items: center; gap: 4px; }
+.legend .lg::before{ content: ''; width: 10px; height: 2px; border-radius: 1px; background: currentColor; }
+.legend .lg-ch::before{ background: var(--viz-series-1); }
+.legend .lg-ptc::before{ background: var(--viz-series-3); }
+.temp-card{ display: flex; flex-direction: column; }
+.chart-wrap{ display: flex; align-items: stretch; gap: 5px; flex: 1; min-height: 96px; margin-top: 8px; }
+.y-axis{ display: flex; flex-direction: column; justify-content: space-between; padding: 1px 0;
+  min-width: 26px; text-align: right; font-size: 10px; color: var(--muted-foreground); }
+.x-axis{ display: flex; justify-content: space-between; margin: 3px 0 0 31px;
+  font-size: 10px; color: var(--muted-foreground); }
+.temp-chart{ flex: 1; min-width: 0; height: 100%; pointer-events: none; }
 .temp-chart .gridline{ stroke: var(--border); stroke-width: 1; }
-.temp-chart .area{ fill: color-mix(in srgb, var(--viz-series-1) 18%, transparent); stroke: none; }
-.temp-chart .line{ fill: none; stroke: currentColor; stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+.temp-chart .area{ fill: color-mix(in srgb, var(--viz-series-1) 14%, transparent); stroke: none; }
+.temp-chart .area-ptc{ fill: color-mix(in srgb, var(--viz-series-3) 12%, transparent); stroke: none; }
+.temp-chart .line{ fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.temp-chart .line-ch{ stroke: var(--viz-series-1); }
+.temp-chart .line-ptc{ stroke: var(--viz-series-3); }
 
 .status-card{ display: flex; flex-direction: column; gap: 8px; }
 .state{ display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 17px; font-weight: 700; }
@@ -382,17 +397,26 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 
       <!-- Dashboard (home). Live-bound to /api/v2/state + /api/v2/events. -->
       <div class="grid">
-        <section class="card">
-          <h3>Chamber temperature</h3>
-          <svg class="temp-chart" viewBox="0 0 320 120" preserveAspectRatio="none" role="img" aria-label="Chamber temperature trend">
-            <path class="gridline" d="M0 30H320M0 70H320M0 110H320"/>
-            <path class="area" id="db-area" d=""/>
-            <path class="line" id="db-trend" d=""/>
-          </svg>
+        <section class="card temp-card">
+          <div class="temp-head">
+            <h3>Chamber temperature</h3>
+            <div class="legend"><span class="lg lg-ch">Chamber</span><span class="lg lg-ptc">PTC</span></div>
+          </div>
           <div class="temperature">
             <div class="chamber-reading"><strong id="db-temp">--</strong><span>°C</span></div>
             <div class="ptc-reading"><span>PTC</span><strong id="db-ptc">--</strong></div>
           </div>
+          <div class="chart-wrap">
+            <div class="y-axis"><span id="db-ymax">--</span><span id="db-ymin">--</span></div>
+            <svg class="temp-chart" viewBox="0 0 320 120" preserveAspectRatio="none" role="img" aria-label="Chamber and PTC element temperature trend">
+              <path class="gridline" d="M0 30H320M0 70H320M0 110H320"/>
+              <path class="area area-ptc" id="db-area-ptc" d=""/>
+              <path class="area" id="db-area" d=""/>
+              <path class="line line-ch" id="db-trend" d=""/>
+              <path class="line line-ptc" id="db-trend-ptc" d=""/>
+            </svg>
+          </div>
+          <div class="x-axis"><span id="db-xspan">—</span><span>now</span></div>
           <div class="bar"><span id="db-progress"></span></div>
           <div class="target">Target <strong id="db-target">--</strong></div>
         </section>
@@ -736,21 +760,44 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 
   /* ---- Temperature trend: client-side ring buffer of chamber samples from the
      2 s telemetry (cap 120 ~ 4 min), rendered into the SVG area chart. ---- */
-  var buf = [];
-  function pushTemp(t){ if(t==null || !isFinite(t)) return; buf.push(t); if(buf.length>120) buf.shift(); drawTrend(); }
-  function drawTrend(){
-    var W=320,H=120, line=$('db-trend'), area=$('db-area');
-    if(buf.length<2){ line.setAttribute('d',''); area.setAttribute('d',''); return; }
-    var min=Math.min.apply(null,buf), max=Math.max.apply(null,buf);
-    if(max-min<1) max=min+1;
-    var pad=(max-min)*0.15; min-=pad; max+=pad;
-    var n=buf.length, d='';
-    for(var i=0;i<n;i++){
-      var x=(i/(n-1))*W, y=H-((buf[i]-min)/(max-min))*H;
-      d += (i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1);
+  var buf = [], bufP = [];   // chamber + PTC-element parallel ring buffers (2 s samples)
+  function pushTemp(ch, pt){
+    buf.push((ch==null||!isFinite(ch))?null:ch);
+    bufP.push((pt==null||!isFinite(pt))?null:pt);
+    if(buf.length>120){ buf.shift(); bufP.shift(); }
+    drawTrend();
+  }
+  /* Build an SVG path for one series against a shared [min,max] scale; a null value
+     breaks the line (starts a fresh sub-path) so gaps don't draw through zero. */
+  function seriesPath(arr,min,max,W,H){
+    var d='', pen=false, span=Math.max(1,arr.length-1);
+    for(var i=0;i<arr.length;i++){
+      if(arr[i]==null){ pen=false; continue; }
+      var x=(i/span)*W, y=H-((arr[i]-min)/(max-min))*H;
+      d += (pen?'L':'M')+x.toFixed(1)+' '+y.toFixed(1); pen=true;
     }
-    line.setAttribute('d', d);
-    area.setAttribute('d', d+'L'+W+' '+H+'L0 '+H+'Z');
+    return d;
+  }
+  function drawTrend(){
+    var W=320,H=120;
+    var line=$('db-trend'), lineP=$('db-trend-ptc'), area=$('db-area'), areaP=$('db-area-ptc');
+    var all=buf.concat(bufP).filter(function(v){return v!=null;});
+    if(all.length<2){ line.setAttribute('d',''); lineP.setAttribute('d',''); area.setAttribute('d','');
+      areaP.setAttribute('d',''); u('db-ymax','--'); u('db-ymin','--'); return; }
+    var min=Math.min.apply(null,all), max=Math.max.apply(null,all);
+    if(max-min<1) max=min+1;
+    var pad=(max-min)*0.12; min-=pad; max+=pad;
+    var dch=seriesPath(buf,min,max,W,H), dpt=seriesPath(bufP,min,max,W,H);
+    line.setAttribute('d', dch);
+    lineP.setAttribute('d', dpt);
+    /* faint fill under the chamber line (single contiguous run only, to avoid
+       artefacts when there are gaps). */
+    area.setAttribute('d', (dch && dch.indexOf('M',1)<0) ? (dch+'L'+W+' '+H+'L0 '+H+'Z') : '');
+    areaP.setAttribute('d', (dpt && dpt.indexOf('M',1)<0) ? (dpt+'L'+W+' '+H+'L0 '+H+'Z') : '');
+    u('db-ymax', Math.round(max)+'°');
+    u('db-ymin', Math.round(min)+'°');
+    var mins=Math.round(buf.length*2/60);
+    u('db-xspan', mins>=1 ? ('−'+mins+' min') : ('−'+(buf.length*2)+' s'));
   }
 
   /* ---- Map a snapshot to a display state (drives the status light + labels). ---- */
@@ -843,7 +890,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
       pct = Math.max(0, Math.min(100, (c.temperature_c/s.target.effective_c)*100));
     $('db-progress').style.width = pct.toFixed(0)+'%';
 
-    pushTemp(c.status==='ok' ? c.temperature_c : null);
+    pushTemp(c.status==='ok' ? c.temperature_c : null, p.status==='ok' ? p.temperature_c : null);
 
     /* Stop enabled only while a mode is running. */
     $('db-stop').disabled = s.mode==='off';

@@ -7,6 +7,53 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-07-27
+
+### Added
+- **Element-temperature foldback limiter (hysteresis).** Instead of driving the heater
+  full-power into the 105 °C PTC-element cutoff and hard-faulting, the SSR is now cut off
+  when the element reaches a per-board **cut** point and held off until it cools below the
+  **resume** point, so the element repeatedly cools back down instead of pinning against
+  the cutoff — the chamber keeps warming and a hot/marginal install no longer trips into
+  the "clear → trip again" loop. Thresholds are selected by the board's Rref strap:
+  **82 kΩ (V1.0.1) cut 102 / resume 99**; **33 kΩ (V1.0, runs the element hotter) cut 99
+  / resume 96** (a floating strap defaults to the conservative 33 kΩ pair). (An earlier proportional-duty ramp proved too gentle on a hot-running board: ~50 %
+  duty at 102–103 °C kept feeding the element so it ratcheted to ~104.8 °C; the hysteresis
+  forces a genuine cool-down cycle instead.) **Safety is unchanged:** the foldback can
+  only ever *remove* power, and the hard 105 °C cutoff remains the first, unconditional,
+  latching check — if the element still reaches it (welded SSR, runaway, sensor fault) it
+  latches off exactly as before. The pure hysteresis decision is covered by host tests.
+
+### Changed
+- **OTA update page shows upload progress and returns to the dashboard automatically.**
+  The firmware-update page (`/fw`) now streams the image via `XMLHttpRequest` and shows a
+  live **percent complete** while uploading/flashing (the device writes bytes as it
+  receives them, so the upload % tracks the flash), then — once the image is accepted —
+  **polls the rebooting device and redirects to the main screen** when it comes back on
+  the new firmware (with a ~2-minute fallback). A connection drop after the upload
+  finishes is treated as the expected reboot; a drop mid-upload is reported as a failure
+  so it can be retried.
+- **Dashboard temperature chart overlays chamber + PTC element with labeled axes.** The
+  trend now draws **both** the chamber and the PTC-element temperature on one shared,
+  auto-scaled graph with a **Y axis** (°C max/min) and an **X axis** (time span back from
+  "now"), plus a legend. All from the existing SSE telemetry; no API change.
+
+### Fixed
+- **Rref strap misread on a floating GPIO19 (both NTC readings ~15 °C off).** The
+  thermistor divider's reference resistor (82 kΩ vs 33 kΩ) is selected by a strap on
+  GPIO19, read once at boot — previously with both internal pulls disabled. On a board
+  that doesn't firmly drive the pin it **floats** and can latch the wrong value,
+  **differently on a cold power-on vs a warm OTA reboot** — silently choosing the wrong
+  Rref and shifting **both** the chamber and PTC readings by ~15 °C (observed on a V1.0
+  board: 27 °C after a USB flash, 12 °C after an OTA update; a couple of hard resets read
+  27 °C again). The strap is now sampled under an internal pull-up **and** an internal
+  pull-down: a firmly strapped pin reads identically both ways and is trusted, while a
+  floating pin disagrees and falls back to the **fail-safe 33 kΩ** default (a smaller
+  Rref biases readings *warm*, so the fixed 105 °C/85 °C over-temp cutoffs trip early
+  rather than late). The resolved value is exposed at `GET /api/v2/info` as `rref_kohm`
+  for diagnostics. Firmly-strapped boards are unaffected (V1.0.1 bench verified: firm →
+  82 kΩ, reading unchanged).
+
 ## [0.6.2] - 2026-07-26
 
 ### Added
