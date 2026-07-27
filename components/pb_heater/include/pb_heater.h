@@ -80,8 +80,8 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 // hysteresis instead forces the SSR FULLY OFF at CUT_C and keeps it off until the element
 // cools below RESUME_C, giving a genuine cool-down cycle and capping the peak with margin.
 // Starting thresholds (to be tuned from field data); both stay below the 105 C cutoff.
-#define PB_HEATER_PTC_FOLDBACK_CUT_C     102.0f   // element >= this -> force SSR off
-#define PB_HEATER_PTC_FOLDBACK_RESUME_C   99.0f   // hold off until element cools below this
+#define PB_HEATER_PTC_FOLDBACK_CUT_C      99.0f   // element >= this -> force SSR off
+#define PB_HEATER_PTC_FOLDBACK_RESUME_C   96.0f   // hold off until element cools below this
 
 // Pure element-foldback hysteresis, inline so it is host-testable without hardware.
 // Returns whether to FORCE the SSR off this tick given the element temperature, whether
