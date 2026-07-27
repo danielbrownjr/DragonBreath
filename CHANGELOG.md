@@ -7,6 +7,15 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Dashboard temperature chart overlays chamber + PTC element with labeled axes.** The
+  trend plotted only the chamber temperature (a faint sparkline behind the reading). It
+  now draws **both** the chamber and the PTC-element temperature on one shared, auto-scaled
+  graph with a **Y axis** (°C max/min) and an **X axis** (time span back from "now"), plus
+  a small legend — so you can see the element rising relative to the chamber set-point at a
+  glance (useful for watching the foldback hold the element under the cutoff). All from the
+  existing SSE telemetry; no API or firmware-behavior change.
+
 ## [0.6.2] - 2026-07-26
 
 ### Added
