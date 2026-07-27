@@ -20,6 +20,20 @@ below into the GitHub Release notes.
   latching check — if the element still reaches it (welded SSR, runaway, sensor fault) it
   latches off exactly as before. The pure hysteresis decision is covered by host tests.
 
+### Changed
+- **OTA update page shows upload progress and returns to the dashboard automatically.**
+  The firmware-update page (`/fw`) now streams the image via `XMLHttpRequest` and shows a
+  live **percent complete** while uploading/flashing (the device writes bytes as it
+  receives them, so the upload % tracks the flash), then — once the image is accepted —
+  **polls the rebooting device and redirects to the main screen** when it comes back on
+  the new firmware (with a ~2-minute fallback). A connection drop after the upload
+  finishes is treated as the expected reboot; a drop mid-upload is reported as a failure
+  so it can be retried.
+- **Dashboard temperature chart overlays chamber + PTC element with labeled axes.** The
+  trend now draws **both** the chamber and the PTC-element temperature on one shared,
+  auto-scaled graph with a **Y axis** (°C max/min) and an **X axis** (time span back from
+  "now"), plus a legend. All from the existing SSE telemetry; no API change.
+
 ### Fixed
 - **Rref strap misread on a floating GPIO19 (both NTC readings ~15 °C off).** The
   thermistor divider's reference resistor (82 kΩ vs 33 kΩ) is selected by a strap on
