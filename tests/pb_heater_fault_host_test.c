@@ -66,31 +66,29 @@ int main(void)
 
     puts("pb_heater fault-restore checks: PASS");
 
-    // --- Element-temperature foldback limiter (pb_heater_foldback_duty) ---------
-    // Expectations are DERIVED from the two defines so the single-source-of-truth
-    // #define PB_HEATER_PTC_FOLDBACK_START_C can be retuned without editing the test.
-    const float start = PB_HEATER_PTC_FOLDBACK_START_C;
-    const float cutoff = PB_HEATER_PTC_CUTOFF_C;
-    const float span = cutoff - start;
-    const float mid = start + span * 0.5f;   // duty 0.5
-    const float qtr = start + span * 0.25f;  // duty 0.75
-    // Below the foldback band the base demand passes through untouched.
-    CHECK(FEQ(pb_heater_foldback_duty(1.0f, 25.0f), 1.0f));
-    CHECK(FEQ(pb_heater_foldback_duty(1.0f, start - 1.0f), 1.0f));   // just below band -> full
-    CHECK(FEQ(pb_heater_foldback_duty(1.0f, start), 1.0f));          // at start -> full
-    // Inside the band the duty ramps linearly to 0 across the span.
-    CHECK(FEQ(pb_heater_foldback_duty(1.0f, qtr), 0.75f));
-    CHECK(FEQ(pb_heater_foldback_duty(1.0f, mid), 0.5f));
-    // At/above the cutoff the foldback duty is 0 (the hard latching trip owns >= cutoff).
-    CHECK(FEQ(pb_heater_foldback_duty(1.0f, cutoff), 0.0f));
-    CHECK(FEQ(pb_heater_foldback_duty(1.0f, cutoff + 5.0f), 0.0f));
-    // It only ever REDUCES: a base demand of 0 (chamber satisfied) stays 0 even when
-    // the element is cool, and the cap never exceeds the base demand.
-    CHECK(FEQ(pb_heater_foldback_duty(0.0f, 25.0f), 0.0f));
-    CHECK(FEQ(pb_heater_foldback_duty(0.0f, mid), 0.0f));
-    // A base demand already below the foldback cap is left as-is (min, not overwrite):
-    // at the band midpoint the cap is 0.5, so a base of 0.3 stays 0.3.
-    CHECK(FEQ(pb_heater_foldback_duty(0.3f, mid), 0.3f));
+    // --- Element-foldback hysteresis (pb_heater_foldback_cut) -------------------
+    // Thresholds derived from the defines so they can be retuned without editing the
+    // test. cut >= CUT_C, resume < RESUME_C, hold in the band, hold on a bad read.
+    const float cut_c = PB_HEATER_PTC_FOLDBACK_CUT_C;
+    const float resume_c = PB_HEATER_PTC_FOLDBACK_RESUME_C;
+    const float band_mid = (cut_c + resume_c) * 0.5f;    // inside the hysteresis band
+    // At/above CUT_C -> cut, regardless of previous state.
+    CHECK(pb_heater_foldback_cut(true, cut_c,        false) == true);
+    CHECK(pb_heater_foldback_cut(true, cut_c + 5.0f, false) == true);
+    CHECK(pb_heater_foldback_cut(true, cut_c,        true)  == true);
+    // Below RESUME_C -> allow (release the cut), regardless of previous state.
+    CHECK(pb_heater_foldback_cut(true, resume_c - 0.1f, true)  == false);
+    CHECK(pb_heater_foldback_cut(true, 25.0f,           true)  == false);
+    CHECK(pb_heater_foldback_cut(true, resume_c - 0.1f, false) == false);
+    // Inside [RESUME_C, CUT_C) -> HOLD the previous state (this is the hysteresis).
+    CHECK(pb_heater_foldback_cut(true, band_mid, true)  == true);    // still cutting
+    CHECK(pb_heater_foldback_cut(true, band_mid, false) == false);   // still allowing
+    CHECK(pb_heater_foldback_cut(true, resume_c, true)  == true);    // resume is exclusive
+    // A bad/unknown PTC read holds the previous state (sensor-fault trip owns bad reads).
+    CHECK(pb_heater_foldback_cut(false, 0.0f, true)  == true);
+    CHECK(pb_heater_foldback_cut(false, 0.0f, false) == false);
+    // Sanity: both thresholds sit below the hard cutoff so a cut always precedes a trip.
+    CHECK(cut_c < PB_HEATER_PTC_CUTOFF_C && resume_c < cut_c);
     puts("pb_heater element-foldback checks: PASS");
     return 0;
 }

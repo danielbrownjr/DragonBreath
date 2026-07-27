@@ -8,17 +8,17 @@ below into the GitHub Release notes.
 ## [Unreleased]
 
 ### Added
-- **Element-temperature foldback limiter.** Instead of driving the heater full-power
-  into the 105 °C PTC-element cutoff and hard-faulting, the SSR duty is now linearly
-  folded back once the element climbs into `[100 °C, 105 °C)`, so it *holds* just under
-  the cutoff and the chamber keeps warming instead of tripping. On a hot/marginal
-  install this replaces the "trip → clear → trip again" loop with a stable (if slower)
-  approach to set-point. Because the SSR is a zero-cross type, the duty is applied by
-  time-proportioning (a first-order sigma-delta) across the 2 Hz control ticks. **Safety
-  is unchanged:** the foldback can only ever *reduce* power, and the hard 105 °C cutoff
-  remains the first, unconditional, latching check — if the element still reaches it
-  (welded SSR, runaway, sensor fault) it latches off exactly as before. The pure
-  foldback curve is covered by host tests.
+- **Element-temperature foldback limiter (hysteresis).** Instead of driving the heater
+  full-power into the 105 °C PTC-element cutoff and hard-faulting, the SSR is now cut off
+  when the element reaches **102 °C** and held off until it cools below **99 °C**, so the
+  element repeatedly cools back down instead of pinning against the cutoff — the chamber
+  keeps warming and a hot/marginal install no longer trips into the "clear → trip again"
+  loop. (An earlier proportional-duty ramp proved too gentle on a hot-running board: ~50 %
+  duty at 102–103 °C kept feeding the element so it ratcheted to ~104.8 °C; the hysteresis
+  forces a genuine cool-down cycle instead.) **Safety is unchanged:** the foldback can
+  only ever *remove* power, and the hard 105 °C cutoff remains the first, unconditional,
+  latching check — if the element still reaches it (welded SSR, runaway, sensor fault) it
+  latches off exactly as before. The pure hysteresis decision is covered by host tests.
 
 ## [0.6.2] - 2026-07-26
 
