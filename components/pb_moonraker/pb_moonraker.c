@@ -150,8 +150,14 @@ static void recompute_printer_state(void)
 // Copy a JSON string field into `dst` (uppercase) if present.
 static void copy_upper(char *dst, size_t dst_sz, const char *src)
 {
+    // Guard the empty buffer: dst_sz-1 is unsigned, so a 0 size would wrap to
+    // SIZE_MAX and defeat the bound. No caller passes 0 today; this makes it safe
+    // regardless (and there is no room to write even a NUL).
+    if (dst_sz == 0) return;
     size_t i = 0;
-    while (src[i] && i < dst_sz - 1) {
+    // Bounds check first so the destination index is proven in range before the
+    // source byte is read (behaviour-identical: src is NUL-terminated).
+    while (i < dst_sz - 1 && src[i]) {
         dst[i] = (char)toupper((unsigned char)src[i]);
         ++i;
     }
@@ -415,8 +421,11 @@ static esp_err_t start_client(void)
         return ESP_OK;
     }
     char uri[128];
+    // The uint16_t port and the int DEFAULT_PORT promote to int in the ?: result;
+    // cast to unsigned to match the %u conversion (value is always a positive port,
+    // so the printed text is identical — this only fixes the type mismatch).
     snprintf(uri, sizeof(uri), "ws://%s:%u/websocket",
-             s_cfg.host, s_cfg.port ? s_cfg.port : DEFAULT_PORT);
+             s_cfg.host, (unsigned)(s_cfg.port ? s_cfg.port : DEFAULT_PORT));
 
     esp_websocket_client_config_t wc = {
         .uri                  = uri,

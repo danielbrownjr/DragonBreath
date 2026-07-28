@@ -7,6 +7,41 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-28
+
+### Added
+- **Phase E hardening — CI static-analysis gate + broader host/simulation fault
+  coverage.** No firmware runtime behavior change; this is tests, CI, and small
+  behavior-preserving refactors only.
+  - **cppcheck static analysis** runs on every PR over `components/` + `main/`,
+    failing the build on any error/warning/performance/portability finding. The one
+    unmodellable false positive (a GNU `asm()` label on an extern binary-blob symbol
+    in `pb_portal`) is suppressed inline with justification; the genuine finding it
+    surfaced — a `%u`/`int` format-type mismatch in the Moonraker WebSocket URI — was
+    fixed with a value-identical cast.
+  - **Warnings-as-errors for our own code.** `-Wall -Wextra -Werror` is applied
+    PRIVATE to every first-party `pb_*` component (never to ESP-IDF's own
+    components), enforced by the default, HIL, and release builds.
+  - **Two new host tests** wired into CI as required steps:
+    `pb_heater_safety_host_test` covers the heater safety-trip priority ladder
+    (PTC/chamber over-temp, fail-closed on a non-OK sensor while armed, comms-loss
+    watchdog); `pb_ntc_status_host_test` covers the NTC open/short/rail fail-status
+    mapping. The existing `pb_buttons` host test is now also run in CI.
+  - **Two safety decisions factored into pure, unit-tested inlines** (behavior
+    identical, single authoritative definition): `pb_heater_eval_trip()` — the exact
+    ladder `pb_heater_tick()` runs — and `pb_ntc_classify()` — the exact
+    open/short/rail classifier `pb_ntc_read()` runs.
+
+### Fixed
+- **HIL dev-board builds were silently broken.** Both dev-board HIL profiles
+  failed to link (`undefined reference to pb_ntc_rref_kohm`) because that getter
+  lived only in the real-ADC branch of `pb_ntc.c`, but CI still reported success —
+  the HIL build step chained `idf.py` commands without `set -e`, so a failed link
+  was masked by the subsequent compile-out check. The HIL NTC backend now provides
+  a `pb_ntc_rref_kohm()` (nominal 82 kΩ; the HIL profile has no Rref strap), and the
+  HIL build step runs with `set -e` so a build failure fails CI. Pre-existing since
+  the Rref-strap work; surfaced by the PR #42 review.
+
 ## [0.6.5] - 2026-07-28
 
 ### Added
