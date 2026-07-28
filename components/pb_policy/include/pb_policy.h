@@ -46,6 +46,7 @@ typedef enum {
     PB_POLICY_INHIBITED,
     PB_POLICY_STALE_LEASE,
     PB_POLICY_PERSIST_FAILED,   // action succeeded in RAM path but NVS persist failed -> HTTP 500
+    PB_POLICY_BUSY,             // rejected: heater is heating / cooling down (e.g. manual fan is idle-only)
 } pb_policy_result_t;
 
 typedef struct {
@@ -64,6 +65,8 @@ typedef struct {
     float auto_bed_threshold_c;   // last accepted AUTO bed threshold
     float dry_target_c;           // last accepted drying target
     uint8_t dry_hours;            // last accepted drying duration
+    float filter_temp_c;          // AUTO fan-only band: blower runs alone at bed>=this
+    bool filter_auto_enable;      // enable the AUTO fan-only (filtration) band
 } pb_policy_params_t;
 
 typedef struct {
@@ -88,6 +91,7 @@ typedef struct {
     bool moonraker_connected;
     float bed_c;
     bool auto_engaged;
+    bool auto_filtering;          // AUTO fan-only band active (blower on, no heat)
     float auto_bed_threshold_c;
     pb_policy_params_t params;
 
@@ -146,6 +150,26 @@ pb_policy_result_t pb_policy_start_drying(
 // from making the device safer.
 void pb_policy_set_mode_off(pb_source_t source);
 void pb_policy_stop_drying(pb_source_t source);
+
+// Manual filtration blower: run the blower fan-only (0 = off, 1..100 = on; the
+// hardware fan is on/off, so any non-zero runs it). Heater is untouched.
+// Independent of mode — not cleared by OFF, additive over any heat airflow — and
+// safe (no heat path), so it is accepted regardless of revision. Cleared on reboot.
+// ENABLE is idle-only: turning it ON (percent > 0) returns PB_POLICY_BUSY while the
+// heater is heating or the cooldown purge is running, so a manual toggle can't
+// disturb the heat cycle. Turning it OFF (percent == 0) is always allowed, so
+// "Stop" can clear a lingering filtration request mid-cycle.
+pb_policy_result_t pb_policy_set_fan(uint8_t percent, pb_source_t source);
+
+// AUTO fan-only filtration band (persisted): when enabled, AUTO runs the blower
+// alone once the printer bed reaches filter_temp_c, before the heater engages at
+// the (higher) auto bed threshold — mirroring the stock Panda's filtration band.
+// Fan-only, so it never adds heat. Persists across reboot (a config setting).
+#define PB_POLICY_FILTER_TEMP_MIN_C  20.0f
+#define PB_POLICY_FILTER_TEMP_MAX_C  60.0f
+pb_policy_result_t pb_policy_set_filter_config(float filter_temp_c, bool enable);
+float pb_policy_get_filter_temp_c(void);
+bool  pb_policy_get_filter_auto_enable(void);
 
 // Update printer environment used by AUTO.  This is observer input, not a
 // control command, and therefore never creates or refreshes a control lease.

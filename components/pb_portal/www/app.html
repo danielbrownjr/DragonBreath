@@ -80,6 +80,9 @@ body{
 .btn:not(.btn-primary).is-selected{
   border-color: var(--primary); color: var(--primary-foreground); background: var(--primary);
 }
+/* The active (pressed) choice is disabled — there's no reason to re-select it. Keep
+   it looking selected (solid blue, normal cursor) rather than faded "unavailable". */
+.btn:not(.btn-primary)[aria-pressed="true"]:disabled{ opacity: 1; cursor: default; }
 .form-range{
   appearance: none; display: block; width: 100%; height: 28px; flex: 1;
   margin: 0; padding: 0; border: 0; accent-color: var(--primary);
@@ -204,7 +207,9 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 .state-light{ width: 11px; height: 11px; flex: none; border-radius: 50%; background: var(--muted-foreground); }
 .app[data-state="heating"] .state-light,
 .app[data-state="drying"] .state-light{ background: var(--viz-series-1); }
-.app[data-state="waiting"] .state-light{ background: var(--viz-series-3); }
+.app[data-state="waiting"] .state-light,
+.app[data-state="filtering"] .state-light,
+.app[data-state="cooldown"] .state-light{ background: var(--viz-series-3); }
 .app[data-state="fault"] .state-light{ background: var(--destructive); }
 .summary{ min-height: 18px; color: var(--muted-foreground); font-size: 12px; }
 .status-detail{ margin: 4px 0; min-height: 0; flex: 1 1 auto; overflow: auto;
@@ -360,6 +365,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   <symbol id="i-flame" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M21 21v-5h-5"/></symbol>
   <symbol id="i-wind" viewBox="0 0 24 24"><path d="M12.8 19.6A2 2 0 1 0 14 16H2"/><path d="M17.5 8A2.5 2.5 0 1 1 19.5 12H2"/><path d="M9.8 4.4A2 2 0 1 1 11 8H2"/></symbol>
+  <symbol id="i-fan" viewBox="0 0 24 24"><path d="M10.827 16.379a6.082 6.082 0 0 1-8.618-7.002l5.412 1.45a6.082 6.082 0 0 1 7.002-8.618l-1.45 5.412a6.082 6.082 0 0 1 8.618 7.002l-5.412-1.45a6.082 6.082 0 0 1-7.002 8.618l1.45-5.412Z"/><path d="M12 12v.01"/></symbol>
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></symbol>
   <symbol id="i-thermometer" viewBox="0 0 24 24"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/></symbol>
   <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
@@ -453,6 +459,11 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
             <button class="btn" type="button" data-quick-temp="50"><svg class="icon"><use href="#i-thermometer"/></svg> 50 °C</button>
             <button class="btn" type="button" data-quick-temp="60"><svg class="icon"><use href="#i-thermometer"/></svg> 60 °C</button>
             <button class="btn" type="button" data-quick-temp="70"><svg class="icon"><use href="#i-thermometer"/></svg> 70 °C</button>
+          </div>
+          <!-- Manual filtration blower: fan-only, out-of-band (works in any mode,
+               heater untouched). Mirrors the Klipper fan_generic control. -->
+          <div class="quick-actions">
+            <button class="btn" type="button" id="db-filter" aria-pressed="false"><svg class="icon"><use href="#i-fan"/></svg> <span id="db-filter-label">Filtration</span></button>
           </div>
         </section>
       </div>
@@ -641,6 +652,26 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
           <p class="set-note">The soft over-temp foldback holds the heater element just below this by cutting power, so it can't ratchet into the fixed 105&nbsp;°C cutoff. <strong id="s-fb-default">Board default is auto</strong> — lower it if your element runs hot/slow, raise it (up to 104) for more chamber temperature. The fixed 105&nbsp;°C hardware cutoff is unaffected. Turn <strong>Auto</strong> off to set a manual value, or back on to use the board default.</p>
           <button class="btn btn-primary btn-block" type="button" id="s-fb-save"><svg class="icon"><use href="#i-thermometer"/></svg> <span>Save foldback</span></button>
           <div class="mode-feedback" id="s-fb-msg" role="status" aria-live="polite"></div>
+        </div>
+
+        <!-- Auto-mode fan-only filtration band (GET/POST /settings?filter_temp=&filter_auto=). -->
+        <div class="set-card">
+          <h3>Filtration (auto mode)</h3>
+          <div class="ctl-group">
+            <div class="ctl-head">
+              <span class="form-label">Filter at bed temperature</span>
+              <button class="btn btn-sm" type="button" id="s-filt-en" aria-pressed="true"><span>On</span></button>
+            </div>
+            <div class="touch-adjust">
+              <button class="btn step-btn" type="button" data-sstep="filt,-1" aria-label="Decrease filtration bed temperature"><svg class="icon"><use href="#i-minus"/></svg></button>
+              <output class="touch-value" id="s-filt-value">30 <span>°C</span></output>
+              <button class="btn step-btn" type="button" data-sstep="filt,1" aria-label="Increase filtration bed temperature"><svg class="icon"><use href="#i-plus"/></svg></button>
+            </div>
+            <input class="form-range" id="s-filt-range" type="range" min="20" max="60" step="1" value="30" aria-label="Filtration bed temperature">
+          </div>
+          <p class="set-note">In <strong>Auto</strong> mode, the blower runs on its own once the printer bed reaches this temperature — filtering/circulating chamber air before the heater engages at the (higher) auto bed threshold. Fan-only: it never adds heat. Turn <strong>Off</strong> to disable the band. For on-demand filtration in any mode, use the <strong>Filtration</strong> button on the dashboard (or the <code>dragonbreath_filter</code> fan in Fluidd).</p>
+          <button class="btn btn-primary btn-block" type="button" id="s-filt-save"><svg class="icon"><use href="#i-fan"/></svg> <span>Save filtration</span></button>
+          <div class="mode-feedback" id="s-filt-msg" role="status" aria-live="polite"></div>
         </div>
 
         <!-- Sensor calibration (GET/POST /api/v2/calibration). Per-channel offset,
@@ -834,8 +865,14 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   function displayState(s){
     if(s.safety.fault_latched || s.safety.inhibited) return 'fault';
     if(s.mode==='drying') return 'drying';
-    if(s.mode==='auto' && !s.environment.auto_engaged) return 'waiting';
     if(s.heater.output || s.heater.demand) return 'heating';
+    // Fan-only cases (no heat): cooldown purge, then filtration (manual or the
+    // AUTO band). Checked before AUTO 'waiting' so an active filter band isn't
+    // reported as merely waiting.
+    var f=s.fan||{};
+    if(f.reason==='thermal_purge') return 'cooldown';
+    if((f.effective_percent||0) > 0) return 'filtering';
+    if(s.mode==='auto' && !s.environment.auto_engaged) return 'waiting';
     return 'off';
   }
   function statusLabel(st, s){
@@ -843,6 +880,8 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     if(st==='drying') return 'Dry cycle';
     if(st==='waiting') return 'Waiting';
     if(st==='heating') return 'Heating';
+    if(st==='cooldown') return 'Cooling down';
+    if(st==='filtering') return 'Filtering';
     return 'Idle';
   }
   function modeLabel(m){
@@ -853,6 +892,8 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     if(st==='drying'){ var m=Math.round((s.drying.remaining_seconds||0)/60); return 'Filament drying — '+m+' min left. Safety chain healthy.'; }
     if(st==='waiting') return 'Armed. Waiting for the printer bed threshold.';
     if(st==='heating') return s.heater.output ? 'Output active. Safety chain healthy.' : 'Heater demand — waiting on the safety chain.';
+    if(st==='cooldown') return 'Residual-heat purge — fan clearing heat, heater off.';
+    if(st==='filtering') return 'Fan-only filtration — heater off, monitoring active.';
     return 'Heater disabled. Monitoring remains active.';
   }
 
@@ -871,7 +912,8 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   }
   function fanLabel(s){
     var f=s.fan||{}, why=({heater:'heating', thermal_purge:'cooldown purge',
-                           requested:'manual', fault:'safety airflow'})[f.reason];
+                           requested:'manual', auto_filter:'auto filtration',
+                           fault:'safety airflow'})[f.reason];
     if(f.reason==='off' || (!why && !f.effective_percent)) return 'Off';
     return 'On — '+(why||f.reason)+(f.effective_percent? ' ('+f.effective_percent+'%)':'');
   }
@@ -893,6 +935,16 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     u('db-target', s.target.effective_c>0 ? Math.round(s.target.effective_c)+' °C' : 'Off');
     u('db-mode', modeLabel(s.mode));
 
+    /* Light up the quick preset matching the active manual target, the same way the
+       Filtration button shows its state (.btn[aria-pressed="true"]). */
+    var activeTemp = (s.mode==='power_on')
+      ? Math.round(s.target.effective_c || s.target.requested_c || 0) : null;
+    document.querySelectorAll('[data-quick-temp]').forEach(function(b){
+      var active = Number(b.dataset.quickTemp) === activeTemp;
+      b.setAttribute('aria-pressed', String(active));
+      b.disabled = active;   // already at this target — no reason to re-click it
+    });
+
     var st = displayState(s);
     app.setAttribute('data-state', st);
     u('db-status', statusLabel(st, s));
@@ -901,10 +953,29 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     /* At-a-glance detail rows — all from the SSE snapshot. */
     u('db-fan', fanLabel(s));
     u('db-controller', controllerLabel(s));
+    /* Manual filtration blower toggle reflects requested (not effective) fan.
+       Idle-only: locked (dimmed) while heating or cooling down, since the blower is
+       owned by the safety-airflow logic then — the firmware rejects changes too. */
+    var filtOn = !!(s.fan && s.fan.requested_percent>0);
+    var filtLocked = (st==='heating' || st==='cooldown');
+    var fbtn=$('db-filter');
+    if(fbtn){
+      // On-only + lit when active (like the presets); dimmed while heating/cooling
+      // since enabling is blocked then (Stop is the only off).
+      fbtn.setAttribute('aria-pressed', filtOn?'true':'false');
+      // On-only: once active (blue) there's nothing to re-click — Stop turns it off.
+      // Also locked (dimmed) while heating/cooling, when enabling is blocked.
+      fbtn.disabled = filtOn || filtLocked;
+      fbtn.title = filtLocked ? 'Filtration is locked while heating or cooling down — use Stop'
+                 : filtOn ? 'Filtration on — use Stop to turn it off' : '';
+    }
+    u('db-filter-label', 'Filtration');
     var autoRow = s.mode==='auto';
     $('db-auto-row').hidden = !autoRow;
-    if(autoRow) u('db-auto', (s.environment.auto_engaged?'engaged':'waiting')
-      +' @ bed ≥'+Math.round(s.environment.auto_bed_threshold_c)+' °C');
+    if(autoRow) u('db-auto', s.environment.auto_engaged
+      ? 'heating @ bed ≥'+Math.round(s.environment.auto_bed_threshold_c)+' °C'
+      : s.environment.auto_filtering ? 'filtering (fan only)'
+      : 'waiting @ bed ≥'+Math.round(s.environment.auto_bed_threshold_c)+' °C');
     var dryRow = s.drying.active;
     $('db-drying-row').hidden = !dryRow;
     if(dryRow) u('db-drying', fmtDur(s.drying.remaining_seconds)+' left');
@@ -923,7 +994,9 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     pushTemp(c.status==='ok' ? c.temperature_c : null, p.status==='ok' ? p.temperature_c : null);
 
     /* Stop enabled only while a mode is running. */
-    $('db-stop').disabled = s.mode==='off';
+    // Stop is available whenever a mode is running OR manual filtration is on
+    // (filtration keeps mode 'off', but Stop must still be able to stop it).
+    $('db-stop').disabled = (s.mode==='off') && !filtOn;
     /* Clear-fault affordance appears only while a fault is latched. */
     $('db-clear').hidden = !s.safety.fault_latched;
 
@@ -961,7 +1034,13 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     lease=null;
     command('power_on', {target_c:t}).then(function(r){ lease=r.lease_id||null; }).catch(function(){ lease=null; });
   }
-  function setOff(){ lease=null; command('off', {}).catch(function(){}); }
+  function setOff(){
+    lease=null;
+    command('off', {}).catch(function(){});
+    // Stop = stop all: also clear any manual filtration (turning OFF is always
+    // allowed, even mid-cycle) so it can't linger or "come back" after heating.
+    command('filter', {percent:0}).catch(function(){});
+  }
 
   /* Heartbeat only the exact POWER_ON lease this tab created (never a passive one). */
   function heartbeat(){
@@ -1009,6 +1088,14 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
      status area is Stop-only). */
   $('db-stop').addEventListener('click', setOff);
   $('db-clear').addEventListener('click', function(){ command('clear_fault', {}).catch(function(){}); });
+
+  /* Manual filtration blower — ON-ONLY, like the temperature presets: a click
+     turns it on, and Stop is the single control that turns it (and everything)
+     off. Fan-only, out-of-band (heater untouched). Optimistic UI; the next state
+     snapshot is authoritative. */
+  if($('db-filter')) $('db-filter').addEventListener('click', function(){
+    command('filter', {percent:100}).catch(function(){});
+  });
 
   /* ===== U2: Manual / Automatic / Dry control screens =========================
      Client edit-state for the touch steppers/sliders. Each field re-syncs from the
@@ -1149,7 +1236,8 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     max:   { val:70,  min:30, max:70,  vId:'s-max-value',   rId:'s-max-range',   hId:'s-max-hint',   unit:'°C' },
     comms: { val:300, min:10, max:300, vId:'s-comms-value', rId:'s-comms-range', hId:'s-comms-hint', unit:'s'  },
     cool:  { val:40,  min:30, max:65,  vId:'s-cool-value',  rId:'s-cool-range',  hId:'s-cool-hint',  unit:'°C' },
-    fb:    { val:99,  min:90, max:104, vId:'s-fb-value',    rId:'s-fb-range',    hId:'s-fb-hint',    unit:'°C' }
+    fb:    { val:99,  min:90, max:104, vId:'s-fb-value',    rId:'s-fb-range',    hId:'s-fb-hint',    unit:'°C' },
+    filt:  { val:30,  min:20, max:60,  vId:'s-filt-value',  rId:'s-filt-range',  hId:'s-filt-hint',  unit:'°C' }
   };
   var fbDefault = 99;   // board's per-Rref foldback-cut default (from /settings); slider at this = auto
   function renderSset(k){
@@ -1187,13 +1275,18 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
       var fbManual = isFinite(s.fb_cut) && s.fb_cut>0;
       setSset('fb', fbManual ? s.fb_cut : fbDefault);
       setFbAuto(!fbManual);
+      // Auto-mode filtration band.
+      if(isFinite(s.filter_temp_min)) sset.filt.min = Math.round(s.filter_temp_min);
+      if(isFinite(s.filter_temp_max)) sset.filt.max = Math.round(s.filter_temp_max);
+      if(isFinite(s.filter_temp)) setSset('filt', s.filter_temp);
+      if(typeof s.filter_auto==='boolean') setFiltEn(s.filter_auto);
       if(typeof s.leds_enabled==='boolean') setLedToggle(s.leds_enabled);
     }).catch(function(){});
   }
   document.querySelectorAll('[data-sstep]').forEach(function(b){
     b.addEventListener('click', function(){ var p=b.dataset.sstep.split(','); setSset(p[0], sset[p[0]].val+Number(p[1])); });
   });
-  [['max','s-max-range'],['comms','s-comms-range'],['cool','s-cool-range'],['fb','s-fb-range']].forEach(function(p){
+  [['max','s-max-range'],['comms','s-comms-range'],['cool','s-cool-range'],['fb','s-fb-range'],['filt','s-filt-range']].forEach(function(p){
     var r=$(p[1]); if(r) r.addEventListener('input', function(){ setSset(p[0], Number(r.value)); });
   });
   /* Foldback Auto toggle: Auto disables the slider/steppers and uses the board default
@@ -1244,6 +1337,29 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
         flash('s-fb-msg', post ? ('Saved — cut at '+post+' °C.') : 'Saved — auto (board default).', 'is-ok');
       })
       .catch(function(j){ flash('s-fb-msg', 'Save failed: '+((j&&(j.message||j.error))||'error'), 'is-error'); });
+  });
+  /* Auto-mode filtration band enable toggle (On/Off). Disables the threshold
+     controls when off; the band only runs in AUTO regardless. */
+  function setFiltEn(on){
+    var b=$('s-filt-en');
+    if(b){ b.setAttribute('aria-pressed', on?'true':'false'); b.querySelector('span').textContent = on?'On':'Off'; }
+    var r=$('s-filt-range'); if(r) r.disabled = !on;
+    document.querySelectorAll('[data-sstep^="filt,"]').forEach(function(x){ x.disabled = !on; });
+  }
+  if($('s-filt-en')) $('s-filt-en').addEventListener('click', function(){
+    setFiltEn($('s-filt-en').getAttribute('aria-pressed')!=='true');
+  });
+  /* Filtration band -> POST /settings?filter_temp=&filter_auto=. */
+  $('s-filt-save').addEventListener('click', function(){
+    flash('s-filt-msg', 'Saving…');
+    var en = $('s-filt-en').getAttribute('aria-pressed')==='true';
+    request('/settings?filter_temp='+sset.filt.val+'&filter_auto='+(en?1:0), {})
+      .then(function(s){
+        if(s){ if(isFinite(s.filter_temp)) setSset('filt', s.filter_temp);
+          if(typeof s.filter_auto==='boolean') setFiltEn(s.filter_auto); }
+        flash('s-filt-msg', en ? ('Saved — blower at bed ≥ '+sset.filt.val+' °C.') : 'Saved — band off.', 'is-ok');
+      })
+      .catch(function(j){ flash('s-filt-msg', 'Save failed: '+((j&&(j.message||j.error))||'error'), 'is-error'); });
   });
 
   /* ===== U4: Sensor calibration (GET/POST /api/v2/calibration) ================

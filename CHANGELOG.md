@@ -7,6 +7,33 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-07-28
+
+### Added
+- **Fan-only chamber filtration (two ways).** The chamber blower can now run
+  fan-only — heater untouched — to filter/circulate chamber air:
+  - **Automatic in AUTO mode (stock-like).** When enabled (default **on**), AUTO
+    runs the blower alone once the printer bed reaches a configurable **filter
+    temperature** (default **30 °C**, range 20–60 °C), filtering before the heater
+    engages at the higher auto bed threshold. Hysteresis mirrors the engage band;
+    it fails to no-airflow if disabled or Moonraker drops. Set in **Settings →
+    Filtration (auto mode)** / `GET/POST /settings?filter_temp=&filter_auto=`.
+  - **Manual, out-of-band.** A new `filter` API v2 command runs the blower fan-only
+    **independent of mode** — not cleared by OFF, additive over any heat airflow,
+    and safe (no heat path). Surfaced as an **on-only Filtration button** on the
+    dashboard — like the temperature presets, a click activates it and it lights up
+    (turns blue) while active; **Stop** is the single control that turns it off.
+    **Enabling** it is idle-only: while the heater is heating or the cooldown purge
+    is running, turning filtration *on* is rejected (`heater_busy`, HTTP 409) and the
+    dashboard button dims, so a status-page toggle can't disturb an active heat cycle.
+    Turning it *off* is always allowed, and **Stop stops all** — the dashboard Stop
+    button clears filtration alongside the heater (and is clickable whenever
+    filtration is on), so filtration never lingers or "comes back" after a heat cycle.
+  - State adds `environment.auto_filtering` and `params.filter_temp_c` /
+    `params.filter_auto_enable`; the manual fan drives the existing (previously
+    unused) `requested_fan_percent` blower path. The heater and every over-temp
+    cutoff are unaffected.
+
 ## [0.6.4] - 2026-07-27
 
 ### Added
