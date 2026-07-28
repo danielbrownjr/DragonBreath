@@ -148,8 +148,10 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 .main{ min-width: 0; min-height: 0; overflow: hidden; padding: 12px;
   display: flex; flex-direction: column; }
 /* Brand + version footer replacing the removed header brand; pinned at the bottom
-   of the content column. */
-.app-version{ flex: none; margin-top: 8px; text-align: center;
+   of the content column. Left-aligned so it tracks the content's left edge rather
+   than centering across the full main width — which, on screens wider than the
+   ~540px control card, drifts to screen-center and looks detached from the card. */
+.app-version{ flex: none; margin-top: 8px; text-align: left;
   font-size: 11px; color: var(--muted-foreground); }
 
 .grid{
@@ -209,12 +211,14 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 .summary{ min-height: 18px; color: var(--muted-foreground); font-size: 12px; }
 .status-detail{ margin: 4px 0; min-height: 0; flex: 1 1 auto; overflow: auto;
   display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
-.status-detail > div{ display: flex; align-items: baseline; justify-content: space-between;
+.status-detail > div{ display: flex; align-items: flex-start; justify-content: space-between;
   gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--border); }
 .status-detail > div:last-child{ border-bottom: 0; }
 .status-detail dt{ color: var(--muted-foreground); flex: none; }
-.status-detail dd{ margin: 0; text-align: right; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Wrap the value instead of truncating with an ellipsis, so a narrow card (thin
+   desktop column or compact tile) still shows the whole line, e.g. the Printer
+   row "connected · bed 26 °C". Wide cards keep it on one line. */
+.status-detail dd{ margin: 0; text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .actions{ display: flex; gap: 6px; margin-top: auto; }
 .actions .btn{ flex: 1; }
 
@@ -322,6 +326,12 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 }
 
 /* ---- Compact tile (~439x329) + narrow iframe: prioritize temp/PTC/state/graph/Stop. ---- */
+/* Touch devices ONLY. The dashboard is embedded as an iframe in Mainsail/Fluidd,
+   where a container/width query measures the PANEL, not the desktop window — so a
+   thin desktop panel would otherwise reflow and hide controls. Gating on
+   pointer: coarse keeps desktop (mouse) on the full layout at any width; only real
+   phones/tablets get the compact tile below (and the vertical stack further down). */
+@media (pointer: coarse){
 @container (max-width: 600px){
   .shell{ grid-template: minmax(0,1fr) / 43px minmax(0,1fr); }
   .rail{ padding: 5px 3px; gap: 2px; }
@@ -333,6 +343,10 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   .ptc-reading strong{ font-size: 14px; }
   .quick-card{ display: none; }        /* short/wide embed tile: hide secondary controls */
   .summary{ font-size: 11px; }
+  /* Stack each status row (label above value, full width) so nothing truncates in
+     the narrow compact card — e.g. Printer "connected · bed 26 °C". */
+  .status-detail > div{ flex-direction: column; align-items: stretch; gap: 0; padding: 2px 0; }
+  .status-detail dd{ text-align: left; }
   .target{ display: none; }   /* keep PTC visible in compact; drop only secondary copy */
   .app-version{ display: none; }       /* no room in the short tile */
   .page-only{ padding: 10px; }
@@ -347,12 +361,18 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   .set-card{ padding: 9px; gap: 7px; }
   .log-list{ max-height: 150px; }
 }
+}
 
-/* ---- Standalone phone (narrow VIEWPORT): stack the dashboard vertically —
-   graph on top, status in the middle, controls at the bottom — and scroll. The
-   @container tile rules above still govern the desktop-embedded Fluidd panel;
-   this viewport query fires only on an actual phone and wins by source order. ---- */
-@media (max-width: 600px){
+/* ---- Touch device, narrow viewport: stack the dashboard vertically — graph on
+   top, status in the middle, controls at the bottom — and scroll. Same touch gate
+   as the compact tile above; this stacks and wins by source order. Desktop never
+   matches either block, so it keeps the full layout at any width. ---- */
+@media (max-width: 600px) and (pointer: coarse){
+  /* pointer: coarse -> real touch device only. The dashboard is embedded as an
+     iframe in Mainsail/Fluidd, where @media width measures the PANEL, not the
+     desktop window — so width alone would reflow a narrow desktop panel. Gating
+     on a touch pointer keeps desktop (mouse) on the embed/tile layout regardless
+     of panel width, and stacks only on actual phones/tablets. */
   .main{ overflow-y: auto; }
   .grid{ flex: 0 0 auto; min-height: auto;
     display: flex; flex-direction: column; gap: 8px; }   /* graph / status / controls, DOM order */
@@ -1472,10 +1492,11 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
       .catch(function(j){ flash('s-maint-msg', 'Refused: '+((j&&(j.message||j.error))||'error'), 'is-error'); });
   });
 
-  /* Device info: firmware in the brand tooltip + the Maintenance panel. */
+  /* Device info -> the Maintenance panel. (The old header brand/tooltip was
+     removed; the firmware version is shown in the footer, populated in apply().) */
   fetch('/api/v2/info').then(function(r){ return r.json(); }).then(function(i){
     if(!i) return;
-    if(i.firmware){ $('brand').title = 'DragonBreath '+i.firmware; u('s-fw', i.firmware); }
+    if(i.firmware) u('s-fw', i.firmware);
     if(i.device_id) u('s-devid', i.device_id);
     if(i.boot_id) u('s-bootid', i.boot_id);
   }).catch(function(){});

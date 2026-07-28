@@ -7,6 +7,38 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-07-28
+
+### Changed
+- **`/setup` and `/fw` now match the dashboard theme (light + dark).** The
+  captive-portal / provisioning / OTA pages were dark-only with their own palette;
+  they now share the dashboard's `light-dark()` tokens, follow the device theme,
+  and honor a pinned dashboard choice (same-origin `localStorage` `db_theme`). The
+  `/fw` update page is header-free (the product header stays on `/setup` and the AP
+  captive portal), its warnings ("Do not power off during the update") are bold +
+  red, the SHA-256 line wraps instead of overflowing the card, and text no longer
+  breaks mid-word.
+
+### Fixed
+- **Settings → Maintenance showed "--" for Firmware / Device ID / Boot ID.** The
+  v0.7.1 header rework removed the brand element, but the `/api/v2/info` handler
+  still set `$('brand').title`, throwing a null-reference that aborted the callback
+  before it populated the Maintenance fields. Removed the stale brand-tooltip write.
+- **Desktop no longer reflows or hides controls when the window/panel is narrow.**
+  The dashboard is embedded as an iframe in Mainsail/Fluidd, where container/width
+  queries measure the *panel*, not the desktop window — so a thin desktop panel
+  wrongly triggered the compact tile (which hid the Quick-controls) and, before
+  this, the phone stack. **All** responsive reflow — both the compact tile and the
+  vertical stack — is now gated on `pointer: coarse` (an actual touch device), so
+  desktop (mouse) keeps the full layout at any width and controls never disappear.
+  Mobile is unchanged.
+- **Version footer left-aligned** so it tracks the content's left edge instead of
+  centering across the full main width (which drifted away from the ~540 px control
+  card on wide screens).
+- **Status rows no longer truncate in a narrow card.** The Printer line
+  ("connected · bed 26 °C") was ellipsis-clipped; values now wrap, and in the
+  compact/touch view each row stacks (label above value) so the full line shows.
+
 ## [0.7.1] - 2026-07-28
 
 ### Changed
