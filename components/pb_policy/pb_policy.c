@@ -56,7 +56,8 @@ static const char *TAG = "pb_policy";
 #define PB_DEFAULT_DRY_TARGET_C     60.0f
 #define PB_DEFAULT_DRY_HOURS        12U
 #define PB_DEFAULT_FILTER_TEMP_C    30.0f
-#define PB_DEFAULT_FILTER_AUTO_EN   true
+#define PB_DEFAULT_FILTER_AUTO_EN   false   // opt-in (diverges from stock, which
+                                            // filters by default) — see OEM_PARITY.md
 
 typedef struct {
     pb_mode_t mode;
@@ -887,22 +888,9 @@ void pb_policy_tick(void)
                                       - PB_AUTO_BED_HYSTERESIS_C) {
                 s.auto_engaged = false;
             }
-            // Fan-only filtration band (stock-like): once the bed SETPOINT reaches
-            // filter_temp_c the blower runs ALONE — before the heater engages at
-            // the higher auto bed threshold. Same setpoint-trigger + hysteresis
-            // shape as engage; gated off if disabled or Moonraker is down (fail to
-            // no-airflow).
-            bool was_filtering = s.auto_filtering;
-            if (!s.mk_connected || !s.params.filter_auto_enable) {
-                s.auto_filtering = false;
-            } else if (!s.auto_filtering && s.bed_target_c >= s.params.filter_temp_c) {
-                s.auto_filtering = true;
-            } else if (s.auto_filtering
-                       && s.bed_target_c < s.params.filter_temp_c
-                                      - PB_AUTO_BED_HYSTERESIS_C) {
-                s.auto_filtering = false;
-            }
-            if (s.auto_engaged != was_engaged || s.auto_filtering != was_filtering)
+            // The fan-only filtration band is evaluated below, independent of mode
+            // (stock parity) — heat engage stays AUTO-only, here.
+            if (s.auto_engaged != was_engaged)
                 revision_advance_locked(s.source);
             if (s.auto_engaged) {
                 target = s.requested_target_c;
@@ -977,11 +965,31 @@ void pb_policy_tick(void)
     }
     s.last_faulted = faulted;
 
-    // AUTO fan-only filtration band forces airflow with no heat. Mode-gated so a
-    // stale latch never spins the fan outside AUTO. The manual filtration fan
-    // (requested_fan_percent) is independent and additive — whichever wants more
-    // air wins, since want_airflow only raises a low request up to the 30% floor.
-    bool auto_filter = (s.mode == PB_MODE_AUTO) && s.auto_filtering;
+    // Fan-only filtration band (stock parity): the blower runs whenever it is
+    // enabled + Moonraker is connected + the commanded bed SETPOINT has reached
+    // filter_temp_c — INDEPENDENT of DragonBreath's mode, so filtration works on
+    // prints that never reach the AUTO heat-engage threshold, and even while the
+    // device is idle. Heat engage stays AUTO-only (above). Setpoint trigger +
+    // hysteresis; fails to no-airflow when disabled or the Moonraker link drops.
+    {
+        bool was_filtering = s.auto_filtering;
+        if (!s.mk_connected || !s.params.filter_auto_enable) {
+            s.auto_filtering = false;
+        } else if (!s.auto_filtering && s.bed_target_c >= s.params.filter_temp_c) {
+            s.auto_filtering = true;
+        } else if (s.auto_filtering
+                   && s.bed_target_c < s.params.filter_temp_c
+                                  - PB_AUTO_BED_HYSTERESIS_C) {
+            s.auto_filtering = false;
+        }
+        if (s.auto_filtering != was_filtering)
+            revision_advance_locked(s.source);
+    }
+
+    // The manual filtration fan (requested_fan_percent) is independent and additive
+    // — whichever wants more air wins, since want_airflow only raises a low request
+    // up to the 30% floor.
+    bool auto_filter = s.auto_filtering;
     bool want_airflow = heat || faulted || cooldown || auto_filter;
     uint8_t fan = s.requested_fan_percent;
     if (want_airflow && fan < 30) fan = 30;
@@ -1025,7 +1033,7 @@ void pb_policy_get_snapshot(pb_policy_snapshot_t *out)
     out->bed_c = s.bed_c;
     out->bed_target_c = s.bed_target_c;
     out->auto_engaged = s.auto_engaged;
-    out->auto_filtering = (s.mode == PB_MODE_AUTO) && s.auto_filtering;
+    out->auto_filtering = s.auto_filtering;   // standing band — independent of mode
     out->auto_bed_threshold_c = s.auto_bed_threshold_c;
     out->params = s.params;
     out->drying = s.mode == PB_MODE_DRYING;

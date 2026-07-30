@@ -41,7 +41,7 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 | Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper): `[heater_generic dragonbreath]` (M141/M191) + `[output_pin dragonbreath_filter]` (fan-only filtration toggle); API v2, deploy lockstep with the firmware |
 | Filament-dry mode | ✅ Timed dry with material presets; validated end-to-end on hardware |
 | Auto (follow-bed) mode | 🚧 Shipped in the state machine + UI; end-to-end hardware soak in progress |
-| Fan-only filtration | ✅ AUTO fan-only band (`filter_temp`) + mode-independent manual `filter` control (dashboard + API); idle-only to enable |
+| Fan-only filtration | ✅ Standing fan-only band (`filter_temp`, opt-in/**off by default**) — runs on the bed setpoint independent of mode (stock-shaped) + mode-independent manual `filter` control (dashboard + API); idle-only to enable |
 | Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (DragonBreath-only, refused while heating) |
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |

@@ -95,10 +95,13 @@ transitions; ordinary temperature samples and successful heartbeats do not
 increment it.
 
 `fan.reason` is one of: `off`, `heater` (airflow while heating), `thermal_purge`
-(residual-heat cooldown purge), `auto_filter` (the AUTO fan-only filtration band),
+(residual-heat cooldown purge), `auto_filter` (the fan-only filtration band),
 `requested` (the manual filtration fan), or `fault` (safety airflow).
-`environment.auto_filtering` is `true` while the AUTO fan-only band is driving the
-blower (bed at/above `filter_temp_c`, below the heat-engage threshold).
+`environment.auto_filtering` is `true` while the fan-only filtration band is driving
+the blower — whenever `filter_auto` is enabled, Moonraker is connected, and the bed
+**setpoint** is at/above `filter_temp_c`. This is a **standing** band, independent of
+mode (it runs even while idle); the heater still engages only in AUTO at the higher
+bed threshold.
 
 `params` reports the *remembered* mode parameters — the values most recently
 accepted for each mode, used to pre-fill the UI and to re-arm a mode when the
@@ -200,7 +203,9 @@ These predate/sit beside the versioned control surface and are stable:
   Open (read-only, no side effects). `cool_release` is the cooldown-fan "cool down
   to" temperature (30–65 °C, default 40). `fb_cut` is the element-foldback cut
   (90–104 °C; `0` = auto → the per-Rref `fb_cut_default`). `filter_temp` (20–60 °C,
-  default 30) + `filter_auto` (bool) drive the AUTO fan-only filtration band.
+  default 30) + `filter_auto` (bool, **default off** — opt-in) drive the fan-only
+  filtration band (standing — runs whenever enabled + Moonraker connected + bed
+  setpoint ≥ `filter_temp`, independent of mode).
   `leds_enabled` is the status-LED master enable (bool, default `true`).
 - `POST /settings?max=<°C>&comms_ms=<ms>&cool_release=<°C>&fb_cut=<°C>&filter_temp=<°C>&filter_auto=<0|1>&leds_enabled=<0|1>` — update any subset.
   Auth-gated (`X-DragonBreath-Auth`). Safety values are clamped to the safe

@@ -65,8 +65,14 @@ Defense-in-depth — see [`SAFETY.md`](SAFETY.md) for the full model.
   the residual-heat purge releases here (engages one 3 °C band above it).
 - **Element-foldback cut** (`fb_cut`) — default auto (per-Rref); override 90–104 °C.
   Advanced/experts-only — see `tools/diag.py`. Never exceeds 104 °C.
-- **AUTO filtration band** — `filter_temp` (default 30 °C, 20–60 °C) + `filter_auto`
-  (on/off) control the fan-only filtration band in AUTO mode.
+- **Filtration band** — `filter_temp` (default 30 °C, 20–60 °C) + `filter_auto`
+  (on/off, **default off** — opt-in) control the fan-only filtration band. It is a
+  **standing** band (stock-shaped): once enabled, whenever Moonraker is connected the
+  blower runs alone once the print's bed **setpoint** reaches `filter_temp` —
+  independent of mode, so it filters even on prints that never reach the AUTO
+  heat-engage threshold and while idle. The heater still engages only in AUTO at the
+  higher bed threshold. (Off-by-default diverges from stock; see
+  [`OEM_PARITY.md`](OEM_PARITY.md).)
 
 Exposed via `GET`/`POST /settings` and the web UI's Settings cards. The fixed
 over-temp cutoffs are not settable.
