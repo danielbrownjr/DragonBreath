@@ -183,7 +183,9 @@ DragonBreath binds to **one** controller at a time, chosen on the **setup** page
 (`/setup`, and the AP captive portal) under **Control source**. Pick one and the
 others are disabled — there is exactly one controller.
 
-<p><img src="docs/screenshots/setup-sources.png" width="300" alt="Setup page: bind the heater to Klipper, Bambu, or Home Assistant"></p>
+| Klipper / Moonraker | Bambu (LAN) | Home Assistant |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/setup-klipper.png" width="240" alt="Control source: Klipper (Moonraker) — host and port"> | <img src="docs/screenshots/setup-bambu.png" width="240" alt="Control source: Bambu (LAN) — printer IP, serial, LAN access code"> | <img src="docs/screenshots/setup-ha.png" width="240" alt="Control source: Home Assistant — MQTT broker, port, credentials, topic prefix"> |
 
 - **Klipper / Moonraker** — *first-class; the primary target.* With the
   [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) helper it
