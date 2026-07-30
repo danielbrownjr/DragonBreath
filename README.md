@@ -25,6 +25,65 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 [`docs/HARDWARE.md`](docs/HARDWARE.md) · hardware-in-loop testing →
 [`docs/HIL.md`](docs/HIL.md).
 
+## Install & update
+
+DragonBreath installs **over the stock firmware as an ordinary app update — no USB,
+no full-flash erase.** It ships on the **stock partition layout**, so the factory
+bootloader and the stock app in the *other* OTA slot stay in place: installing is
+just uploading the DragonBreath app image from the stock web UI, and the stock image
+is still sitting there to go back to.
+
+> 💾 **Back up your stock firmware first — strongly recommended.** BIGTREETECH does
+> **not** publish stock images. Installing over stock leaves the factory image in the
+> *inactive* OTA slot, so you can flip back to it with **Settings → Boot inactive
+> slot** — but only until you later OTA-update DragonBreath, which overwrites that
+> slot with the previous DragonBreath version. A USB backup is the durable,
+> always-available way home. Take one and copy it somewhere safe before you start:
+> ```bash
+> python3 tools/flash.py --backup-only        # verified full stock backup, no flashing
+> ```
+> This talks to the board over the on-board CH340K USB-C bridge (native USB is
+> unavailable — GPIO18 is the SSR).
+
+**Install (stock → DragonBreath), no USB needed:**
+1. Download `dragonbreath-<ver>.bin` from a [release](../../releases) — or build it
+   (`idf.py build` → `build/dragonbreath.bin`). Optionally verify it against the
+   release `SHA256SUMS.txt`. Each release also ships a `manifest.json` (source SHA,
+   ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
+2. Open the **stock** Panda web UI and use its **Firmware Update** to upload that
+   `.bin`. Stock writes it to the inactive OTA slot and reboots into it.
+3. DragonBreath comes up. If it doesn't rejoin your WiFi, connect to the
+   **`DragonBreath_XXXX`** AP (password **`987654321`**, same as the stock Panda) and
+   a browser should pop the setup page automatically (or open `http://192.168.4.1`).
+
+> ⚠️ **Don't hold a front-panel button while powering the board on.** Power, Auto,
+> and Dry sit on ESP32-C3 strapping pins (GPIO9 is ROM download-mode); a held
+> button pulls its strap low at reset and the board won't boot normally.
+> DragonBreath also ignores any button already down at power-on until you release
+> it. On (GPIO10) is the only button on a non-strapping pin.
+
+**Updating DragonBreath:** open the **Firmware update** link on the status page (the
+`/fw` page) and upload the new `dragonbreath-<ver>.bin` (or `build/dragonbreath.bin`).
+It lands in the inactive OTA slot, is verified, and the device reboots into it; a bad
+image rolls back on the next boot. Updates are refused while the heater is on.
+
+**Reverting to stock — two ways:**
+- **Settings → Boot inactive slot** flips the boot pointer back to the factory image
+  still sitting in the other OTA slot (no flash write). The button names what's there
+  (e.g. *stock Panda* — *your way back to stock*) and appears only when that slot
+  holds a stock image. This works until you've OTA-updated DragonBreath at least once,
+  after which the inactive slot holds the *previous DragonBreath* instead.
+- **Upload your stock backup** on the `/fw` page — web OTA accepts a stock
+  `panda_breath` app image as well as a DragonBreath one, so your saved backup flashes
+  back over WiFi. Refused while the heater is on.
+
+**USB is recovery-only.** `tools/flash.py` remains for taking a full stock backup
+(`--backup-only`), restoring one, or unbricking a board that won't boot:
+```bash
+python3 tools/flash.py --backup-only                                 # save a stock backup
+python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB restore
+```
+
 ## Status
 | Component | State |
 |---|---|
@@ -191,65 +250,6 @@ Requires ESP-IDF v5.3+.
 git clone https://github.com/plastikman/DragonBreath
 idf.py set-target esp32c3
 idf.py build
-```
-
-## Install & update
-
-DragonBreath installs **over the stock firmware as an ordinary app update — no USB,
-no full-flash erase.** It ships on the **stock partition layout**, so the factory
-bootloader and the stock app in the *other* OTA slot stay in place: installing is
-just uploading the DragonBreath app image from the stock web UI, and the stock image
-is still sitting there to go back to.
-
-> 💾 **Back up your stock firmware first — strongly recommended.** BIGTREETECH does
-> **not** publish stock images. Installing over stock leaves the factory image in the
-> *inactive* OTA slot, so you can flip back to it with **Settings → Boot inactive
-> slot** — but only until you later OTA-update DragonBreath, which overwrites that
-> slot with the previous DragonBreath version. A USB backup is the durable,
-> always-available way home. Take one and copy it somewhere safe before you start:
-> ```bash
-> python3 tools/flash.py --backup-only        # verified full stock backup, no flashing
-> ```
-> This talks to the board over the on-board CH340K USB-C bridge (native USB is
-> unavailable — GPIO18 is the SSR).
-
-**Install (stock → DragonBreath), no USB needed:**
-1. Download `dragonbreath-<ver>.bin` from a [release](../../releases) — or build it
-   (`idf.py build` → `build/dragonbreath.bin`). Optionally verify it against the
-   release `SHA256SUMS.txt`. Each release also ships a `manifest.json` (source SHA,
-   ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
-2. Open the **stock** Panda web UI and use its **Firmware Update** to upload that
-   `.bin`. Stock writes it to the inactive OTA slot and reboots into it.
-3. DragonBreath comes up. If it doesn't rejoin your WiFi, connect to the
-   **`DragonBreath_XXXX`** AP (password **`987654321`**, same as the stock Panda) and
-   a browser should pop the setup page automatically (or open `http://192.168.4.1`).
-
-> ⚠️ **Don't hold a front-panel button while powering the board on.** Power, Auto,
-> and Dry sit on ESP32-C3 strapping pins (GPIO9 is ROM download-mode); a held
-> button pulls its strap low at reset and the board won't boot normally.
-> DragonBreath also ignores any button already down at power-on until you release
-> it. On (GPIO10) is the only button on a non-strapping pin.
-
-**Updating DragonBreath:** open the **Firmware update** link on the status page (the
-`/fw` page) and upload the new `dragonbreath-<ver>.bin` (or `build/dragonbreath.bin`).
-It lands in the inactive OTA slot, is verified, and the device reboots into it; a bad
-image rolls back on the next boot. Updates are refused while the heater is on.
-
-**Reverting to stock — two ways:**
-- **Settings → Boot inactive slot** flips the boot pointer back to the factory image
-  still sitting in the other OTA slot (no flash write). The button names what's there
-  (e.g. *stock Panda* — *your way back to stock*) and appears only when that slot
-  holds a stock image. This works until you've OTA-updated DragonBreath at least once,
-  after which the inactive slot holds the *previous DragonBreath* instead.
-- **Upload your stock backup** on the `/fw` page — web OTA accepts a stock
-  `panda_breath` app image as well as a DragonBreath one, so your saved backup flashes
-  back over WiFi. Refused while the heater is on.
-
-**USB is recovery-only.** `tools/flash.py` remains for taking a full stock backup
-(`--backup-only`), restoring one, or unbricking a board that won't boot:
-```bash
-python3 tools/flash.py --backup-only                                 # save a stock backup
-python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB restore
 ```
 
 ## Layout
