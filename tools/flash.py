@@ -212,6 +212,9 @@ def main():
                     help="where to write the stock backup (default: <repo>/backups)")
     ap.add_argument("--restore", metavar="IMAGE",
                     help="restore a full flash image (e.g. a prior backup) and exit")
+    ap.add_argument("--backup-only", action="store_true",
+                    help="take a verified full stock backup and exit (no flashing) — "
+                         "the recommended safety net before a no-USB OTA install")
     ap.add_argument("--no-backup", action="store_true",
                     help="skip the pre-flash backup (NOT recommended)")
     args = ap.parse_args()
@@ -224,6 +227,15 @@ def main():
 
     if args.restore:
         return do_restore(args.port, bauds, args.restore)
+
+    if args.backup_only:
+        path, _ = do_backup(args.port, bauds, args.backup_dir)
+        if path is None:
+            return 1
+        print(f"\nStock backup saved: {path}")
+        print("Keep it safe — copy it off this machine (cloud/USB). Restore with:")
+        print(f"  python3 tools/flash.py --restore {path}")
+        return 0
 
     print("=" * 70)
     print(" DragonBreath flasher")
