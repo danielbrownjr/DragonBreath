@@ -18,6 +18,7 @@
 #include "nvs.h"
 #include <stdbool.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "pb_board.h"
 #include "pb_ntc.h"
@@ -254,16 +255,54 @@ static void control_task(void *arg)
             pb_policy_get_snapshot(&snap);
             uint32_t zc = 0, zciv = 0;
             pb_fan_zc_diag(&zc, &zciv);
-            ESP_LOGI(TAG,
+            // Build the status line WITHOUT the ZC counters (which change every
+            // sample). Collapse consecutive identical states into a single
+            // "repeated Nx" instead of spamming a line every 2 s — this keeps the
+            // /console ring (and the serial log) readable. A liveness flush every
+            // ~30 samples (~60 s) still shows the device is alive during a long
+            // unchanged run.
+            static char     s_dbg_last[224];
+            static uint32_t s_dbg_rep;
+            int wifi = net ? (int)pb_wifi_state() : -1;
+            // Displayed line: 0.1 °C precision.
+            char line[224];
+            snprintf(line, sizeof line,
                 "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
-                "wifi=%d src=%s mk=%d printer=%s bed=%.1f | ZC n=%lu dt=%luus",
+                "wifi=%d src=%s mk=%d printer=%s bed=%.1f",
                 (unsigned long)snap.state_revision,
                 pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
                 snap.effective_target_c, snap.heater_output ? "ON" : "off",
                 snap.chamber_c, snap.ptc_c,
-                net ? (int)pb_wifi_state() : -1, pb_source_str(s_src), (int)st.state,
-                pb_printer_state_str(st.printer), st.bed_temp,
-                (unsigned long)zc, (unsigned long)zciv);
+                wifi, pb_source_str(s_src), (int)st.state,
+                pb_printer_state_str(st.printer), st.bed_temp);
+            // Dedup key: same fields but temps rounded to whole degrees, so sub-degree
+            // sensor drift/jitter doesn't re-trigger a fresh line every 2 s.
+            char key[224];
+            snprintf(key, sizeof key,
+                "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.0fC ptc=%.0fC | "
+                "wifi=%d src=%s mk=%d printer=%s bed=%.0f",
+                (unsigned long)snap.state_revision,
+                pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                snap.chamber_c, snap.ptc_c,
+                wifi, pb_source_str(s_src), (int)st.state,
+                pb_printer_state_str(st.printer), st.bed_temp);
+
+            if (strcmp(key, s_dbg_last) == 0) {
+                s_dbg_rep++;
+                if (s_dbg_rep % 30 == 0)   // ~60 s liveness flush during a long run
+                    ESP_LOGI(TAG, "%s | repeated %lux | ZC n=%lu dt=%luus",
+                             line, (unsigned long)s_dbg_rep,
+                             (unsigned long)zc, (unsigned long)zciv);
+            } else {
+                if (s_dbg_rep > 0)
+                    ESP_LOGI(TAG, "(previous line repeated %lux)", (unsigned long)s_dbg_rep);
+                ESP_LOGI(TAG, "%s | ZC n=%lu dt=%luus",
+                         line, (unsigned long)zc, (unsigned long)zciv);
+                strncpy(s_dbg_last, key, sizeof s_dbg_last - 1);
+                s_dbg_last[sizeof s_dbg_last - 1] = '\0';
+                s_dbg_rep = 0;
+            }
         }
 
         // Wait for the next periodic deadline, but wake early on a notification
@@ -295,6 +334,11 @@ static void control_task(void *arg)
 
 void app_main(void)
 {
+    // Install the console-capture hook FIRST so the whole app_main boot log is
+    // teed into the ring served by /console (the device may have no reachable
+    // serial port). Cheap + no dependencies; safe before anything else.
+    pb_evlog_console_init();
+
     ESP_LOGI(TAG, "DragonBreath starting");
 
     pb_evlog_init();
