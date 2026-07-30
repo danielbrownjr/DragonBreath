@@ -7,6 +7,48 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-30
+
+The **no-USB** release. DragonBreath now installs *and* reverts entirely through the
+stock Panda firmware's own OTA updater — no opening the unit, no esptool. It runs as
+an app in the stock partition layout, so the stock bootloader, partition table, and
+web assets are never replaced. (Consolidates 1.0.0-rc1 … rc2.)
+
+### Install & revert (the model)
+- **Install (no USB):** on the stock Panda web UI → Firmware Update, upload
+  `dragonbreath-v1.0.0.bin`. Validated end-to-end on stock **1.0.3 and 1.0.4**.
+- **Revert to stock, two ways:** (1) Settings → Maintenance → **"Boot inactive slot"**
+  reboots into the stock app still sitting in the other OTA slot — one click, no upload
+  (available until DragonBreath's first self-update overwrites that slot); (2)
+  `/update` now accepts stock `panda_breath` images, so you can upload your stock
+  backup's app image any time to go back.
+
+### Added
+- **`POST /api/v2/boot-inactive`** + **`inactive_slot`** on `/api/v2/info` — the
+  identity-labeled "Boot inactive slot" action (revert to stock, or roll back a
+  DragonBreath version). Refused while heating; moves the boot pointer only, no flash
+  write; hidden when the slot is empty/unreadable.
+- **`/update` accepts stock `panda_breath` images** (any version) for revert-to-stock.
+
+### Changed
+- **Canonical partition layout is the stock Panda layout** (app slots 1920 K @
+  0x10000 / 0x1f0000, otadata @ 0xe000, nvs 20 K, spiffs, coredump; PHY embedded).
+  Byte-identical on stock 1.0.3 and 1.0.4.
+- **App-only releases:** the OTA image + `manifest.json` + `SHA256SUMS.txt` are
+  published; the factory image and USB install bundle are no longer attached (the
+  build machinery + `tools/flash.py` stay in the repo for recovery). USB is
+  recovery-only.
+- `tools/flash.py` offsets updated to the stock layout.
+
+### Fixed
+- `/fw` note now says you can return to stock (it accepts `panda_breath` images),
+  replacing the stale "does not restore stock / use USB" text.
+
+### ⚠ Upgrade note — alpha/beta testers
+**Back up stock first.** If your unit was USB-flashed (native layout), **restore your
+stock backup, then install 1.0.0 via the stock updater** — a stock-layout install
+can't be reached by OTA from a native-layout one. New installs are unaffected.
+
 ## [1.0.0-rc2] - 2026-07-30
 
 ### Changed
