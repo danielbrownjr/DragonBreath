@@ -67,15 +67,23 @@ is still sitting there to go back to.
 It lands in the inactive OTA slot, is verified, and the device reboots into it; a bad
 image rolls back on the next boot. Updates are refused while the heater is on.
 
-**Reverting to stock — two ways:**
-- **Settings → Boot inactive slot** flips the boot pointer back to the factory image
-  still sitting in the other OTA slot (no flash write). The button names what's there
-  (e.g. *stock Panda* — *your way back to stock*) and appears only when that slot
-  holds a stock image. This works until you've OTA-updated DragonBreath at least once,
-  after which the inactive slot holds the *previous DragonBreath* instead.
-- **Upload your stock backup** on the `/fw` page — web OTA accepts a stock
-  `panda_breath` app image as well as a DragonBreath one, so your saved backup flashes
-  back over WiFi. Refused while the heater is on.
+**Reverting to stock — boot back to Panda:** because DragonBreath installs *alongside*
+the factory image (the stock app stays in the other OTA slot), the fastest way back is
+to just boot it — no flashing, nothing erased:
+
+<p><img src="docs/screenshots/revert.png" width="520" alt="Settings → Maintenance: Boot inactive slot reverts to the stock Panda image"></p>
+
+1. Open the dashboard **Settings** tab and scroll to **Maintenance**. The **Inactive
+   slot** row names what will boot — e.g. *stock Panda 1 — your way back to stock*.
+2. Turn the heater off (the action is refused while heating), then click **Boot
+   inactive slot** and confirm. The device flips the boot pointer and reboots into the
+   stock firmware.
+
+This works until you've OTA-updated DragonBreath at least once, after which the
+inactive slot holds the *previous DragonBreath* instead of stock. So a **USB backup
+stays your durable way home** — and web OTA also accepts a stock `panda_breath` image,
+so you can re-flash your saved backup over WiFi from the `/fw` page (refused while the
+heater is on).
 
 **USB is recovery-only.** `tools/flash.py` remains for taking a full stock backup
 (`--backup-only`), restoring one, or unbricking a board that won't boot:
@@ -169,6 +177,26 @@ into a "clear → trip again" loop. The foldback cut point is per-Rref (99 °C o
 exceed 104 °C, so it cannot defeat the hard cutoff. No firmware can *guarantee* the
 absence of a fault; read [`docs/SAFETY.md`](docs/SAFETY.md) before touching heater
 code and supervise the device.
+
+## Control sources
+DragonBreath binds to **one** controller at a time, chosen on the **setup** page
+(`/setup`, and the AP captive portal) under **Control source**. Pick one and the
+others are disabled — there is exactly one controller.
+
+<p><img src="docs/screenshots/setup-sources.png" width="300" alt="Setup page: bind the heater to Klipper, Bambu, or Home Assistant"></p>
+
+- **Klipper / Moonraker** — *first-class; the primary target.* With the
+  [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) helper it
+  shows up as `[heater_generic dragonbreath]` (M141/M191) plus a fan-only filtration
+  toggle, and AUTO mode follows the printer bed. Validated end-to-end on hardware.
+- **Home Assistant** — *first-class.* Native MQTT Discovery: the device advertises a
+  climate entity plus chamber/element sensors, takes setpoint/mode commands over MQTT,
+  and publishes retained state. Validated against a live Home Assistant instance.
+- **Bambu (LAN)** — *experimental — **testers wanted.*** A LAN-MQTT client that follows
+  a Bambu printer's bed/chamber the way AUTO follows Moonraker. It is wired up and
+  builds, but has **not been tested on a real Bambu printer** (we don't have one). If
+  you can help, please [open an issue](../../issues) with logs from an actual Bambu
+  setup — that's what it needs to graduate from experimental.
 
 ## Control API & access
 `pb_httpd` exposes the versioned HTTP/JSON API on port 80:
