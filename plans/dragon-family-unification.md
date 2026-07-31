@@ -9,13 +9,14 @@ technical prerequisite.
 
 ## Decisions locked (plastikman + Justin)
 
-1. **Shared core = a new standalone repo with a family-neutral component prefix.**
-   `pb_*` ("Panda **B**reath") is product branding leaking into a board-agnostic core;
-   the shared components move to a neutral prefix.
+1. **Shared core = a new standalone repo with a family-neutral prefix**, and a
+   **clean-break prefix rename across the board**: kill `pb_`/`pv_` (legacy Panda
+   product branding) → **`dc_`/`dcore_`** (core), **`db_`** (DragonBreath), **`dv_`**
+   (DragonVent). No aliases (mirrors the OpenBreath→DragonBreath rebrand).
 2. **DragonVent is a fresh repo built on the extracted core** (not on OpenVent's core).
    OpenVent is archived with a pointer to DragonVent.
 3. **A new shared GitHub org**, co-owned by plastikman + Justin, is the home for the
-   core and the products.
+   core, the products, **and the Klipper helper(s)** (`dragonbreath-klipper` moves in).
 4. **Scope for this pass: DragonBreath + DragonVent only.** Other Panda\* products
    onboard later by supplying a device implementation + UI descriptor.
 
@@ -26,10 +27,17 @@ they're load-bearing (repo URLs, prefixes, `idf_component.yml`).
 
 | Thing | Proposal | Notes |
 |---|---|---|
-| Shared GitHub org | **`dragon-fw`** | neutral, unbranded; holds core + products |
+| Shared GitHub org | **`dragon-fw`** | neutral, unbranded; holds core **+ products + the Klipper helper(s)** |
 | Shared core repo | **`dragon-core`** | the board-agnostic ESP-IDF component set |
-| Core component prefix | **`dc_`** | `dragon-core`; replaces `pb_*`/`pv_*` on shared components |
-| Product prefixes | Breath **`pb_`** (kept — genuinely Panda Breath), Vent **`dv_`** | product-specific components stay product-prefixed |
+| Core component prefix | **`dc_`** (or `dcore_`) | `dragon-core`; replaces `pb_*`/`pv_*` on shared components |
+| Product prefixes | Breath **`db_`** (was `pb_`), Vent **`dv_`** (was `pv_`) | **full rename — everything Dragon-branded, no legacy `pb_`/`pv_`** |
+
+**Prefix scheme (decided): kill `pb_` and `pv_` outright.** Every component gets a
+Dragon prefix — **`dc_`/`dcore_`** (shared core), **`db_`** (DragonBreath), **`dv_`**
+(DragonVent). `pb_` = "Panda Breath" and `pv_` = "Panda Vent" are legacy product
+branding; the family rename is a clean break with no aliases (mirrors the earlier
+OpenBreath→DragonBreath rebrand). The core-prefix choice (`dc_` vs `dcore_`) is the one
+string still open.
 
 ## Architecture — one core, N products
 
@@ -37,16 +45,18 @@ The **core** owns everything a Panda product shares; the **product** owns its bo
 sensors, actuators, policy, and a device implementation that plugs into the core.
 
 ```
-dragon-core (dc_*)                         product repo (e.g. DragonBreath)
-  dc_httpd     transport/auth/SSE/OTA/       pb_board    GPIO map
-               events/log + dc_device vtable  pb_ntc      sensors
-  dc_portal    setup/fw/diag/console UI       pb_heater   actuator + safety
-  dc_wifi      wifi + captive portal          pb_fan
-  dc_moonraker Klipper bed state              pb_policy   state machine
-  dc_bambu     Bambu LAN MQTT                 pb_leds / pb_buttons
-  dc_ha        Home Assistant MQTT            pb_device_breath  <- implements dc_device
+dragon-core (dc_*/dcore_*)                 DragonBreath repo (db_*)
+  dc_httpd     transport/auth/SSE/OTA/       db_board    GPIO map
+               events/log + dc_device vtable  db_ntc      sensors
+  dc_portal    setup/fw/diag/console UI       db_heater   actuator + safety
+  dc_wifi      wifi + captive portal          db_fan
+  dc_moonraker Klipper bed state              db_policy   state machine
+  dc_bambu     Bambu LAN MQTT                 db_leds / db_buttons
+  dc_ha        Home Assistant MQTT            db_device   <- implements dc_device
   dc_source    control-source selector        main/       wires product -> core
   dc_evlog     event ring
+                                             DragonVent repo (dv_*): dv_board,
+                                             dv_motor…, dv_device -> same dc_ core
 ```
 
 - **The seam is the `dc_device` vtable** from the decouple RFC: the product supplies
@@ -77,14 +87,17 @@ refactor), introduce the `dc_device` vtable, move the HTML to an asset pipeline,
 runtime UI descriptor (folded into `/api/v2/info`). **No API v2 behavior change**;
 validated on real hardware + HIL. DragonBreath stays shippable throughout.
 
-**2. Extract `dragon-core`.** Rename the board-agnostic set `pb_*` → `dc_*`, move it to
-the new repo, and have DragonBreath consume it via the component manager. Acceptance:
+**2. Rename + extract `dragon-core`.** Two scripted renames in one step: the
+board-agnostic set `pb_*` → `dc_*` (moves to the new repo, consumed via the component
+manager) and the DragonBreath-specific set `pb_*` → `db_*` (stays in-repo). One
+mechanical pass so review is "did the rename touch anything it shouldn't." Acceptance:
 DragonBreath builds, host tests + HIL green, `/update` + revert unchanged — the core is
 only proven once the shipped product still passes on it.
 
-**3. Move the products into the org.** Transfer `DragonBreath` + `dragonbreath-klipper`
-(GitHub redirects cover old links); update cross-references (`idf_component.yml`,
-READMEs, `update_manager` origins).
+**3. Move everything into the org.** Transfer `DragonBreath` **and `dragonbreath-klipper`**
+(GitHub redirects cover old links); update cross-references (`idf_component.yml`, READMEs,
+Moonraker `[update_manager]` origins, `help_url`s). The Klipper helper lives in the
+family org alongside the firmware.
 
 **4. DragonVent — fresh repo on `dragon-core`.** New `DragonVent` repo; Justin supplies
 the Vent device implementation (`dv_*` board + motor groups + kit auto-detect ADC) and
@@ -132,13 +145,15 @@ descriptor, no core fork.
 
 ## Open questions
 
-1. **Confirm the names** (org / core repo / `dc_` prefix / `dv_` for Vent).
+1. **Confirm the strings** — org name (`dragon-fw`?), core repo (`dragon-core`?), and
+   the **core prefix `dc_` vs `dcore_`** (the one prefix still open; product prefixes
+   `db_`/`dv_` are decided).
 2. **Where does the Breath `dc_device` implementation live** — `main/`, or its own
-   `pb_device_breath` component? (Decouple RFC leans component, for symmetry across
-   products.) Same question for the Vent side.
-3. **Does the Klipper helper stay per-product?** DragonBreath has `dragonbreath-klipper`
-   (a heater); DragonVent likely has no Klipper heater but may want a Moonraker-side
-   fan/filter object — decide whether there's a shared helper pattern or per-product
-   helpers.
-4. **`dragonbreath-klipper` naming under the family** — rename to fit the org, or leave
-   (it's product-specific, so arguably `pb_`-side and fine as-is).
+   `db_device` component? (Decouple RFC leans component, for symmetry across products.)
+   Same question for the Vent side (`dv_device`).
+3. **Klipper helper structure — per-product or one shared helper?** It's decided the
+   helper(s) move into the family org; open is whether DragonBreath's heater helper and
+   any DragonVent fan/filter helper are **separate repos** or **one `dragon-klipper`**
+   with per-product config. Leaning separate until the Vent actually needs a Klipper
+   object. (`dragonbreath-klipper` also gets `pb_`→`db_` naming where it references the
+   firmware's auth header / config keys — deploy lockstep, so rename together.)
