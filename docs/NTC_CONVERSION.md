@@ -6,7 +6,10 @@
 > The report's *formula shape*, the 82/33 kΩ `Rref` strap, and the R/T table are
 > all correct — only the constant was misidentified. Validated on device: with
 > `K = 3.3 V` the chamber NTC read **33.0 °C**, matching the printer's extruder
-> thermistors (33.0 °C) exactly. The firmware uses `PB_VSUPPLY_V = 3.3f`.
+> thermistors (33.0 °C) exactly. The firmware uses `PB_NTC_VSUPPLY_V = 3.3f`
+> (`components/pb_ntc/include/pb_ntc.h`). **The formulas and reproduction configs
+> below have been updated to `3.3 V`; the original `0.1 V` DROM finding is retained
+> only as a decompile note.**
 
 Target: chamber NTC (GPIO0 / ADC1_CH0) and PTC-element NTC (GPIO1 / ADC1_CH1).
 Both channels use the **identical** conversion. All float math is soft-float ROM
@@ -21,9 +24,11 @@ absolute ROM target.
 ```
 V      = ADC pin voltage, in VOLTS   (calibrated: adc_oneshot_read -> adc_cali_raw_to_voltage / 1000)
 Rref   = 82.0  (kOhm)   [board variant A, GPIO19 = 0]   OR   33.0 (kOhm) [variant B, GPIO19 = 1]
-Vrail  = 0.1   (V)      [DROM const @0x3c0e681c = 0x3dcccccd = 0.100000001]
+Vsupply = 3.3  (V)      [divider top rail — see the HARDWARE CORRECTION above.
+                        A DROM const 0.1 V @0x3c0e681c=0x3dcccccd was the ORIGINAL
+                        (wrong) identification; real hardware needs 3.3 V.]
 
-Rntc_kOhm = Rref * V / (Vrail - V)          <-- low-side NTC divider, solved for Rntc
+Rntc_kOhm = Rref * V / (Vsupply - V)         <-- low-side NTC divider, solved for Rntc
 
 temp_C    = table_lookup(Rntc_kOhm)         <-- nearest entry in the R/T table, returns temp
 temp_out  = mean of the last <=5 successive temp_C readings   (5-sample moving average)
@@ -72,12 +77,13 @@ Rntc = Rref * V / (Vrail − V)
   boot by reading **GPIO19** (`fcn.4200cb32` → `gpio_get_level(19)`): level 0 → 82, level 1 → 33.
   This is a hardware-population strap; the 70 °C Panda Breath most likely reads **82 kOhm**
   (confirm empirically: the Rref that yields a sane room-temperature reading is correct).
-* `Vrail` = **0.1 V**. This is the *effective* rail in the ADC's voltage domain. The
-  physical NTC divider is on the 3.3 V rail, but the node is scaled ~33:1 into the ADC
-  input (3.3 V / 33 ≈ 0.1 V), so the pin only swings ~0–95 mV. Because the scale factor
-  appears in both numerator voltage and rail, it cancels and `Rntc` comes out in true
-  kOhm. **What matters for reproduction: `V` and `Vrail` share units (volts) and `V` is
-  the actual calibrated pin voltage.**
+* `Vsupply` = **3.3 V** (the divider top rail). **⚠️ SUPERSEDED MODEL BELOW:** this
+  report originally read the rail as `Vrail = 0.1 V` and explained it with a ~33:1 ADC
+  input-scaling theory (pin swings ~0–95 mV). That was **disproven on hardware** (see
+  the HARDWARE CORRECTION at the top): the pin sits ~1.6 V at ambient and the operative
+  constant is the **3.3 V** supply — there is no 33:1 scaling. Use `Vsupply = 3.3 V`.
+  **What matters for reproduction: `V` and `Vsupply` share units (volts) and `V` is the
+  actual calibrated pin voltage.**
 * The table (`Rntc`) is in **kOhm**, so `Rref` must be in **kOhm** (82, not 82000).
 
 The thermistor is a ~100 kOhm NTC (table: 100 kOhm at 27 °C, ~109 kOhm at 25 °C,
@@ -187,11 +193,11 @@ sensor:
     accuracy_decimals: 1
     update_interval: 1s
     lambda: |-
-      const float RREF  = 82.0f;   // kOhm  (82 if GPIO19=0, else 33)
-      const float VRAIL = 0.1f;    // V
+      const float RREF    = 82.0f;   // kOhm  (82 if GPIO19=0, else 33)
+      const float VSUPPLY = 3.3f;    // V  (divider top rail — see HARDWARE CORRECTION)
       float v = id(chamber_adc_v).state;               // volts at the pin
-      if (isnan(v) || v <= 0.0f || v >= VRAIL) return NAN;
-      float R = RREF * v / (VRAIL - v);                // Rntc in kOhm
+      if (isnan(v) || v <= 0.0f || v >= VSUPPLY) return NAN;
+      float R = RREF * v / (VSUPPLY - v);              // Rntc in kOhm
       // firmware R/T table {temp_C, R_kOhm}, R decreasing with temp
       static const float RT[][2] = {
         {12,198.7f},{13,189.4f},{14,180.7f},{15,172.4f},{16,164.5f},{17,157.0f},
@@ -259,8 +265,11 @@ sensor:
     id: chamber_ntc_r
     configuration: DOWNSTREAM
     resistor: 82kOhm            # = Rref  (33kOhm for GPIO19=1 boards)
-    reference_voltage: 0.1V     # = Vrail
+    reference_voltage: 3.3V     # = Vsupply (see HARDWARE CORRECTION; NOT 0.1V)
     internal: true
+    # NOTE: the ADC source above must use full-range attenuation (e.g. attenuation:
+    # 12db) — the real pin sits ~1.6 V at ambient, not the ~0.1 V the superseded
+    # 33:1-scaling model assumed. Cross-check against the firmware (components/pb_ntc).
 
   - platform: ntc
     sensor: chamber_ntc_r

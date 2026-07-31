@@ -378,9 +378,11 @@ static void test_auto_requires_live_moonraker_and_uses_hysteresis(void)
 static void test_auto_filtration_band_fan_only_not_cooldown(void)
 {
     reset_fixture();
-    // AUTO, heat threshold 100 C; filter_temp defaults to 30 C, band enabled.
+    // AUTO, heat threshold 100 C; filter_temp defaults to 30 C. The band is OFF by
+    // default (opt-in), so enable it explicitly for this test.
     CHECK(pb_policy_set_auto(
         60.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
+    CHECK(pb_policy_set_filter_config(30.0f, true) == PB_POLICY_OK);
 
     // Bed below filter_temp: no filtration, fan off.
     pb_policy_set_env(25.0f, 25.0f, true);
@@ -414,6 +416,51 @@ static void test_auto_filtration_band_fan_only_not_cooldown(void)
     pb_policy_tick();
     CHECK(snapshot().auto_filtering);
     pb_policy_set_env(40.0f, 40.0f, false);
+    pb_policy_tick();
+    snap = snapshot();
+    CHECK(!snap.auto_filtering);
+    CHECK(snap.effective_fan_percent == 0);
+}
+
+// The fan-only filtration band is a STANDING behavior (stock parity): it runs
+// whenever enabled + Moonraker connected + bed setpoint >= filter_temp, with NO
+// AUTO arming required — so filtration works on prints that never reach the heat
+// threshold, and even while the device is idle. Heat engage stays AUTO-only.
+static void test_filtration_band_runs_outside_auto(void)
+{
+    reset_fixture();
+    // Never armed into AUTO — the device is idle.
+    pb_policy_snapshot_t snap = snapshot();
+    CHECK(snap.mode == PB_MODE_OFF);
+
+    // OFF BY DEFAULT (opt-in): a hot bed while idle does NOT filter until enabled.
+    pb_policy_set_env(40.0f, 40.0f, true);
+    pb_policy_tick();
+    snap = snapshot();
+    CHECK(!snap.auto_filtering);
+    CHECK(snap.effective_fan_percent == 0);
+
+    // Enable the band. Bed setpoint >= filter_temp while idle: the blower now runs,
+    // with NO AUTO arming (standing band, stock-shaped).
+    CHECK(pb_policy_set_filter_config(30.0f, true) == PB_POLICY_OK);
+    pb_policy_tick();
+    snap = snapshot();
+    CHECK(snap.mode == PB_MODE_OFF);            // still idle (never armed)
+    CHECK(snap.auto_filtering);                 // filtering regardless of mode
+    CHECK(!snap.auto_engaged);                  // heat engage remains AUTO-only
+    CHECK(snap.effective_target_c == 0.0f);     // no heat demanded
+    CHECK(snap.effective_fan_percent == 100);   // blower running
+
+    // Disabling the band stops it, even with a hot bed while idle.
+    CHECK(pb_policy_set_filter_config(30.0f, false) == PB_POLICY_OK);
+    pb_policy_tick();
+    snap = snapshot();
+    CHECK(!snap.auto_filtering);
+    CHECK(snap.effective_fan_percent == 0);
+
+    // Re-enabled but bed setpoint back below filter_temp: no filtration.
+    CHECK(pb_policy_set_filter_config(30.0f, true) == PB_POLICY_OK);
+    pb_policy_set_env(20.0f, 20.0f, true);
     pb_policy_tick();
     snap = snapshot();
     CHECK(!snap.auto_filtering);
@@ -1020,6 +1067,7 @@ int main(void)
     test_lease_expiry_latches_watchdog_fault();
     test_auto_requires_live_moonraker_and_uses_hysteresis();
     test_auto_filtration_band_fan_only_not_cooldown();
+    test_filtration_band_runs_outside_auto();
     test_drying_is_bounded_and_expires_off();
     test_runtime_limits_drive_auto_and_remote_lease();
     test_local_power_limit_expires_off_without_fault();

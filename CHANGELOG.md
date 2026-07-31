@@ -7,6 +7,66 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-31
+
+Makes the automatic fan-only **filtration band** work without arming AUTO mode — it now
+runs as a standing behavior like stock, driven by the printer's bed setpoint,
+independent of DragonBreath's mode — and ships it **off by default (opt-in)**.
+Consolidates 1.0.1-rc1. Also a repo-wide **documentation correctness pass**.
+
+### Changed
+- **Filtration band is now a standing behavior (stock-shaped).** Previously the
+  automatic fan-only band only ran while AUTO mode was *armed*, so users who never
+  used AUTO (or ran manual/idle) never saw filtration even with the setting enabled.
+  It now runs whenever **Filtration-Auto is enabled + Moonraker is connected + the bed
+  setpoint reaches `filter_temp`**, in any mode. Heat engage is unchanged (still
+  AUTO-only, at the higher bed threshold).
+- **Filtration-Auto now ships OFF by default (opt-in).** A deliberate divergence from
+  stock (which filters by default): flashing this update will **not** start running a
+  user's fan unprompted. Enable it in **Settings → Filtration: Auto** for the
+  stock-style behavior. Users who had already enabled it keep their setting and get the
+  fix. Documented in [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md).
+
+### Docs
+- Repo-wide correctness sweep: documented the selectable **control source**
+  (Klipper / Home Assistant / Bambu — all shipped since v0.8.0; earlier docs wrongly
+  called HA/Bambu "omitted") and the **`/diag`** + **`/console`** pages; documented
+  `GET /api/v2/console` and the `control_source`/`bambu_serial`/`bed_target_c` state
+  fields; fixed a non-existent macro reference in `SAFETY.md` and the `0.1 V`→`3.3 V`
+  constant in the `NTC_CONVERSION.md` reproduction configs.
+
+### Notes
+- `environment.auto_filtering` and `fan.reason = auto_filter` now report the band in
+  any mode (not just AUTO).
+- The AUTO/filter trigger remains the bed **setpoint** (commanded), not the measured
+  bed temp — stock parity.
+
+## [1.0.1-rc1] - 2026-07-30
+
+Fixes the automatic fan-only **filtration band** so it no longer requires arming AUTO
+mode — it now runs as a standing behavior like stock, driven by the printer's bed
+setpoint, independent of DragonBreath's mode.
+
+### Changed
+- **Filtration band is now a standing behavior (stock-shaped).** Previously the
+  automatic fan-only band only ran while AUTO mode was *armed*, so users who never
+  used AUTO (or ran manual/idle) never saw filtration even with the setting enabled.
+  It now runs whenever **Filtration-Auto is enabled + Moonraker is connected + the bed
+  setpoint reaches `filter_temp`**, in any mode — so filtration works on prints that
+  never reach the AUTO heat-engage threshold, and while idle. Heat engage is
+  unchanged (still AUTO-only, at the higher bed threshold).
+- **Filtration-Auto now ships OFF by default (opt-in).** A deliberate divergence from
+  stock (which filters by default): flashing an update will **not** start running a
+  user's fan unprompted. Enable it in **Settings → Filtration: Auto** to get the
+  stock-style behavior. Users who had already enabled it keep their setting and get
+  the fix. Documented in [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md).
+
+### Notes
+- `environment.auto_filtering` and `fan.reason = auto_filter` now report the band in
+  any mode (not just AUTO). Docs updated (`api-v2.md`, `FEATURES.md`, `OEM_PARITY.md`).
+- The AUTO/filter trigger remains the bed **setpoint** (commanded), not the measured
+  bed temp — stock parity.
+
 ## [1.0.0] - 2026-07-30
 
 The **no-USB** release. DragonBreath now installs *and* reverts entirely through the

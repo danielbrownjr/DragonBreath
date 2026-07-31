@@ -1,8 +1,9 @@
 # RFC: Stock partition layout as canonical + app-only releases (the 1.0 model)
 
-Status: **Draft / design — for review.** Make DragonBreath a stock-layout app that
-installs and reverts entirely through the stock firmware's own OTA, ship **only the
-app image**, and keep the full-image/USB machinery in the repo for recovery only.
+Status: **✅ Implemented in v1.0.0.** DragonBreath is now a stock-layout app that
+installs and reverts entirely through the stock firmware's own OTA; releases ship
+**only the app image**, and the full-image/USB machinery is kept in the repo for
+recovery only. The RFC below is retained as the design record.
 
 ## Why (recap of the reversibility analysis)
 

@@ -51,10 +51,12 @@ pins. Each button is co-located with the LED of the same panel label (e.g. Auto
 
 ## Flashing path
 The ESP32-C3's *native* USB-Serial-JTAG is on GPIO18/19; GPIO18 drives the heater
-SSR, so native USB is unavailable. Flash via the **CH340K UART bridge** (USB-C →
-CH340K → UART0) in download mode, using esptool. The stock 2nd-stage bootloader
-is not to be modified; the flashing strategy (keep it vs. full own-image flash)
-is a TODO in `partitions.csv`.
+SSR, so native USB is unavailable. USB flashing (recovery only) goes via the
+**CH340K UART bridge** (USB-C → CH340K → UART0) in download mode, using esptool.
+As of v1.0.0 DragonBreath ships as an **app in the stock partition layout** —
+`partitions.csv` matches the stock Panda Breath layout byte-for-byte (stock
+2nd-stage bootloader + partition table are preserved, never modified), so the normal
+install/revert path is the stock firmware's own OTA updater with no USB at all.
 
 ## Temperature sensing
 See [`NTC_CONVERSION.md`](NTC_CONVERSION.md) for the fully reverse-engineered

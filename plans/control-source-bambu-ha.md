@@ -1,9 +1,11 @@
 # RFC: Pluggable control source — Klipper · Bambu · Home Assistant
 
-Status: **Draft / seeking testers.** Klipper is shipped; Bambu and Home
-Assistant are proposed parity add-ons that must be built and validated by the
-community, because the maintainer has no Bambu printer or HA broker to test
-against.
+Status: **✅ Implemented in v0.8.0.** All three sources now ship as a single-select
+control source in `/setup` (mutually exclusive). **Klipper (Moonraker)** is the
+default. **Home Assistant** shipped and was validated end-to-end (device + HA +
+Mosquitto). **Bambu LAN** shipped as **experimental** — it builds and is safe by
+construction, but is still unvalidated on a real Bambu printer; testers wanted. The
+RFC below is retained as the design record.
 
 ## Goal
 

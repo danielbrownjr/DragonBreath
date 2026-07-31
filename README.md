@@ -1,7 +1,8 @@
 # DragonBreath
 
 Open firmware for the **BIGTREETECH Panda Breath** chamber heater (ESP32-C3),
-providing an open **Moonraker/Klipper** integration and local web control.
+providing local web control and a selectable control source — **Klipper/Moonraker**
+(default), **Home Assistant** (MQTT Discovery), or **Bambu LAN** (experimental).
 
 Sibling to [OpenVent](https://github.com/justinh-rahb/OpenVent) — part of an
 open-firmware **family for the BTT Panda line** that shares a common core.
@@ -108,11 +109,13 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper): `[heater_generic dragonbreath]` (M141/M191) + `[output_pin dragonbreath_filter]` (fan-only filtration toggle); API v2, deploy lockstep with the firmware |
 | Filament-dry mode | ✅ Timed dry with material presets; validated end-to-end on hardware |
 | Auto (follow-bed) mode | 🚧 Shipped in the state machine + UI; end-to-end hardware soak in progress |
-| Fan-only filtration | ✅ AUTO fan-only band (`filter_temp`) + mode-independent manual `filter` control (dashboard + API); idle-only to enable |
+| Fan-only filtration | ✅ Standing fan-only band (`filter_temp`, opt-in/**off by default**) — runs on the bed setpoint independent of mode (stock-shaped) + mode-independent manual `filter` control (dashboard + API); idle-only to enable |
 | Install / revert | ✅ **No-USB**: installs over stock as an app-only OTA (stock partition layout); revert via **Boot inactive slot** or by re-uploading a stock image over web OTA |
 | Flasher (`tools/flash.py`) | ✅ Recovery/backup tool: `--backup-only` saves a verified full stock backup, `--restore` writes one back, default path unbricks over USB |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware — accepts a DragonBreath **or** a stock `panda_breath` image (for revert); refused while heating |
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |
+| Control source (`pb_source`/`pb_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (experimental, untested on real hardware) |
+| On-device diagnostics pages | ✅ `/diag` (live SSE telemetry + trend + CSV) and `/console` (firmware `ESP_LOGx` viewer via auth-gated `GET /api/v2/console`) — shipped v0.8.0 |
 | Diagnostics (`tools/diag.py`) | ✅ Read-only 2 Hz logger (chamber/PTC/SSR/mode/fault + resolved Rref) → live view + CSV; run during a heat cycle to capture behavior. `python3 tools/diag.py [host] [token]` |
 
 **Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
@@ -150,10 +153,11 @@ fan-only toggle), **automatic** mode (arm a chamber target that follows the prin
 bed, with an optional fan-only filtration band below the heat threshold), a timed
 filament-**drying** cycle with material presets, and **settings** (safety limits,
 comms watchdog, foldback cut, filtration temperature, and ±5 °C sensor
-calibration). Provisioning (`/setup`) and DragonBreath-only OTA (`/fw`) pages share
-the same theme. Both **light and dark** themes are built in (auto / light / dark
-toggle), and the layout stacks vertically on phones while keeping the full layout
-on desktop.
+calibration). Setup (`/setup`, Wi-Fi + control-source selector), OTA (`/fw`), a live
+**`/diag`** telemetry page (chamber/PTC/SSR/mode/fault + trend + CSV export over SSE),
+and a **`/console`** firmware-log viewer all share the same theme. Both **light and
+dark** themes are built in (auto / light / dark toggle), and the layout stacks
+vertically on phones while keeping the full layout on desktop.
 
 ## Hardware
 ESP32-C3-MINI-1, mains PSU, PTC heater via SSR (GPIO18), ~220 VAC blower switched
@@ -209,10 +213,13 @@ others are disabled — there is exactly one controller.
 | GET | `/api/v2/state` | complete authoritative state snapshot — **no** side effects |
 | GET | `/api/v2/events` | SSE stream of state transitions and telemetry snapshots |
 | GET | `/api/v2/health` | uptime, heap, Wi-Fi signal/channel, SSE client count |
+| GET | `/api/v2/logs` · `/api/v2/calibration` | event ring; sensor-calibration offsets + live readings |
+| GET | `/api/v2/console` | **auth-gated** `text/plain` firmware `ESP_LOGx` ring snapshot (backs the `/console` page) |
 | POST | `/api/v2/command` | revision-aware OFF / POWER_ON / AUTO / DRYING / **FILTER** / fault-clear command |
 | POST | `/api/v2/heartbeat` | refresh exactly the device-issued active lease |
-| GET/POST | `/settings` | runtime knobs + bounds: max target, comms watchdog, `cool_release`, `fb_cut` (foldback), `filter_temp`/`filter_auto`, LEDs |
-| POST | `/update` | authenticated DragonBreath app-image OTA; refused while heating |
+| POST | `/api/v2/restart` · `/factory-reset` · `/boot-inactive` | maintenance: reboot, wipe to AP provisioning, boot the inactive OTA slot (revert to stock) |
+| GET/POST | `/settings` · `/api/v2/calibration` · `/api/v2/token` | runtime knobs + bounds (max target, comms watchdog, `cool_release`, `fb_cut`, `filter_temp`/`filter_auto`, LEDs); ±5 °C calibration; control token |
+| POST | `/update` | authenticated app-image OTA — accepts a DragonBreath **or** stock `panda_breath` image (revert); refused while heating |
 
 The alpha `/status`, `/target`, `/heartbeat`, and `/reset` routes are removed.
 Remote POWER_ON returns a device-issued lease; only an exact lease heartbeat can
@@ -290,10 +297,17 @@ components/
   pb_heater/   SSR control + safety cutoffs + comms watchdog
   pb_fan/      TRIAC on/off held-gate blower control (never PWM)
   pb_policy/   authoritative control state, modes, leases -> actuators
+  pb_source/   control-source selector (Klipper / Bambu / HA), NVS-backed
+  pb_bambu/    Bambu LAN MQTT bed-follow source (experimental)
+  pb_ha/       Home Assistant MQTT-Discovery client (source + controller)
+  pb_moonraker/ Moonraker WebSocket client (Klipper bed state)   [vendored]
+  pb_wifi/     Wi-Fi + captive portal core                        [vendored]
+  pb_evlog/    in-memory event log ring                           [vendored]
+  pb_leds/     front-panel status LEDs
   pb_buttons/  front-panel button poll/debounce + short/long-press
   pb_hil/      JSON serial HIL console + safe dev-board injection
-  pb_httpd/    HTTP control API (CSRF-gated mutations)
-  pb_portal/   captive-portal provisioning + live status dashboard
+  pb_httpd/    HTTP control API (CSRF-gated mutations) + /console log ring
+  pb_portal/   captive-portal + control-source setup + dashboard/diag/console pages
 main/          app_main: safety-first init + control loop
 docs/          hardware map, safety model, HIL guide, NTC RE report
 ```

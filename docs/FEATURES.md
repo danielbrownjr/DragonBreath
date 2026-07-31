@@ -1,7 +1,8 @@
 # DragonBreath — feature set
 
-Current as of **v0.7.2**. Open ESP-IDF firmware for the BIGTREETECH Panda Breath
-(ESP32-C3) chamber heater with Moonraker/Klipper + local web control.
+Current as of **v1.0.1-rc1**. Open ESP-IDF firmware for the BIGTREETECH Panda Breath
+(ESP32-C3) chamber heater with a selectable control source (Klipper/Moonraker, Home
+Assistant, or Bambu LAN) + local web control.
 
 See [`OEM_PARITY.md`](OEM_PARITY.md) for the explicit implemented/planned/
 intentionally-changed feature matrix.
@@ -18,11 +19,20 @@ heat after a reboot.
 | **Manual / Power-On** | Holds the chamber at a set target. Remote sessions take a device-issued lease and must heartbeat to stay alive. | `power_on` command (web "Manual heat", or Klipper `M141`/`SET_HEATER_TEMPERATURE`). |
 | **Automatic (follow bed)** | Watches the printer's bed temperature (via Moonraker) and heats the chamber to the target whenever the bed is at/above a threshold; disengages below threshold − 3 °C. Autonomous (no host heartbeat), requires the Moonraker link. | `auto` command / web "Follow printer bed". |
 | **Filament drying** | Holds the chamber at a target for a bounded duration (1–12 h), then auto-off. Material presets pre-fill target + duration. | `drying_start` / web "Filament drying". |
-| **Fan-only filtration** | Runs the chamber blower with **no heat** to filter/circulate air. Two paths: (a) automatic in AUTO — the blower runs alone once the bed reaches `filter_temp` (default 30 °C), before the heater engages; (b) a mode-independent manual toggle. Enabling manual filtration is idle-only (rejected while heating/cooling); turning it off always works. | `filter` command / web "Filtration" button; AUTO band via `filter_temp`/`filter_auto`. |
+| **Fan-only filtration** | Runs the chamber blower with **no heat** to filter/circulate air. Two paths: (a) the automatic **standing band** — the blower runs alone whenever `filter_auto` is enabled (**off by default**) + the source is connected + the bed **setpoint** reaches `filter_temp` (default 30 °C), independent of mode (even while idle); (b) a mode-independent manual toggle. Enabling manual filtration is idle-only (rejected while heating/cooling); turning it off always works. | `filter` command / web "Filtration" button; standing band via `filter_temp`/`filter_auto`. |
 
 Commands are **revision-aware** (a stale writer can't clobber newer state) and
 **idempotent** (request-ID replay cache); `off`/`drying_stop`/`filter` are always
 accepted and never cached.
+
+**Control source (choose one).** The device binds to exactly one printer/controller
+at a time, selected on `/setup`: **Klipper/Moonraker** (default, hardware-validated),
+**Home Assistant** (native MQTT Discovery — climate entity + chamber/element sensors;
+validated against a live HA instance), or **Bambu LAN** (experimental, read-only
+bed-follow; not yet validated on a real printer). They are mutually exclusive; the
+selection drives AUTO's bed feed and is reported as `environment.control_source`
+(`klipper`/`bambu`/`ha`) in the state API. The heater safety model is identical and
+source-independent.
 
 AUTO and filament drying are implemented in the policy/API; drying is validated
 end-to-end on hardware. The AUTO dashboard control is still tracked as partial
@@ -65,8 +75,14 @@ Defense-in-depth — see [`SAFETY.md`](SAFETY.md) for the full model.
   the residual-heat purge releases here (engages one 3 °C band above it).
 - **Element-foldback cut** (`fb_cut`) — default auto (per-Rref); override 90–104 °C.
   Advanced/experts-only — see `tools/diag.py`. Never exceeds 104 °C.
-- **AUTO filtration band** — `filter_temp` (default 30 °C, 20–60 °C) + `filter_auto`
-  (on/off) control the fan-only filtration band in AUTO mode.
+- **Filtration band** — `filter_temp` (default 30 °C, 20–60 °C) + `filter_auto`
+  (on/off, **default off** — opt-in) control the fan-only filtration band. It is a
+  **standing** band (stock-shaped): once enabled, whenever Moonraker is connected the
+  blower runs alone once the print's bed **setpoint** reaches `filter_temp` —
+  independent of mode, so it filters even on prints that never reach the AUTO
+  heat-engage threshold and while idle. The heater still engages only in AUTO at the
+  higher bed threshold. (Off-by-default diverges from stock; see
+  [`OEM_PARITY.md`](OEM_PARITY.md).)
 
 Exposed via `GET`/`POST /settings` and the web UI's Settings cards. The fixed
 over-temp cutoffs are not settable.
@@ -125,15 +141,20 @@ toggle. Fault airflow is always forced on regardless.
 
 Versioned JSON API — full contract in [`api-v2.md`](api-v2.md):
 
-- `GET /api/v2/info` · `state` · `health` — identity, authoritative snapshot,
-  diagnostics (no side effects).
+- `GET /api/v2/info` · `state` · `health` · `logs` · `calibration` — identity,
+  authoritative snapshot, diagnostics, event ring, calibration (no side effects).
 - `GET /api/v2/events` — Server-Sent Events push (state transitions + telemetry);
   replaces polling.
+- `GET /api/v2/console` — **auth-gated** `text/plain` snapshot of the firmware
+  `ESP_LOGx` ring (backs the `/console` page; the one read that needs the header
+  since raw logs aren't world-readable).
 - `POST /api/v2/command` · `heartbeat` — auth-gated, revision-aware control +
   exact-lease heartbeats.
-- `GET`/`POST /settings` — runtime safety settings.
-- `POST /update` — authenticated app-image OTA (rejects foreign images; refused
-  while heating).
+- `GET`/`POST /settings` · `POST /api/v2/calibration` · `token` · `restart` ·
+  `factory-reset` · `boot-inactive` — runtime safety settings, sensor calibration,
+  control token, and maintenance (restart / factory reset / boot the inactive OTA slot).
+- `POST /update` — authenticated app-image OTA (accepts a DragonBreath **or** a stock
+  `panda_breath` image, for revert; refused while heating).
 
 **Security:** every mutating route requires an `X-DragonBreath-Auth` header
 (CSRF hardening for a trusted LAN; optional NVS control token for real per-client
@@ -146,9 +167,16 @@ watchdog.
   mode, target, fan + reason, controller/link) with Manual / Automatic / Dry /
   Filtration controls and a Settings screen. Responsive and **light/dark themed**:
   full layout on desktop at any width; stacks vertically on touch devices.
-- **Captive provisioning** (`/setup`, Wi-Fi + Moonraker in AP mode) and **OTA**
-  (`/fw`) pages match the dashboard theme (light/dark). The OTA page streams the
-  image with a live %, then returns to the dashboard once the device reboots.
+- **Setup / provisioning** (`/setup`) — Wi-Fi + the control-source selector
+  (Klipper/Bambu/HA and its per-source fields); also the AP captive-portal root when
+  unprovisioned. **OTA** (`/fw`) streams the image with a live %, then returns to the
+  dashboard once the device reboots. Both match the dashboard theme (light/dark).
+- **`/diag`** — read-only live telemetry (chamber/PTC temps, SSR output, mode, fault,
+  running element-temp peak) over SSE, with a trend chart and a client-side CSV
+  download. Zero device RAM.
+- **`/console`** — terminal-style viewer of the firmware `ESP_LOGx` ring (boot log
+  included) with auto-refresh and `.txt` download; useful on no-USB hardware where the
+  serial console is otherwise unreachable. Backed by auth-gated `GET /api/v2/console`.
 - mDNS: reachable at **`dragonbreath.local`**.
 
 ## Klipper / Moonraker integration
@@ -163,21 +191,25 @@ exact-lease heartbeats, reactor-safe). Deploy lockstep with the firmware.
 The dashboard can also be embedded in the Fluidd/Mainsail printer view via a
 Moonraker `[webcam]` `iframe` — see the DragonBreath README.
 
-DragonBreath also reads printer/bed state directly from Moonraker for AUTO mode.
-The stock firmware can likewise obtain bed temperature from Moonraker in
-Klipper mode, or from a Bambu printer over Bambu MQTT. Stock v1.0.4 additionally
-exposes Panda Breath state/control through Home Assistant MQTT. DragonBreath
-intentionally implements the Klipper/Moonraker path only; none of these stock
-paths require a vendor cloud.
+For AUTO mode, DragonBreath reads the bed state from whichever **control source** is
+selected on `/setup` (see *Control modes* above): Moonraker (Klipper, default), Home
+Assistant over MQTT, or a Bambu printer over its LAN MQTT. This mirrors the stock
+firmware's own multi-source support (Moonraker / Bambu MQTT / Home Assistant MQTT) —
+Klipper is the default and hardware-validated path, HA is validated, and Bambu is
+experimental. None of these require a vendor cloud (Bambu uses the printer's on-device
+LAN broker).
 
 ## Platform / release
 
 - ESP32-C3-MINI-1; shares the [OpenVent](https://github.com/justinh-rahb/OpenVent)
   core (Wi-Fi, captive portal, Moonraker client), vendored locally (see VENDORING.md).
-- **OTA with rollback** (bad image reverts on next boot).
-- **Reproducible CI releases** — tag `v*` → factory image, OTA image, install
-  bundle, `manifest.json` (source SHA, ESP-IDF version, per-artifact SHA-256),
-  and `SHA256SUMS.txt`.
+- **No-USB install/revert** on the stock partition layout — installs and reverts
+  through the stock firmware's own OTA updater; **dual-slot OTA with rollback** (bad
+  image reverts on next boot), plus a "boot inactive slot" one-click revert to stock.
+- **Reproducible CI releases** — tag `v*` → the **app image** (`dragonbreath-<ver>.bin`),
+  `manifest.json` (source SHA, ESP-IDF version, per-artifact SHA-256), and
+  `SHA256SUMS.txt`. (App-only since v1.0.0; the full-image/USB machinery is kept in the
+  repo for recovery only.)
 - **CI static analysis + tests** — cppcheck over `components/`+`main/` and
   `-Wall -Wextra -Werror` on every first-party component, plus host/simulation
   tests (heater safety-trip ladder, NTC classify, policy state machine incl. the
