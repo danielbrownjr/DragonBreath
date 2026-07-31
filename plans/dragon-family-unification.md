@@ -1,13 +1,13 @@
 # RFC: Dragon\* firmware family — unification
 
-Status: **Draft / design — for review (plastikman + Justin).** Unify the BIGTREETECH
+Status: **Draft / design — for review (plastikman + @justinh-rahb).** Unify the BIGTREETECH
 **Panda** open-firmware efforts under one **Dragon\*** family: a single board-agnostic
 **shared core** consumed by product firmwares (DragonBreath, DragonVent), living in a
 new shared GitHub org. This RFC is the umbrella; the
 [HTTP device-interface decouple RFC](decouple-httpd-device-interface.md) is its
 technical prerequisite.
 
-## Decisions locked (plastikman + Justin)
+## Decisions locked (plastikman + @justinh-rahb)
 
 1. **Shared core = a new standalone repo with a family-neutral prefix**, and a
    **clean-break prefix rename across the board**: kill `pb_`/`pv_` (legacy Panda
@@ -15,7 +15,7 @@ technical prerequisite.
    (DragonVent). No aliases (mirrors the OpenBreath→DragonBreath rebrand).
 2. **DragonVent is a fresh repo built on the extracted core** (not on OpenVent's core).
    OpenVent is archived with a pointer to DragonVent.
-3. **A new shared GitHub org**, co-owned by plastikman + Justin, is the home for the
+3. **A new shared GitHub org**, co-owned by plastikman + @justinh-rahb, is the home for the
    core, the products, **and the Klipper helper(s)** (`dragonbreath-klipper` moves in).
 4. **Scope for this pass: DragonBreath + DragonVent only.** Other Panda\* products
    onboard later by supplying a device implementation + UI descriptor.
@@ -99,7 +99,7 @@ only proven once the shipped product still passes on it.
 Moonraker `[update_manager]` origins, `help_url`s). The Klipper helper lives in the
 family org alongside the firmware.
 
-**4. DragonVent — fresh repo on `dragon-core`.** New `DragonVent` repo; Justin supplies
+**4. DragonVent — fresh repo on `dragon-core`.** New `DragonVent` repo; @justinh-rahb supplies
 the Vent device implementation (`dv_*` board + motor groups + kit auto-detect ADC) and
 its UI descriptor. Validate on Vent hardware. **Archive OpenVent** with a README pointer
 to DragonVent (no history migration — the core lineage differs).
@@ -111,7 +111,7 @@ descriptor, no core fork.
 
 - **Core + DragonBreath refactor (steps 1–3): plastikman** — owns the code, the
   hardware, the HIL harness, and the shipped 1.0 the refactor must not regress.
-- **DragonVent device impl (step 4): Justin** — owns the Vent hardware and its behavior.
+- **DragonVent device impl (step 4): @justinh-rahb** — owns the Vent hardware and its behavior.
 - **`dragon-core` interface + governance: joint** — both maintain; the `dc_device`
   contract changes need both products in mind.
 
