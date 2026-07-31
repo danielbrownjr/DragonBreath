@@ -26,6 +26,73 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 [`docs/HARDWARE.md`](docs/HARDWARE.md) · hardware-in-loop testing →
 [`docs/HIL.md`](docs/HIL.md).
 
+## Install & update
+
+DragonBreath installs **over the stock firmware as an ordinary app update — no USB,
+no full-flash erase.** It ships on the **stock partition layout**, so the factory
+bootloader and the stock app in the *other* OTA slot stay in place: installing is
+just uploading the DragonBreath app image from the stock web UI, and the stock image
+is still sitting there to go back to.
+
+> 💾 **Back up your stock firmware first — strongly recommended.** BIGTREETECH does
+> **not** publish stock images. Installing over stock leaves the factory image in the
+> *inactive* OTA slot, so you can flip back to it with **Settings → Boot inactive
+> slot** — but only until you later OTA-update DragonBreath, which overwrites that
+> slot with the previous DragonBreath version. A USB backup is the durable,
+> always-available way home. Take one and copy it somewhere safe before you start:
+> ```bash
+> python3 tools/flash.py --backup-only        # verified full stock backup, no flashing
+> ```
+> This talks to the board over the on-board CH340K USB-C bridge (native USB is
+> unavailable — GPIO18 is the SSR).
+
+**Install (stock → DragonBreath), no USB needed:**
+1. Download `dragonbreath-<ver>.bin` from a [release](../../releases) — or build it
+   (`idf.py build` → `build/dragonbreath.bin`). Optionally verify it against the
+   release `SHA256SUMS.txt`. Each release also ships a `manifest.json` (source SHA,
+   ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
+2. Open the **stock** Panda web UI and use its **Firmware Update** to upload that
+   `.bin`. Stock writes it to the inactive OTA slot and reboots into it.
+3. DragonBreath comes up. If it doesn't rejoin your WiFi, connect to the
+   **`DragonBreath_XXXX`** AP (password **`987654321`**, same as the stock Panda) and
+   a browser should pop the setup page automatically (or open `http://192.168.4.1`).
+
+> ⚠️ **Don't hold a front-panel button while powering the board on.** Power, Auto,
+> and Dry sit on ESP32-C3 strapping pins (GPIO9 is ROM download-mode); a held
+> button pulls its strap low at reset and the board won't boot normally.
+> DragonBreath also ignores any button already down at power-on until you release
+> it. On (GPIO10) is the only button on a non-strapping pin.
+
+**Updating DragonBreath:** open the **Firmware update** link on the status page (the
+`/fw` page) and upload the new `dragonbreath-<ver>.bin` (or `build/dragonbreath.bin`).
+It lands in the inactive OTA slot, is verified, and the device reboots into it; a bad
+image rolls back on the next boot. Updates are refused while the heater is on.
+
+**Reverting to stock — boot back to Panda:** because DragonBreath installs *alongside*
+the factory image (the stock app stays in the other OTA slot), the fastest way back is
+to just boot it — no flashing, nothing erased:
+
+<p><img src="docs/screenshots/revert.png" width="520" alt="Settings → Maintenance: Boot inactive slot reverts to the stock Panda image"></p>
+
+1. Open the dashboard **Settings** tab and scroll to **Maintenance**. The **Inactive
+   slot** row names what will boot — e.g. *stock Panda 1 — your way back to stock*.
+2. Turn the heater off (the action is refused while heating), then click **Boot
+   inactive slot** and confirm. The device flips the boot pointer and reboots into the
+   stock firmware.
+
+This works until you've OTA-updated DragonBreath at least once, after which the
+inactive slot holds the *previous DragonBreath* instead of stock. So a **USB backup
+stays your durable way home** — and web OTA also accepts a stock `panda_breath` image,
+so you can re-flash your saved backup over WiFi from the `/fw` page (refused while the
+heater is on).
+
+**USB is recovery-only.** `tools/flash.py` remains for taking a full stock backup
+(`--backup-only`), restoring one, or unbricking a board that won't boot:
+```bash
+python3 tools/flash.py --backup-only                                 # save a stock backup
+python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB restore
+```
+
 ## Status
 | Component | State |
 |---|---|
@@ -43,8 +110,9 @@ OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 | Filament-dry mode | ✅ Timed dry with material presets; validated end-to-end on hardware |
 | Auto (follow-bed) mode | 🚧 Shipped in the state machine + UI; end-to-end hardware soak in progress |
 | Fan-only filtration | ✅ Standing fan-only band (`filter_temp`, opt-in/**off by default**) — runs on the bed setpoint independent of mode (stock-shaped) + mode-independent manual `filter` control (dashboard + API); idle-only to enable |
-| Flasher (`tools/flash.py`) | ✅ Backs up full stock flash first, then flashes; `--restore` returns to stock |
-| Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware (DragonBreath-only, refused while heating) |
+| Install / revert | ✅ **No-USB**: installs over stock as an app-only OTA (stock partition layout); revert via **Boot inactive slot** or by re-uploading a stock image over web OTA |
+| Flasher (`tools/flash.py`) | ✅ Recovery/backup tool: `--backup-only` saves a verified full stock backup, `--restore` writes one back, default path unbricks over USB |
+| Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware — accepts a DragonBreath **or** a stock `panda_breath` image (for revert); refused while heating |
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |
 | Control source (`pb_source`/`pb_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (experimental, untested on real hardware) |
 | On-device diagnostics pages | ✅ `/diag` (live SSE telemetry + trend + CSV) and `/console` (firmware `ESP_LOGx` viewer via auth-gated `GET /api/v2/console`) — shipped v0.8.0 |
@@ -113,6 +181,28 @@ into a "clear → trip again" loop. The foldback cut point is per-Rref (99 °C o
 exceed 104 °C, so it cannot defeat the hard cutoff. No firmware can *guarantee* the
 absence of a fault; read [`docs/SAFETY.md`](docs/SAFETY.md) before touching heater
 code and supervise the device.
+
+## Control sources
+DragonBreath binds to **one** controller at a time, chosen on the **setup** page
+(`/setup`, and the AP captive portal) under **Control source**. Pick one and the
+others are disabled — there is exactly one controller.
+
+| Klipper / Moonraker | Bambu (LAN) | Home Assistant |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/setup-klipper.png" width="240" alt="Control source: Klipper (Moonraker) — host and port"> | <img src="docs/screenshots/setup-bambu.png" width="240" alt="Control source: Bambu (LAN) — printer IP, serial, LAN access code"> | <img src="docs/screenshots/setup-ha.png" width="240" alt="Control source: Home Assistant — MQTT broker, port, credentials, topic prefix"> |
+
+- **Klipper / Moonraker** — *first-class; the primary target.* With the
+  [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) helper it
+  shows up as `[heater_generic dragonbreath]` (M141/M191) plus a fan-only filtration
+  toggle, and AUTO mode follows the printer bed. Validated end-to-end on hardware.
+- **Home Assistant** — *first-class.* Native MQTT Discovery: the device advertises a
+  climate entity plus chamber/element sensors, takes setpoint/mode commands over MQTT,
+  and publishes retained state. Validated against a live Home Assistant instance.
+- **Bambu (LAN)** — *experimental — **testers wanted.*** A LAN-MQTT client that follows
+  a Bambu printer's bed/chamber the way AUTO follows Moonraker. It is wired up and
+  builds, but has **not been tested on a real Bambu printer** (we don't have one). If
+  you can help, please [open an issue](../../issues) with logs from an actual Bambu
+  setup — that's what it needs to graduate from experimental.
 
 ## Control API & access
 `pb_httpd` exposes the versioned HTTP/JSON API on port 80:
@@ -198,51 +288,6 @@ git clone https://github.com/plastikman/DragonBreath
 idf.py set-target esp32c3
 idf.py build
 ```
-
-## Install & update
-
-> 🛑 **BACK UP YOUR DEVICE FIRST. THIS IS IRREVERSIBLE WITHOUT A BACKUP.**
-> Installing DragonBreath **overwrites the entire flash** and **erases the stock
-> firmware**. BIGTREETECH does **not** publish stock images, so **the full backup
-> you take is the ONLY way back to stock.** If you skip the backup (or lose the
-> file), there is **no going back** — you will be permanently on custom firmware.
-> `tools/flash.py` takes and verifies this backup automatically before writing;
-> **do not use `--no-backup`** unless you already have a known-good backup stored
-> somewhere safe. Copy the backup off your machine (cloud/USB) before flashing.
-
-**First install (stock → DragonBreath):** use the flasher, which backs up the
-*entire* stock flash to a timestamped image **before** writing anything, so you
-can return to stock. Flashing is over the on-board CH340K USB-C bridge
-(native USB is unavailable — GPIO18 is the SSR):
-```bash
-python3 tools/flash.py                 # backup stock, then flash DragonBreath
-python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin   # back to stock
-```
-**Or from a published [release](../../releases)** (no build needed): download
-`dragonbreath-<ver>-install-bundle.zip`, verify it (`sha256sum -c SHA256SUMS.txt`),
-unzip, and run `python3 flash.py --build-dir .` — the same stock-backup-first flow.
-A single-image `dragonbreath-<ver>-factory.bin` is also published for
-`esptool.py --chip esp32c3 write_flash 0x0 …`, but that path does **not** back up
-stock — use it only if you already have a backup. Each release also ships a
-`manifest.json` (source SHA, ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
-
-First boot with no stored WiFi starts an `DragonBreath_XXXX` AP + captive portal for
-provisioning. The AP password is **`987654321`** (same as the stock Panda). Connect
-to it and a browser should pop the setup page automatically (or open `http://192.168.4.1`).
-
-> ⚠️ **Don't hold a front-panel button while powering the board on.** Power, Auto,
-> and Dry sit on ESP32-C3 strapping pins (GPIO9 is ROM download-mode); a held
-> button pulls its strap low at reset and the board won't boot normally.
-> DragonBreath also ignores any button already down at power-on until you release
-> it. On (GPIO10) is the only button on a non-strapping pin.
-
-**Updating DragonBreath:** once running, open the **Firmware update** link on the
-status page (the `/fw` page) and upload `build/dragonbreath.bin` (or the
-`dragonbreath-<ver>.bin` app image from a release). The image lands in
-the inactive OTA slot, is verified, and the device reboots into it; a bad image
-rolls back on the next boot. Web OTA is **DragonBreath-only** — it does **not**
-restore stock firmware (use `tools/flash.py --restore` for that) and is refused
-while the heater is on.
 
 ## Layout
 ```
