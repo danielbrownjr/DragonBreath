@@ -32,10 +32,14 @@ guarantee** — no firmware can promise the absence of every fault.
   104 °C, and does not touch the fixed 105 °C hardware cutoff.
 - **Chamber over-temp** → force off at 85 °C.
 - **Sensor fault while heating** (open/short) → fail-closed.
-- **Comms-loss watchdog** → if no controller link for 5 min while heating, latch
-  off. (The device can't tell "idle hold" from "controller crashed", so a live
-  link must be refreshed via `pb_heater_notify_link_alive()`.)
-- **Set-point clamp** → target capped at `PB_HEATER_MAX_TARGET_C` (70 °C).
+- **Comms-loss watchdog** → if no controller link while heating for the watchdog
+  timeout — **5 min by default, runtime-configurable to 10 s–5 min** (`comms_ms`,
+  clamped to `[PB_HEATER_COMMS_TIMEOUT_MS_MIN, …_MAX]`; never disabled or beyond
+  5 min) — latch off. (The device can't tell "idle hold" from "controller crashed",
+  so a live link must be refreshed via `pb_heater_notify_link_alive()`.)
+- **Set-point clamp** → target capped at the runtime `max` ceiling (default 70 °C),
+  itself hard-bounded by `PB_HEATER_ABS_MAX_TARGET_C` (70 °C) — a target can never
+  exceed the absolute cap regardless of settings.
 - **Boot state** → SSR forced OFF in `pb_heater_init()` before anything else runs;
   a hung control loop trips the task watchdog (`CONFIG_ESP_TASK_WDT_PANIC`).
 

@@ -1,8 +1,10 @@
 # RFC: `/diag` and `/console` web pages
 
-Status: **Draft / design.** Two read-only, non-interactive web pages served by the
-device — a diagnostics telemetry view and a firmware console log — themed to match
-`/fw` and `/setup`, each with a `[Download]` button. No on-device persistence.
+Status: **✅ Implemented in v0.8.0.** Two read-only, non-interactive web pages served
+by the device — a diagnostics telemetry view (`/diag`) and a firmware console log
+(`/console`, backed by the auth-gated `GET /api/v2/console`) — themed to match `/fw`
+and `/setup`, each with a `[Download]` button. No on-device persistence. The RFC below
+is retained as the design record.
 
 ## Motivation
 

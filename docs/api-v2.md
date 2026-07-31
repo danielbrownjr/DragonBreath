@@ -23,6 +23,14 @@ routes require `X-DragonBreath-Auth`; the device does not enable CORS.
 - `GET /api/v2/logs` — the in-memory event ring (newest first) as
   `{"api_version":2,"count":N,"entries":[{"ms":<millis since boot>,"text":"…"}]}`.
   Open (read-only, no side effects).
+- `GET /api/v2/console` — **auth-gated** (`X-DragonBreath-Auth`) `text/plain` snapshot
+  of the firmware `ESP_LOGx` byte ring (boot log included), backing the `/console`
+  page. The one GET that requires the header: raw logs are chatty and not
+  world-readable. No side effects.
+
+`GET /api/v2/info` also returns `project` (the running app's project name —
+`dragonbreath`, or `panda_breath` on a reverted slot). The **configured control
+source** is reported on `/api/v2/state` (`environment.control_source`), not here.
 
 The complete snapshot, not locally remembered intent, is the source of truth:
 
@@ -56,8 +64,10 @@ The complete snapshot, not locally remembered intent, is the source of truth:
     "ptc": {"temperature_c": 73.1, "status": "ok"}
   },
   "environment": {
+    "control_source": "klipper",
     "moonraker_connected": true,
     "bed_temperature_c": 100.0,
+    "bed_target_c": 100.0,
     "auto_engaged": false,
     "auto_filtering": false,
     "auto_bed_threshold_c": 0.0
@@ -93,6 +103,13 @@ authenticated response that creates a POWER_ON lease returns it.
 `state_revision` changes only for control, mode, lease, fault, and safety
 transitions; ordinary temperature samples and successful heartbeats do not
 increment it.
+
+`environment.control_source` is the configured control binding — `klipper`,
+`bambu`, or `ha` — chosen on `/setup` (distinct from the top-level `source`, which is
+the last actor that changed state). In `bambu` mode the environment also carries
+`bambu_serial`. `environment.bed_target_c` is the **commanded** bed setpoint from that
+source; it (not the measured `bed_temperature_c`) drives the AUTO heat-engage and the
+fan-only filtration band.
 
 `fan.reason` is one of: `off`, `heater` (airflow while heating), `thermal_purge`
 (residual-heat cooldown purge), `auto_filter` (the fan-only filtration band),
@@ -189,7 +206,10 @@ state:
 
 Defined error codes include `invalid_command`, `unsupported_api_version`,
 `auth_failed`, `revision_conflict`, `stale_lease`, `fault_latched`,
-`inhibited`, and `busy`.
+`inhibited`, `heater_busy` (enabling filtration while the heater is heating/cooling —
+HTTP 409), and `persist_failed` (an NVS write did not commit). Separately, `busy` is
+the HTTP 503 returned by `GET /api/v2/events` when both SSE slots are already in use —
+a stream-capacity limit, not a command rejection.
 
 ## Other endpoints (not versioned)
 
@@ -253,6 +273,7 @@ These predate/sit beside the versioned control surface and are stable:
   bad image that crashes before the app marks itself healthy rolls back on the next
   boot.
 
-The device also serves the captive-portal / dashboard HTML on `GET /` (and
-`/setup`, `/fw`, `/scan.json`, `POST /save`, `/rescan`) — the human web UI, not
-part of the machine control contract.
+The device also serves the human web UI (not part of the machine control contract):
+the dashboard on `GET /`, plus `/setup` (Wi-Fi + control-source selector), `/fw` (OTA),
+`/diag` (live diagnostics telemetry + CSV), `/console` (firmware log viewer),
+`/favicon.ico`, `/scan.json`, and `POST /save`, `/rescan`.
