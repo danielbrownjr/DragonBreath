@@ -95,6 +95,89 @@ static esp_err_t nvs_write_str(const char *key, const char *value)
     return err;
 }
 
+// One-time stock->DragonBreath NVS migration. When DragonBreath is OTA-installed over
+// stock (Panda 1.0.3/1.0.4) it inherits stock's `app_nvs`, where WiFi lives in a
+// "wifi_info" blob and Moonraker in "moonraker_info" — different keys than ours. If our
+// own keys are absent, lift the creds out of the stock blobs so the OTA carries WiFi +
+// Moonraker across with NO re-provisioning. Runs once: writes our keys, then it's a
+// no-op every subsequent boot (and never overwrites a user who set creds via /setup).
+// Blob layouts RE'd from stock 1.0.4 NVS (confirmed with distinctive dummy values):
+//   wifi_info[228]:      char ssid[33]@0, char password[64]@33, ap_ssid[33]@97, ...
+//   moonraker_info[132]: char host[64]@0, uint32 port@64 (=printer :80, NOT :7125), name@68
+//   ha_mqtt_info[146]:   char host[16]@0, char user[64]@16, char pass[64]@80, uint16 port@144
+static void migrate_stock_nvs(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    size_t sz;
+
+    if (nvs_get_str(h, KEY_SSID, NULL, &sz) == ESP_ERR_NVS_NOT_FOUND) {
+        size_t blen = 0;
+        if (nvs_get_blob(h, "wifi_info", NULL, &blen) == ESP_OK && blen >= 97) {
+            uint8_t *b = calloc(1, blen);
+            if (b && nvs_get_blob(h, "wifi_info", b, &blen) == ESP_OK) {
+                char ssid[33] = {0}, pass[64] = {0};
+                memcpy(ssid, b, 32);       // ssid[33]@0, keep the trailing NUL
+                memcpy(pass, b + 33, 63);  // password[64]@33
+                if (ssid[0]) {
+                    nvs_set_str(h, KEY_SSID, ssid);
+                    nvs_set_str(h, KEY_PASS, pass);
+                    ESP_LOGW(TAG, "migrated stock WiFi (ssid '%s') from wifi_info blob", ssid);
+                }
+            }
+            free(b);
+        }
+    }
+
+    if (nvs_get_str(h, "mk_host", NULL, &sz) == ESP_ERR_NVS_NOT_FOUND) {
+        size_t blen = 0;
+        if (nvs_get_blob(h, "moonraker_info", NULL, &blen) == ESP_OK && blen >= 64) {
+            uint8_t *b = calloc(1, blen);
+            if (b && nvs_get_blob(h, "moonraker_info", b, &blen) == ESP_OK) {
+                char host[64] = {0};
+                memcpy(host, b, 63);   // host[64]@0
+                if (host[0]) {
+                    nvs_set_str(h, "mk_host", host);
+                    nvs_set_u16(h, "mk_port", 7125);   // stock stores printer :80; DB wants Moonraker :7125
+                    ESP_LOGW(TAG, "migrated stock Moonraker host '%s' (port->7125)", host);
+                }
+            }
+            free(b);
+        }
+    }
+
+    // Home Assistant MQTT: stock "ha_mqtt_info" blob (146 B):
+    //   char host[16]@0, char user[64]@16, char pass[64]@80, uint16 port@144 (no topic).
+    if (nvs_get_str(h, "ha_host", NULL, &sz) == ESP_ERR_NVS_NOT_FOUND) {
+        size_t blen = 0;
+        if (nvs_get_blob(h, "ha_mqtt_info", NULL, &blen) == ESP_OK && blen >= 146) {
+            uint8_t *b = calloc(1, blen);
+            if (b && nvs_get_blob(h, "ha_mqtt_info", b, &blen) == ESP_OK) {
+                char host[16] = {0}, user[64] = {0}, pass[64] = {0};
+                memcpy(host, b, 15);
+                memcpy(user, b + 16, 63);
+                memcpy(pass, b + 80, 63);
+                uint16_t port = (uint16_t)(b[144] | (b[145] << 8));
+                if (host[0]) {
+                    nvs_set_str(h, "ha_host", host);
+                    nvs_set_str(h, "ha_user", user);
+                    nvs_set_str(h, "ha_pass", pass);
+                    if (port) nvs_set_u16(h, "ha_port", port);
+                    ESP_LOGW(TAG, "migrated stock HA MQTT broker '%s' from ha_mqtt_info", host);
+                }
+            }
+            free(b);
+        }
+    }
+    // NOTE: stock "bambu_mqtt_info" (169 B) is intentionally NOT migrated — its blob
+    // layout is unknown (stock refuses to persist Bambu without a live printer to bind,
+    // so we have no populated sample to RE from). DragonBreath's Bambu source is
+    // experimental anyway; add this once we have a real Bambu-configured stock backup.
+
+    nvs_commit(h);
+    nvs_close(h);
+}
+
 static bool load_saved_creds(char *ssid, size_t ssid_sz, char *pass, size_t pass_sz)
 {
     esp_err_t err = nvs_read_str(KEY_SSID, ssid, ssid_sz);
@@ -294,6 +377,10 @@ esp_err_t pb_wifi_start(void)
     } else if (err != ESP_OK) {
         return err;
     }
+
+    // First boot after an OTA-over-stock: carry WiFi + Moonraker across from stock's
+    // app_nvs blobs so the device rejoins without re-provisioning.
+    migrate_stock_nvs();
 
     // Netif + event loop
     ESP_ERROR_CHECK(esp_netif_init());

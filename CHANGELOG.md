@@ -7,6 +7,30 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-31
+
+**Seamless config carry-over when installing over stock — WiFi, Moonraker, and Home
+Assistant now transfer automatically, with no captive-portal re-provisioning.**
+
+### Added
+- **Stock → DragonBreath NVS carry-over shim.** When DragonBreath is OTA-installed over
+  the stock Panda firmware, it reads stock's `app_nvs` blobs on first boot and populates
+  its own keys, so the device **rejoins the same WiFi and reconnects to Moonraker/HA
+  automatically:**
+  - `wifi_info` → `ssid` / `password` (rejoins WiFi — previously the OTA dropped to AP
+    setup, because stock stores WiFi as a blob under different keys than we read).
+  - `moonraker_info` → `mk_host` (`mk_port` defaults to Moonraker's `7125`, since stock's
+    port field is the printer's HTTP port).
+  - `ha_mqtt_info` → `ha_host` / `ha_user` / `ha_pass` / `ha_port` (Home Assistant MQTT).
+
+  Runs once and is non-destructive: it only fills in keys that are absent (never
+  overrides a user who provisioned via `/setup`), and the stock blobs are left intact.
+  Verified on hardware for all three (blob layouts RE'd with distinctive dummy values;
+  identical on stock 1.0.3/1.0.4). This is the linchpin for the no-USB Panda→DragonBreath
+  migration (`plans/panda-to-dragon-migration.md`).
+  Bambu (`bambu_mqtt_info`) is intentionally not carried yet — stock won't persist a
+  Bambu config without a live printer to bind, so there's no populated sample to RE from.
+
 ## [1.0.1] - 2026-07-31
 
 Makes the automatic fan-only **filtration band** work without arming AUTO mode — it now
