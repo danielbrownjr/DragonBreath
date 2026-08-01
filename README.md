@@ -53,9 +53,12 @@ is still sitting there to go back to.
    ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
 2. Open the **stock** Panda web UI and use its **Firmware Update** to upload that
    `.bin`. Stock writes it to the inactive OTA slot and reboots into it.
-3. DragonBreath comes up. If it doesn't rejoin your WiFi, connect to the
-   **`DragonBreath_XXXX`** AP (password **`987654321`**, same as the stock Panda) and
-   a browser should pop the setup page automatically (or open `http://192.168.4.1`).
+3. DragonBreath comes up and **rejoins your WiFi automatically** — it carries the WiFi
+   credentials (and the Moonraker host) over from the stock firmware's stored config on
+   first boot, so there's normally nothing to re-enter. If it can't join (e.g. you've
+   since changed networks), connect to the **`DragonBreath_XXXX`** AP (password
+   **`987654321`**, same as the stock Panda) and a browser should pop the setup page
+   automatically (or open `http://192.168.4.1`).
 
 > ⚠️ **Don't hold a front-panel button while powering the board on.** Power, Auto,
 > and Dry sit on ESP32-C3 strapping pins (GPIO9 is ROM download-mode); a held
