@@ -564,6 +564,20 @@ static esp_err_t config_page(httpd_req_t *req)
     SEND(req, PAGE_HDR);     // product header kept on /setup + AP captive portal
     SEND(req, WRAP_OPEN);
     send_auth_inject(req);
+    // If a prior join attempt failed and dropped us back to the portal, say why —
+    // server-side so it renders even in a phone's captive-portal mini-browser.
+    {
+        char fssid[33], freason[160];
+        if (pb_wifi_last_sta_fail(fssid, sizeof fssid, freason, sizeof freason)) {
+            char eb[200], banner[512];
+            html_attr_escape(fssid, eb, sizeof eb);
+            snprintf(banner, sizeof banner,
+                "<div class=card><b class=warn>Couldn't join \xE2\x80\x9C%s\xE2\x80\x9D</b>"
+                "<br><small>%s. Check the details below and try again.</small></div>",
+                eb, freason);
+            SEND(req, banner);
+        }
+    }
     // In STA mode Wi-Fi is already provisioned, so the network dropdown defaults to
     // "keep current Wi-Fi" (blank) — a config-only save won't rewrite creds. In AP
     // provisioning there are no creds yet, so a network must be chosen.

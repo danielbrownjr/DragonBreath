@@ -43,6 +43,13 @@ static esp_netif_t *s_ap_netif = NULL;
 static int s_retry = 0;
 static bool s_mdns_started = false;
 
+// Last STA-attempt bookkeeping, so the AP setup page can explain a failed join
+// instead of silently bouncing the user back to the portal. RAM-only: the AP
+// fallback happens in the same boot as the failure, so no NVS persistence needed.
+static char    s_sta_ssid[33]     = {0};    // SSID of the current/last STA attempt
+static uint8_t s_last_disc_reason = 0;      // last STA_DISCONNECTED reason code
+static bool    s_sta_failed       = false;  // last STA attempt failed -> AP fallback
+
 // Scan cache — mutex-protected because on_wifi_event fires on the WiFi task
 // but pb_wifi_get_scan_results is called from the httpd task.
 static SemaphoreHandle_t s_scan_lock = NULL;
@@ -301,6 +308,7 @@ static void start_ap_mode(void)
 static void start_sta_mode(const char *ssid, const char *pass)
 {
     ESP_LOGI(TAG, "connecting to %s", ssid);
+    snprintf(s_sta_ssid, sizeof s_sta_ssid, "%s", ssid);   // remember for a failed-join message
 
     wifi_config_t sta = {0};
     strncpy((char *)sta.sta.ssid,     ssid, sizeof(sta.sta.ssid) - 1);
@@ -339,6 +347,8 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         // Only auto-connect if we're actually trying to be a station.
         if (s_state == PB_WIFI_STATE_STA_CONNECTING) esp_wifi_connect();
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *d = (const wifi_event_sta_disconnected_t *)data;
+        if (d) s_last_disc_reason = d->reason;   // keep the latest reason for the setup page
         if (s_state == PB_WIFI_STATE_STA_CONNECTING || s_state == PB_WIFI_STATE_STA_CONNECTED) {
             if (s_retry < STA_MAX_RETRIES) {
                 s_retry++;
@@ -361,8 +371,44 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
         ESP_LOGI(TAG, "got IP " IPSTR, IP2STR(&evt->ip_info.ip));
         s_retry = 0;
         s_state = PB_WIFI_STATE_STA_CONNECTED;
+        s_sta_failed = false;
         xEventGroupSetBits(s_events, BIT_CONNECTED);
     }
+}
+
+// Map an ESP-IDF STA disconnect reason to a short, user-actionable hint. Returns
+// NULL for reasons without a specific hint (caller shows the raw code instead).
+static const char *sta_disc_reason_hint(uint8_t reason)
+{
+    switch (reason) {
+    case WIFI_REASON_NO_AP_FOUND:
+        return "network not found \xE2\x80\x94 check the name; the heater is 2.4 GHz only "
+               "(5 GHz networks won't work)";
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_AUTH_EXPIRE:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        return "wrong Wi-Fi password";
+    case WIFI_REASON_BEACON_TIMEOUT:
+    case WIFI_REASON_ASSOC_EXPIRE:
+        return "weak signal \xE2\x80\x94 move the device closer to the router";
+    default:
+        return NULL;
+    }
+}
+
+bool pb_wifi_last_sta_fail(char *ssid_out, size_t ssid_sz, char *reason_out, size_t reason_sz)
+{
+    if (!s_sta_failed) return false;
+    if (ssid_out && ssid_sz)
+        snprintf(ssid_out, ssid_sz, "%s", s_sta_ssid);
+    if (reason_out && reason_sz) {
+        const char *hint = sta_disc_reason_hint(s_last_disc_reason);
+        if (hint) snprintf(reason_out, reason_sz, "%s", hint);
+        else      snprintf(reason_out, reason_sz, "couldn't connect (reason %u)",
+                           (unsigned)s_last_disc_reason);
+    }
+    return true;
 }
 
 // ---------- Public API ----------
@@ -419,6 +465,7 @@ esp_err_t pb_wifi_start(void)
             pb_wifi_ap_config_t ap_cfg;
             load_ap_config(&ap_cfg);
             if (ap_cfg.enabled) {
+                s_sta_failed = true;   // let the setup page explain why the join failed
                 ESP_LOGW(TAG, "STA never came up (bits=0x%x) — falling back to AP",
                          (unsigned)bits);
                 start_ap_mode();

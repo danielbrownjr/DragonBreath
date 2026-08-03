@@ -43,6 +43,12 @@ esp_err_t pb_wifi_clear_creds(void);
 
 pb_wifi_state_t pb_wifi_state(void);
 
+// If the last STA connection attempt this boot failed and the device fell back to
+// the AP setup portal, fill ssid_out (the attempted SSID) and reason_out (a short,
+// user-facing hint) and return true. Returns false if the last attempt succeeded
+// or none was made. Either buffer may be NULL to skip it.
+bool pb_wifi_last_sta_fail(char *ssid_out, size_t ssid_sz, char *reason_out, size_t reason_sz);
+
 // Kick off an async scan of visible networks. Returns immediately; results
 // land in the cache when WIFI_EVENT_SCAN_DONE fires. Safe to call in AP mode
 // (driver runs in APSTA so the AP stays up).
