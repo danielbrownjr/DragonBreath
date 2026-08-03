@@ -176,10 +176,30 @@ static void migrate_stock_nvs(void)
             free(b);
         }
     }
-    // NOTE: stock "bambu_mqtt_info" (169 B) is intentionally NOT migrated — its blob
-    // layout is unknown (stock refuses to persist Bambu without a live printer to bind,
-    // so we have no populated sample to RE from). DragonBreath's Bambu source is
-    // experimental anyway; add this once we have a real Bambu-configured stock backup.
+    // Bambu Lab LAN MQTT: stock "bambu_mqtt_info" blob (169 B). Layout RE'd by binding
+    // a stock 1.0.4 Panda to a bambuddy virtual X1C and dumping NVS:
+    //   char ip[16]@0, char access_code[9]@16, char serial[16]@25, char name[128]@41.
+    // (stock only persists this once a live printer bind succeeds — bambuddy provided
+    // the printer.) Map ip->bb_host, serial->bb_serial, access_code->bb_code.
+    if (nvs_get_str(h, "bb_host", NULL, &sz) == ESP_ERR_NVS_NOT_FOUND) {
+        size_t blen = 0;
+        if (nvs_get_blob(h, "bambu_mqtt_info", NULL, &blen) == ESP_OK && blen >= 41) {
+            uint8_t *b = calloc(1, blen);
+            if (b && nvs_get_blob(h, "bambu_mqtt_info", b, &blen) == ESP_OK) {
+                char ip[16] = {0}, code[16] = {0}, serial[16] = {0};
+                memcpy(ip,     b,      15);   // ip[16]@0
+                memcpy(code,   b + 16,  8);   // access_code[9]@16 (8-digit code)
+                memcpy(serial, b + 25, 15);   // serial[16]@25 (15-char serial)
+                if (ip[0] && serial[0]) {
+                    nvs_set_str(h, "bb_host", ip);
+                    nvs_set_str(h, "bb_serial", serial);
+                    nvs_set_str(h, "bb_code", code);
+                    ESP_LOGW(TAG, "migrated stock Bambu printer (serial '%s' @ %s) from bambu_mqtt_info", serial, ip);
+                }
+            }
+            free(b);
+        }
+    }
 
     nvs_commit(h);
     nvs_close(h);
