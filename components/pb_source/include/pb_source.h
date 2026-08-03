@@ -11,6 +11,7 @@ typedef enum {
     PB_SRC_KLIPPER = 0,   // Moonraker WebSocket — default, the real target
     PB_SRC_BAMBU   = 1,   // Bambu LAN MQTT bed-follow (read-only)
     PB_SRC_HA      = 2,   // Home Assistant MQTT — HA is the controller
+    PB_SRC_NONE    = 3,   // unbound — no external controller (web/manual only)
 } pb_ctl_source_t;
 
 // Persisted control source. Returns PB_SRC_KLIPPER if unset or out of range

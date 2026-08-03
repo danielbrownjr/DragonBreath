@@ -4,6 +4,11 @@
 #include "pb_httpd.h"
 #include "pb_wifi.h"
 #include "pb_source.h"
+#include "pb_moonraker.h"
+#include "pb_bambu.h"
+#include "pb_ha.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -300,6 +305,10 @@ static const char PAGE_TAIL[] =
     "var h=hdr();h['Content-Type']='application/x-www-form-urlencoded';"
     "fetch('/save',{method:'POST',headers:h,body:b}).then(done).catch(done);"
     "return false;}"
+    // Unbind: clears the current source's config + drops to None, then reboots.
+    "function unbind(){if(!confirm('Unbind the current control source? The heater will have no external controller until you select a new one.'))return;"
+    "var d=function(){document.getElementById('msg').innerHTML='<h3>Unbound \\u2713</h3><small>Rebooting\\u2026 this page will disconnect.</small>';};"
+    "post('/unbind').then(d).catch(d);}"
     // Toggle visibility; strikethrough the eye when masked (no monkey emoji).
     "function togglePw(){var p=document.getElementById('pw'),e=document.getElementById('eye');"
     "p.type=p.type==='password'?'text':'password';"
@@ -590,17 +599,26 @@ static esp_err_t config_page(httpd_req_t *req)
     // is sized for the largest piece (the HA group + the reveal <script>).
     char buf[640], esc[256];
 
-    // Source selector.
-    snprintf(buf, sizeof buf,
+    // Source selector. One controller at a time (see docs/control-source.md).
+    SEND(req,
         "<div class=card><h2>Control source</h2>"
-        "<label>Bind this heater to</label>"
+        "<small style='color:var(--muted);display:block;margin-bottom:10px'>"
+        "DragonBreath follows <b>one</b> controller at a time \xE2\x80\x94 the others stay disconnected. "
+        "Home Assistant has full control only while it is the selected source; when a printer is bound, HA is not connected. "
+        "To hand control to a different source, <b>Unbind</b> the current one first. "
+        "<a href='https://github.com/plastikman/DragonBreath/blob/main/docs/control-source.md' target=_blank rel=noopener>How control works &rarr;</a></small>"
+        "<label>Bind this heater to</label>");
+    snprintf(buf, sizeof buf,
         "<select id=ctlsrc name=ctl_src onchange='srcshow()'>"
         "<option value=0%s>Klipper (Moonraker)</option>"
         "<option value=1%s>Bambu (LAN)</option>"
-        "<option value=2%s>Home Assistant</option></select>",
+        "<option value=2%s>Home Assistant</option>"
+        "<option value=3%s>None (unbound)</option></select>"
+        "<button type=button class=sec onclick='unbind()' style='margin-top:8px'>Unbind current source</button>",
         src == PB_SRC_KLIPPER ? " selected" : "",
         src == PB_SRC_BAMBU   ? " selected" : "",
-        src == PB_SRC_HA      ? " selected" : "");
+        src == PB_SRC_HA      ? " selected" : "",
+        src == PB_SRC_NONE    ? " selected" : "");
     SEND(req, buf);
 
     // Klipper group.
@@ -643,9 +661,16 @@ static esp_err_t config_page(httpd_req_t *req)
     SEND(req, buf);
     html_attr_escape(ha_topic, esc, sizeof esc);
     snprintf(buf, sizeof buf,
-        "<label>Topic prefix</label><input name=ha_topic value=\"%s\" placeholder='dragonbreath'></div></div>",
+        "<label>Topic prefix</label><input name=ha_topic value=\"%s\" placeholder='dragonbreath'>",
         esc);
     SEND(req, buf);
+    // HA control-mechanism note (static, so it isn't subject to format-truncation).
+    SEND(req,
+        "<small style='color:var(--muted);display:block;margin-top:8px'>"
+        "Home Assistant controls the heater only while it is the selected control source above. When "
+        "Klipper or Bambu is bound, HA is not connected \xE2\x80\x94 Unbind that source first to hand control to HA. "
+        "<a href='https://github.com/plastikman/DragonBreath/blob/main/docs/control-source.md' target=_blank rel=noopener>Details &rarr;</a>"
+        "</small></div></div>");
     // Reveal-only-the-selected-group script (static — kept out of the snprintf
     // above so it isn't subject to format-truncation on a long topic value).
     SEND(req,
@@ -769,7 +794,7 @@ static esp_err_t save_post(httpd_req_t *req)
         // Control source (0=klipper/1=bambu/2=ha); ignore out-of-range.
         if (src_s[0]) {
             int s = atoi(src_s);
-            if (s >= PB_SRC_KLIPPER && s <= PB_SRC_HA) nvs_set_u8(h, "ctl_src", (uint8_t)s);
+            if (s >= PB_SRC_KLIPPER && s <= PB_SRC_NONE) nvs_set_u8(h, "ctl_src", (uint8_t)s);
         }
         // Klipper.
         if (mk_host[0]) nvs_set_str(h, "mk_host", mk_host);
@@ -808,12 +833,40 @@ static esp_err_t save_post(httpd_req_t *req)
     return ESP_OK;                                  // unreachable
 }
 
+// Unbind (stock-style "disconnect"): clear the currently-bound source's config and
+// drop the control source to None, then reboot so the client is fully torn down. A
+// mutating action, so it needs the CSRF header in STA mode (open in AP provisioning).
+static esp_err_t unbind_post(httpd_req_t *req)
+{
+    if (pb_wifi_state() != PB_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"error\":\"missing/invalid X-DragonBreath-Auth header\"}");
+    }
+    pb_ctl_source_t src = pb_source_get();
+    switch (src) {
+    case PB_SRC_KLIPPER: pb_moonraker_clear_config(); break;
+    case PB_SRC_BAMBU:   pb_bambu_clear_config();     break;
+    case PB_SRC_HA:      pb_ha_clear_config();        break;
+    default: break;   // already None — nothing to clear
+    }
+    pb_source_set(PB_SRC_NONE);
+    ESP_LOGI(TAG, "unbind: cleared %s config, control source -> none; rebooting", pb_source_str(src));
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"unbound\":true}");
+    vTaskDelay(pdMS_TO_TICKS(250));   // let the response flush before we reboot
+    esp_restart();
+    return ESP_OK;                     // unreachable
+}
+
 esp_err_t pb_portal_start(void)
 {
     httpd_handle_t s = pb_httpd_handle();
     if (s == NULL) return ESP_ERR_INVALID_STATE;
 
     httpd_uri_t save   = { .uri = "/save",      .method = HTTP_POST, .handler = save_post };
+    httpd_uri_t unbind = { .uri = "/unbind",    .method = HTTP_POST, .handler = unbind_post };
     httpd_uri_t rescan = { .uri = "/rescan",    .method = HTTP_POST, .handler = rescan_post };
     httpd_uri_t scan   = { .uri = "/scan.json", .method = HTTP_GET,  .handler = scan_json };
     httpd_uri_t setup  = { .uri = "/setup",     .method = HTTP_GET,  .handler = config_page };
@@ -823,6 +876,7 @@ esp_err_t pb_portal_start(void)
     httpd_uri_t favic  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_ico };
     httpd_uri_t root   = { .uri = "/*",          .method = HTTP_GET,  .handler = root_page };
     httpd_register_uri_handler(s, &save);
+    httpd_register_uri_handler(s, &unbind);
     httpd_register_uri_handler(s, &rescan);
     httpd_register_uri_handler(s, &scan);
     httpd_register_uri_handler(s, &setup);

@@ -12,13 +12,13 @@ pb_ctl_source_t pb_source_get(void)
         nvs_get_u8(h, KEY_SRC, &v);   // leaves v at default if key absent
         nvs_close(h);
     }
-    if (v > PB_SRC_HA) v = PB_SRC_KLIPPER;   // fail-safe to the shipped path
+    if (v > PB_SRC_NONE) v = PB_SRC_KLIPPER;   // fail-safe to the shipped path
     return (pb_ctl_source_t)v;
 }
 
 esp_err_t pb_source_set(pb_ctl_source_t src)
 {
-    if (src > PB_SRC_HA) return ESP_ERR_INVALID_ARG;
+    if (src > PB_SRC_NONE) return ESP_ERR_INVALID_ARG;
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
@@ -33,6 +33,7 @@ const char *pb_source_str(pb_ctl_source_t src)
     switch (src) {
     case PB_SRC_BAMBU: return "bambu";
     case PB_SRC_HA:    return "ha";
+    case PB_SRC_NONE:  return "none";
     default:           return "klipper";
     }
 }

@@ -1215,7 +1215,7 @@ esp_err_t pb_httpd_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
-    cfg.max_uri_handlers = 28;                     // + /diag, /console, /api/v2/console, /api/v2/boot-inactive
+    cfg.max_uri_handlers = 29;                     // + /diag, /console, /api/v2/console, /api/v2/boot-inactive, /unbind
     // The OTA handler hashes the image (mbedtls) with a 1 KB read buffer + the
     // app descriptor on-stack, which overflows the 4 KB default httpd task stack
     // (stack-protection panic). Give it headroom.

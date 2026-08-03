@@ -228,6 +228,8 @@ static void control_task(void *arg)
                 // drives target/mode through pb_policy directly.
                 if (s_ha_up) pb_ha_tick();
                 break;
+            case PB_SRC_NONE:
+                break;   // unbound: no bed source, feeds zeros/not-connected
             case PB_SRC_KLIPPER:
             default:
                 if (s_mk_up) {
@@ -409,6 +411,9 @@ void app_main(void)
             ESP_LOGE(TAG, "pb_ha_start: %s (continuing; no HA control)", esp_err_to_name(e));
         else
             s_ha_up = true;
+        break;
+    case PB_SRC_NONE:
+        ESP_LOGI(TAG, "control source: none (unbound) — no external controller");
         break;
     case PB_SRC_KLIPPER:
     default:
