@@ -213,9 +213,12 @@ esp_err_t pb_bambu_start(void)
     snprintf(uri, sizeof uri, "mqtts://%s:8883", s_cfg.host);
     esp_mqtt_client_config_t mc = {
         .broker.address.uri = uri,
-        // Self-signed per-device cert (CN=serial) reached by IP: relax verification
-        // for a read-only LAN client. No CA provided -> esp-tls optional verify;
-        // skip the CN check since IP != serial.
+        // Self-signed per-device cert (CN=serial) reached by IP: no CA to verify
+        // against, so a read-only LAN client connects WITHOUT server-cert
+        // verification. With no CA/bundle set, esp-tls falls through to VERIFY_NONE
+        // only because CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY is enabled (see
+        // sdkconfig.defaults) — otherwise it errors "No server verification option
+        // set" and the connect fails. skip the CN check too since IP != serial.
         .broker.verification.skip_cert_common_name_check = true,
         .broker.verification.use_global_ca_store = false,
         .credentials.username = "bblp",
