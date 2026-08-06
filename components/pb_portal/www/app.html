@@ -382,8 +382,12 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   .app-version{ display: block; }
   .chamber-reading strong{ font-size: 32px; }
 }
-.zones-list .zone-row{ display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0; }
-.zones-list .zone-in{ width: 5.5em; }
+.zones-list{ display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; align-items: center; margin-top: 10px; }
+.zones-list .zone-lbl{ color: var(--muted-foreground); font-size: 13px; }
+.zones-list .zone-in{ width: 4.2em; text-align: center; padding: 5px 6px; font: inherit;
+  color: var(--foreground); background: var(--background);
+  border: 1px solid var(--input); border-radius: var(--radius-lg); }
+.zones-list .zone-in:focus{ outline: none; border-color: var(--primary); }
 </style>
 </head>
 <body>
@@ -962,8 +966,8 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
     var list = document.getElementById('zones-list');
     if(!list) return;
     list.innerHTML = zones.map(function(z){
-      return '<div class="zone-row"><label>'+z.name+'</label>'+
-        '<input class="zone-in" type="number" min="0" max="70" step="1" data-zone="'+z.name+'" value="'+z.target_c+'"></div>';
+      return '<span class="zone-lbl">'+z.name+'</span>'+
+        '<input class="zone-in" type="number" min="0" max="70" step="1" data-zone="'+z.name+'" value="'+z.target_c+'">';
     }).join('');
     list.querySelectorAll('.zone-in').forEach(function(inp){
       inp.addEventListener('change', function(){
