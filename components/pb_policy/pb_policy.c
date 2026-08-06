@@ -73,6 +73,9 @@ typedef struct {
     float auto_bed_threshold_c;
     bool auto_engaged;
     bool auto_filtering;         // AUTO fan-only band latch (blower on, no heat)
+    float src_target_c;          // source-requested chamber target (e.g. Bambu filament
+                                 // zone); 0 = none. When >0 in AUTO it engages heat to
+                                 // this target directly, bypassing the bed threshold.
 
     int64_t drying_deadline_us;
     int64_t local_power_deadline_us;
@@ -621,13 +624,18 @@ void pb_policy_stop_drying(pb_source_t source)
     pb_policy_set_mode_off(source);
 }
 
-void pb_policy_set_env(float bed_c, float bed_target_c, bool moonraker_connected)
+void pb_policy_set_env(float bed_c, float bed_target_c, bool source_connected, float src_target_c)
 {
     if (!s_lock) return;
+    // Clamp the source-requested target to the settable ceiling; the fixed heater
+    // cutoffs (chamber/element over-temp) still protect regardless.
+    if (!isfinite(src_target_c) || src_target_c < 0.0f) src_target_c = 0.0f;
+    if (src_target_c > PB_HEATER_ABS_MAX_TARGET_C) src_target_c = PB_HEATER_ABS_MAX_TARGET_C;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s.bed_c = isfinite(bed_c) ? bed_c : 0.0f;
     s.bed_target_c = isfinite(bed_target_c) ? bed_target_c : 0.0f;
-    s.mk_connected = moonraker_connected;
+    s.mk_connected = source_connected;
+    s.src_target_c = src_target_c;
     xSemaphoreGive(s_lock);
 }
 
@@ -881,6 +889,13 @@ void pb_policy_tick(void)
             bool was_engaged = s.auto_engaged;
             if (!s.mk_connected) {
                 s.auto_engaged = false;
+            } else if (s.src_target_c > 0.0f) {
+                // Source-requested chamber target (e.g. a Bambu filament zone while a
+                // print is active): engage heat directly, bypassing the bed-setpoint
+                // threshold ("zone wins"). Clears when the source drops it to 0 (print
+                // end / no zone), falling back to the bed-threshold logic below and
+                // then to disengage — i.e. revert to idle/AUTO.
+                s.auto_engaged = true;
             } else if (!s.auto_engaged && s.bed_target_c >= s.auto_bed_threshold_c) {
                 s.auto_engaged = true;
             } else if (s.auto_engaged
@@ -893,7 +908,9 @@ void pb_policy_tick(void)
             if (s.auto_engaged != was_engaged)
                 revision_advance_locked(s.source);
             if (s.auto_engaged) {
-                target = s.requested_target_c;
+                // The source-requested zone target overrides the configured AUTO
+                // target when present; otherwise the normal AUTO target applies.
+                target = (s.src_target_c > 0.0f) ? s.src_target_c : s.requested_target_c;
                 autonomous = true;
             }
             break;

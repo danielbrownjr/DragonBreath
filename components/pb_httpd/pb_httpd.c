@@ -164,6 +164,15 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
         pb_bambu_config_t bc;
         if (pb_bambu_get_config(&bc) == ESP_OK && bc.serial[0])
             cJSON_AddStringToObject(environment, "bambu_serial", bc.serial);
+        // Surface the active print's filament so the dashboard status card can show
+        // "Filament: PETG" while a Bambu print runs (Bambu-only; Klipper drives the
+        // chamber via macros and reports no filament here).
+        pb_bambu_status_t bs;
+        if (pb_bambu_get_status(&bs) == ESP_OK) {
+            cJSON_AddBoolToObject(environment, "bambu_printing", bs.printing);
+            if (bs.printing && bs.filament[0])
+                cJSON_AddStringToObject(environment, "bambu_filament", bs.filament);
+        }
     }
     cJSON_AddBoolToObject(environment, "moonraker_connected", s->moonraker_connected);
     add_num1(environment, "bed_temperature_c", s->bed_c);
@@ -884,6 +893,79 @@ static esp_err_t calibration_post(httpd_req_t *req)
     return calibration_send(req);   // echo the clamped offsets
 }
 
+// --- Filament chamber zones (Bambu) GET/POST /api/v2/zones ------------------
+// The filament -> chamber-target map used by the Bambu heating-zones feature. GET is
+// read-only/open; POST is auth-gated and applies live (no reboot). Values 0..max C,
+// 0 = no zone. Klipper drives the chamber via M141/M191 instead, so this is Bambu-only.
+static esp_err_t zones_send(httpd_req_t *req)
+{
+    cJSON *o = cJSON_CreateObject();
+    if (!o) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
+    cJSON_AddNumberToObject(o, "api_version", API_VERSION);
+    cJSON_AddNumberToObject(o, "max", PB_HEATER_ABS_MAX_TARGET_C);
+    cJSON_AddNumberToObject(o, "custom_max", PB_BAMBU_CUSTOM_MAX);
+    cJSON *arr = cJSON_AddArrayToObject(o, "zones");
+    pb_bambu_zone_t z[PB_BAMBU_ZONE_MAX];
+    int n = pb_bambu_zone_get_all(z, PB_BAMBU_ZONE_MAX);
+    for (int i = 0; i < n; i++) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "name", z[i].name);
+        cJSON_AddNumberToObject(e, "target_c", z[i].target_c);
+        cJSON_AddNumberToObject(e, "default_c", z[i].default_c);
+        cJSON_AddBoolToObject(e, "custom", z[i].custom);
+        cJSON_AddItemToArray(arr, e);
+    }
+    return send_json(req, o);
+}
+
+static esp_err_t zones_get(httpd_req_t *req) { return zones_send(req); }
+
+// POST /api/v2/zones — {"name":"PETG","target_c":45} sets one, or
+// {"zones":[{"name":..,"target_c":..},...]} sets several, or {"remove":"PCTG"} deletes
+// a custom profile. Auth-gated; applies live.
+static esp_err_t zones_post(httpd_req_t *req)
+{
+    if (auth_reject(req)) return ESP_OK;
+    cJSON *root = recv_json(req);
+    if (!root)
+        return api_error(req, "400 Bad Request", "invalid_command", "invalid JSON body", NULL);
+
+    // Remove a custom profile.
+    cJSON *rm = cJSON_GetObjectItemCaseSensitive(root, "remove");
+    if (cJSON_IsString(rm)) {
+        esp_err_t err = pb_bambu_zone_remove(rm->valuestring);
+        cJSON_Delete(root);
+        if (err != ESP_OK)
+            return api_error(req, "404 Not Found", "invalid_command",
+                             "no such custom profile (built-ins cannot be removed)", NULL);
+        return zones_send(req);
+    }
+
+    bool applied = false;
+    cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "zones");
+    if (cJSON_IsArray(arr)) {
+        cJSON *e;
+        cJSON_ArrayForEach(e, arr) {
+            cJSON *nm = cJSON_GetObjectItemCaseSensitive(e, "name");
+            double t;
+            if (cJSON_IsString(nm) && json_number(e, "target_c", &t)
+                && pb_bambu_zone_set(nm->valuestring, (uint8_t)(t < 0 ? 0 : t)) == ESP_OK)
+                applied = true;
+        }
+    } else {
+        cJSON *nm = cJSON_GetObjectItemCaseSensitive(root, "name");
+        double t;
+        if (cJSON_IsString(nm) && json_number(root, "target_c", &t)
+            && pb_bambu_zone_set(nm->valuestring, (uint8_t)(t < 0 ? 0 : t)) == ESP_OK)
+            applied = true;
+    }
+    cJSON_Delete(root);
+    if (!applied)
+        return api_error(req, "400 Bad Request", "invalid_command",
+                         "name + target_c (or zones[]) with a known filament required", NULL);
+    return zones_send(req);
+}
+
 // POST /update — stream a new DragonBreath .bin into the inactive OTA slot, verify,
 // set it as boot, and reboot. Auth-gated. SAFETY: refused while the heater is
 // armed/on — a reboot mid-heat leaves the SSR state undefined until re-init, so
@@ -1215,7 +1297,7 @@ esp_err_t pb_httpd_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
-    cfg.max_uri_handlers = 29;                     // + /diag, /console, /api/v2/console, /api/v2/boot-inactive, /unbind
+    cfg.max_uri_handlers = 31;                     // + /diag, /console, /api/v2/console, /api/v2/boot-inactive, /unbind, /api/v2/zones (GET+POST)
     // The OTA handler hashes the image (mbedtls) with a 1 KB read buffer + the
     // app descriptor on-stack, which overflows the 4 KB default httpd task stack
     // (stack-protection panic). Give it headroom.
@@ -1261,6 +1343,8 @@ esp_err_t pb_httpd_start(void)
     httpd_uri_t tok    = { .uri = "/api/v2/token",     .method = HTTP_POST, .handler = token_post };
     httpd_uri_t calg   = { .uri = "/api/v2/calibration", .method = HTTP_GET,  .handler = calibration_get };
     httpd_uri_t calp   = { .uri = "/api/v2/calibration", .method = HTTP_POST, .handler = calibration_post };
+    httpd_uri_t zong   = { .uri = "/api/v2/zones",       .method = HTTP_GET,  .handler = zones_get };
+    httpd_uri_t zonp   = { .uri = "/api/v2/zones",       .method = HTTP_POST, .handler = zones_post };
     httpd_register_uri_handler(s_server, &info);
     httpd_register_uri_handler(s_server, &state);
     httpd_register_uri_handler(s_server, &cmd);
@@ -1278,6 +1362,8 @@ esp_err_t pb_httpd_start(void)
     httpd_register_uri_handler(s_server, &tok);
     httpd_register_uri_handler(s_server, &calg);
     httpd_register_uri_handler(s_server, &calp);
+    httpd_register_uri_handler(s_server, &zong);
+    httpd_register_uri_handler(s_server, &zonp);
     ESP_LOGI(TAG, "HTTP API v2 up :80 (info/state/events/health/logs; command/heartbeat/restart/factory-reset/token/calibration; settings; OTA /update)");
     return ESP_OK;
 }

@@ -641,9 +641,29 @@ static esp_err_t config_page(httpd_req_t *req)
     snprintf(buf, sizeof buf,
         "<label>Serial</label><input name=bb_serial value=\"%s\" placeholder='e.g. 01P00A000000000'>"
         "<label>LAN access code</label><input name=bb_code type=password placeholder='(unchanged)' autocomplete=off>"
-        "<small style='color:var(--muted)'>Enable <b>LAN Only Mode</b> on the printer; use its Access Code.</small></div>",
+        "<small style='color:var(--muted)'>Enable <b>LAN Only Mode</b> on the printer; use its Access Code.</small>",
         esc);
     SEND(req, buf);
+    // Filament chamber zones (Bambu only) — lives inside the Bambu group so it's
+    // shown only when Bambu is the control source (Klipper uses M141/M191 instead).
+    SEND(req,
+        "<label style='margin-top:10px'>Chamber zones \xC2\xB7 \xC2\xB0""C (0 = off)</label>"
+        "<small style='color:var(--muted);display:block;margin:-4px 0 6px'>"
+        "When a Bambu print runs, the chamber follows the active filament's target "
+        "here (overrides bed-follow).</small>");
+    {
+        pb_bambu_zone_t zones[PB_BAMBU_ZONE_COUNT];
+        int nz = pb_bambu_zone_get_all(zones, PB_BAMBU_ZONE_COUNT);
+        for (int i = 0; i < nz; i++) {
+            snprintf(buf, sizeof buf,
+                "<div style='display:flex;align-items:center;gap:8px;margin-bottom:4px'>"
+                "<label style='flex:1;margin:0'>%s</label>"
+                "<input name=z_%s type=number min=0 max=70 value=%u style='width:5.5em'></div>",
+                zones[i].name, zones[i].name, (unsigned)zones[i].target_c);
+            SEND(req, buf);
+        }
+    }
+    SEND(req, "</div>");   // close the Bambu group
 
     // Home Assistant group.
     html_attr_escape(ha_host, esc, sizeof esc);
@@ -750,7 +770,7 @@ static esp_err_t save_post(httpd_req_t *req)
 
     // Larger than the Wi-Fi-only form: now also carries the control-source
     // selector + Klipper/Bambu/HA field groups (all groups submit, even hidden).
-    char body[1024];
+    char body[1536];   // fits all field groups incl. the 6 Bambu chamber-zone inputs
     int total = 0, r;
     while ((r = httpd_req_recv(req, body + total, sizeof body - 1 - total)) > 0) {
         total += r;
@@ -813,6 +833,23 @@ static esp_err_t save_post(httpd_req_t *req)
         if (ha_topic[0]) nvs_set_str(h, "ha_topic", ha_topic);
         nvs_commit(h);
         nvs_close(h);
+    }
+
+    // Filament chamber zones (z_<TYPE>). pb_bambu_zone_set() opens its own NVS
+    // handle, so do this after the block above closes. Only write on change.
+    {
+        pb_bambu_zone_t zones[PB_BAMBU_ZONE_COUNT];
+        int nz = pb_bambu_zone_get_all(zones, PB_BAMBU_ZONE_COUNT);
+        for (int i = 0; i < nz; i++) {
+            char field[12] = {0}, val[8] = {0};
+            snprintf(field, sizeof field, "z_%.7s", zones[i].name);   // built-ins only; names ≤4 chars
+            form_get(body, field, val, sizeof val);
+            if (val[0]) {
+                int t = atoi(val);
+                if (t >= 0 && t <= 70 && (uint8_t)t != zones[i].target_c)
+                    pb_bambu_zone_set(zones[i].name, (uint8_t)t);
+            }
+        }
     }
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");

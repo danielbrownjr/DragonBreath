@@ -179,7 +179,12 @@ bool  pb_policy_get_filter_auto_enable(void);
 // fan-only filtration band trigger on — heat/airflow engage as soon as the print
 // COMMANDS a bed >= threshold, not when the bed physically reaches it (stock
 // parity). Pass bed_target_c = 0 when unknown/disconnected.
-void pb_policy_set_env(float bed_c, float bed_target_c, bool moonraker_connected);
+//
+// src_target_c is an optional source-requested chamber target (e.g. a Bambu filament
+// zone while a print is active): when > 0 in AUTO mode it engages heat to that target
+// directly, overriding the configured AUTO target and bypassing the bed threshold
+// ("zone wins"). Pass 0 for the normal bed-threshold AUTO behaviour.
+void pb_policy_set_env(float bed_c, float bed_target_c, bool source_connected, float src_target_c);
 
 // Refresh exactly the active lease.  A stale/superseded lease cannot keep heat
 // alive.

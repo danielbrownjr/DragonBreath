@@ -303,7 +303,11 @@ static void handle_request(const cJSON *request)
         // "measured == trigger" behavior is preserved for existing HIL scenarios).
         double bed_target_c = bed_c;
         json_number(request, "bed_target_c", &bed_target_c);
-        pb_policy_set_env((float)bed_c, (float)bed_target_c, cJSON_IsTrue(connected));
+        // src_target_c: optional source-requested chamber target (Bambu filament zone);
+        // absent -> 0 (normal bed-AUTO), so existing scenarios are unchanged.
+        double src_target_c = 0.0;
+        json_number(request, "src_target_c", &src_target_c);
+        pb_policy_set_env((float)bed_c, (float)bed_target_c, cJSON_IsTrue(connected), (float)src_target_c);
         cJSON_AddBoolToObject(response, "ok", true);
     } else if (strcmp(cmd->valuestring, "zero_cross") == 0) {
         double count = 1.0;

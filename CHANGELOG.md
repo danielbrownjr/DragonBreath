@@ -7,6 +7,28 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.0.4-rc1]
+
+**Bambu filament heating zones — the chamber target now follows the filament type of
+the active Bambu print (issue #64). Pre-release for community testing.**
+
+### Added
+- **Filament chamber zones (Bambu source only).** During a Bambu print, DragonBreath
+  reads the active tray's filament type from the LAN report and sets the chamber target
+  from a per-filament map — e.g. PETG → 40 °C — instead of the bed-threshold AUTO seam.
+  Preheats on `PREPARE`, holds through `PAUSE`, reverts to idle/AUTO when the print ends.
+  A zone target of `0` means "no zone / off"; an unrecognised filament also resolves to 0.
+  (Klipper is unaffected — it drives the chamber via `M141`/`M191` macros.)
+- **Six built-in filament types** with sensible defaults (PLA/TPU off; PETG 40; ABS/ASA
+  55; PC 60), each editable. Built-in targets can be set during initial config on `/setup`.
+- **User-defined custom profiles.** Add up to 8 custom filament profiles (PA, PCTG, …)
+  from the dashboard's **Custom profiles** card; add/update/remove applies live (no
+  reboot) and persists across reboots. Longest-prefix matching means a custom `PETG-CF`
+  wins over the built-in `PETG`.
+- **Dashboard:** a Bambu-only **Filament** row in the system-status card shows the active
+  print's filament; the **Filament zones** + **Custom profiles** cards appear when the
+  control source is Bambu. New API `GET/POST /api/v2/zones` (live edits, auth-gated POST).
+
 ## [1.0.2] - 2026-07-31
 
 **Seamless config carry-over when installing over stock — WiFi, Moonraker, and Home
