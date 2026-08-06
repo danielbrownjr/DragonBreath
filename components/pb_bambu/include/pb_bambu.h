@@ -31,6 +31,8 @@ typedef struct {
     float bed_temp;       // bed_temper (°C); NaN until first report
     float bed_target;     // bed_target_temper (°C, the setpoint AUTO triggers on)
     float chamber_temp;   // chamber_temper (°C); NaN if the model has no sensor
+    char  filament[16];   // active filament type from AMS / ext spool (e.g. "PETG");
+                          // "" if unknown. Feeds filament-based chamber zones.
 } pb_bambu_status_t;
 
 esp_err_t pb_bambu_start(void);

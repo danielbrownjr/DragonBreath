@@ -103,6 +103,59 @@ static bool find_float(const char *s, const char *key, float *out)
     return true;
 }
 
+// Copy the string value of a JSON key ("key":"value") into out. `key` includes the
+// quotes. Returns true if a (possibly empty) string value was found.
+static bool find_string(const char *s, const char *key, char *out, size_t outsz)
+{
+    const char *q = strstr(s, key);
+    if (!q) return false;
+    q = strchr(q, ':');
+    if (!q) return false;
+    q++;
+    while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r') q++;
+    if (*q != '"') return false;
+    q++;
+    size_t i = 0;
+    while (*q && *q != '"' && i + 1 < outsz) out[i++] = *q++;
+    out[i] = '\0';
+    return true;
+}
+
+// Resolve the ACTIVE filament type from a report. Bambu lists loaded filaments in
+// print.ams (AMS units, tray[].tray_type) and print.vt_tray (external spool), with
+// print.ams.tray_now selecting the active global tray index (254 = external spool,
+// 255/absent = none loaded). Targeted scan — no full JSON parse over ~15 KB.
+static bool active_filament(const char *json, char *out, size_t outsz)
+{
+    out[0] = '\0';
+    char trayn[8] = {0};
+    long now = find_string(json, "\"tray_now\"", trayn, sizeof trayn) ? strtol(trayn, NULL, 10) : -1;
+    const char *vt = strstr(json, "\"vt_tray\"");
+    char tt[16];
+
+    // AMS slot active: take the (now)th tray_type inside the "ams" object.
+    if (now >= 0 && now < 250) {
+        const char *ams = strstr(json, "\"ams\"");
+        if (ams) {
+            const char *p = ams; long idx = -1;
+            while ((p = strstr(p, "\"tray_type\"")) != NULL) {
+                if (++idx == now) {
+                    if (find_string(p, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
+                        snprintf(out, outsz, "%s", tt); return true;
+                    }
+                    break;
+                }
+                p += 11;
+            }
+        }
+    }
+    // External spool (tray_now 254, or as a fallback): vt_tray.tray_type.
+    if (vt && find_string(vt, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
+        snprintf(out, outsz, "%s", tt); return true;
+    }
+    return false;
+}
+
 static void parse_report(const char *json)
 {
     float bed, bedtgt, cham;
@@ -115,6 +168,8 @@ static void parse_report(const char *json)
     // NOTE(phase 2b): H2/newer moved chamber temp to a packed device.ctc.info.temp
     // field; only the legacy flat chamber_temper is read here. Bed follow (the
     // goal) works on all models via bed_temper/bed_target_temper.
+    char fila[16];
+    bool got_fila = active_filament(json, fila, sizeof fila);   // active AMS/spool filament
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (got_bed) {
@@ -124,8 +179,11 @@ static void parse_report(const char *json)
     }
     if (got_tgt)  s_status.bed_target = bedtgt;
     if (got_cham) s_status.chamber_temp = cham;
+    bool fila_changed = got_fila && strcmp(fila, s_status.filament) != 0;
+    if (fila_changed) snprintf(s_status.filament, sizeof s_status.filament, "%s", fila);
     xSemaphoreGive(s_lock);
 
+    if (fila_changed) ESP_LOGI(TAG, "active filament: %s", fila);
     if (got_bed) ESP_LOGD(TAG, "bed=%.1f chamber=%.1f", bed, got_cham ? cham : NAN);
 }
 
