@@ -1,0 +1,92 @@
+#pragma once
+// Pure, host-testable Bambu report parsing (no ESP deps) — mirrors the pb_ntc /
+// pb_heater convention of keeping decision logic inline in a header so it can be
+// unit-tested on the host. Used by pb_bambu.c and tests/pb_bambu_host_test.c.
+#include <string.h>
+#include <strings.h>   // strncasecmp
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+
+// Result of resolving the active filament from a report. The tri-state matters:
+// a delta report that OMITS filament state must NOT clobber the last known value,
+// whereas an explicit "nothing loaded" MUST clear it (else a stale zone applies).
+typedef enum {
+    PB_FILA_ABSENT = 0,   // no filament state in this (delta) report -> keep prior
+    PB_FILA_EMPTY,        // report explicitly has no active/loaded filament -> clear
+    PB_FILA_PRESENT,      // an active filament type was found -> use `out`
+} pb_fila_result_t;
+
+// Copy the string value of a JSON key ("key":"value") into out. `key` includes the
+// quotes. Returns true if a (possibly empty) string value was found.
+static inline bool pb_bambu_find_string(const char *s, const char *key, char *out, size_t outsz)
+{
+    const char *q = strstr(s, key);
+    if (!q) return false;
+    q = strchr(q, ':');
+    if (!q) return false;
+    q++;
+    while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r') q++;
+    if (*q != '"') return false;
+    q++;
+    size_t i = 0;
+    while (*q && *q != '"' && i + 1 < outsz) out[i++] = *q++;
+    out[i] = '\0';
+    return true;
+}
+
+// Resolve the ACTIVE filament type from a Bambu report. Bambu lists loaded filaments
+// under print.ams (AMS units, tray[].tray_type) and print.vt_tray (external spool),
+// with print.ams.tray_now selecting the active global tray index (254 = external
+// spool, 255 = none loaded). Targeted scan — no full JSON parse over ~15 KB.
+static inline pb_fila_result_t pb_bambu_active_filament(const char *json, char *out, size_t outsz)
+{
+    out[0] = '\0';
+    const char *tn  = strstr(json, "\"tray_now\"");
+    const char *vt  = strstr(json, "\"vt_tray\"");
+    const char *ams = strstr(json, "\"ams\"");
+    if (!tn && !vt && !ams) return PB_FILA_ABSENT;   // delta with no filament state
+
+    char trayn[8] = {0};
+    long now = (tn && pb_bambu_find_string(json, "\"tray_now\"", trayn, sizeof trayn))
+                   ? strtol(trayn, NULL, 10) : -1;
+    char tt[16];
+
+    // An AMS slot is selected: report the active tray's type. An empty type there
+    // means that slot has nothing loaded -> EMPTY (do NOT fall back to vt_tray).
+    if (now >= 0 && now < 250) {
+        if (ams) {
+            const char *p = ams; long idx = -1;
+            while ((p = strstr(p, "\"tray_type\"")) != NULL) {
+                if (++idx == now) {
+                    if (pb_bambu_find_string(p, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
+                        snprintf(out, outsz, "%s", tt); return PB_FILA_PRESENT;
+                    }
+                    break;
+                }
+                p += 11;
+            }
+        }
+        return PB_FILA_EMPTY;
+    }
+
+    // External spool (tray_now 254, or tray_now absent with a vt_tray present).
+    if (vt && pb_bambu_find_string(vt, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
+        snprintf(out, outsz, "%s", tt); return PB_FILA_PRESENT;
+    }
+
+    // Filament state was present in the report, but nothing is loaded/active
+    // (tray_now 255, empty vt_tray, ...). Explicit empty -> clear.
+    return PB_FILA_EMPTY;
+}
+
+// Index of the first zone whose base name is a case-insensitive prefix of `filament`
+// (so "PETG-CF" / "PLA Basic" resolve to PETG / PLA), or -1 if none match.
+static inline int pb_bambu_zone_match(const char *filament, const char *const names[], int count)
+{
+    if (!filament || !filament[0]) return -1;
+    for (int i = 0; i < count; i++)
+        if (strncasecmp(filament, names[i], strlen(names[i])) == 0) return i;
+    return -1;
+}

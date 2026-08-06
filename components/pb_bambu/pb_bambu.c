@@ -9,6 +9,7 @@
 //   device/<serial>/report; publish one "pushall" on connect (P1/A1 send deltas).
 // See plans/control-source-bambu-ha.md.
 #include "pb_bambu.h"
+#include "pb_bambu_parse.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -104,58 +105,8 @@ static bool find_float(const char *s, const char *key, float *out)
     return true;
 }
 
-// Copy the string value of a JSON key ("key":"value") into out. `key` includes the
-// quotes. Returns true if a (possibly empty) string value was found.
-static bool find_string(const char *s, const char *key, char *out, size_t outsz)
-{
-    const char *q = strstr(s, key);
-    if (!q) return false;
-    q = strchr(q, ':');
-    if (!q) return false;
-    q++;
-    while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r') q++;
-    if (*q != '"') return false;
-    q++;
-    size_t i = 0;
-    while (*q && *q != '"' && i + 1 < outsz) out[i++] = *q++;
-    out[i] = '\0';
-    return true;
-}
-
-// Resolve the ACTIVE filament type from a report. Bambu lists loaded filaments in
-// print.ams (AMS units, tray[].tray_type) and print.vt_tray (external spool), with
-// print.ams.tray_now selecting the active global tray index (254 = external spool,
-// 255/absent = none loaded). Targeted scan — no full JSON parse over ~15 KB.
-static bool active_filament(const char *json, char *out, size_t outsz)
-{
-    out[0] = '\0';
-    char trayn[8] = {0};
-    long now = find_string(json, "\"tray_now\"", trayn, sizeof trayn) ? strtol(trayn, NULL, 10) : -1;
-    const char *vt = strstr(json, "\"vt_tray\"");
-    char tt[16];
-
-    // AMS slot active: take the (now)th tray_type inside the "ams" object.
-    if (now >= 0 && now < 250) {
-        const char *ams = strstr(json, "\"ams\"");
-        if (ams) {
-            const char *p = ams; long idx = -1;
-            while ((p = strstr(p, "\"tray_type\"")) != NULL) {
-                if (++idx == now) {
-                    if (find_string(p, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
-                        snprintf(out, outsz, "%s", tt); return true;
-                    }
-                    break;
-                }
-                p += 11;
-            }
-        }
-    }
-    // External spool (tray_now 254, or as a fallback): vt_tray.tray_type.
-    if (vt && find_string(vt, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
-        snprintf(out, outsz, "%s", tt); return true;
-    }
-    return false;
-}
+// find_string() + active_filament() (tri-state) live in pb_bambu_parse.h so they
+// can be host-unit-tested (tests/pb_bambu_host_test.c).
 
 static void parse_report(const char *json)
 {
@@ -170,7 +121,7 @@ static void parse_report(const char *json)
     // field; only the legacy flat chamber_temper is read here. Bed follow (the
     // goal) works on all models via bed_temper/bed_target_temper.
     char fila[16];
-    bool got_fila = active_filament(json, fila, sizeof fila);   // active AMS/spool filament
+    pb_fila_result_t fr = pb_bambu_active_filament(json, fila, sizeof fila);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (got_bed) {
@@ -180,11 +131,20 @@ static void parse_report(const char *json)
     }
     if (got_tgt)  s_status.bed_target = bedtgt;
     if (got_cham) s_status.chamber_temp = cham;
-    bool fila_changed = got_fila && strcmp(fila, s_status.filament) != 0;
-    if (fila_changed) snprintf(s_status.filament, sizeof s_status.filament, "%s", fila);
+    // Tri-state: PRESENT updates the filament; EMPTY (unload / print end / no spool)
+    // CLEARS it so a stale zone is never applied; ABSENT (a delta that simply omits
+    // the AMS/tray block) leaves the last known value untouched.
+    bool fila_changed = false;
+    if (fr == PB_FILA_PRESENT && strcmp(fila, s_status.filament) != 0) {
+        snprintf(s_status.filament, sizeof s_status.filament, "%s", fila);
+        fila_changed = true;
+    } else if (fr == PB_FILA_EMPTY && s_status.filament[0]) {
+        s_status.filament[0] = '\0';
+        fila_changed = true;
+    }
     xSemaphoreGive(s_lock);
 
-    if (fila_changed) ESP_LOGI(TAG, "active filament: %s", fila);
+    if (fila_changed) ESP_LOGI(TAG, "active filament: %s", fila[0] ? fila : "(none)");
     if (got_bed) ESP_LOGD(TAG, "bed=%.1f chamber=%.1f", bed, got_cham ? cham : NAN);
 }
 
@@ -352,16 +312,11 @@ esp_err_t pb_bambu_clear_config(void)
 
 // Base filament type -> default chamber target (°C). 0 = no zone (off). Opinionated
 // but sane; all user-overridable via NVS. PLA/TPU default off (a hot chamber hurts
-// PLA); PETG/ABS/ASA/PC want warmth for layer adhesion / reduced warping.
-static const struct { const char *name; const char *key; uint8_t def_c; }
-ZONES[PB_BAMBU_ZONE_COUNT] = {
-    { "PLA",  "zone_pla",  0  },
-    { "PETG", "zone_petg", 40 },
-    { "ABS",  "zone_abs",  45 },
-    { "ASA",  "zone_asa",  45 },
-    { "PC",   "zone_pc",   50 },
-    { "TPU",  "zone_tpu",  0  },
-};
+// PLA); PETG/ABS/ASA/PC want warmth for layer adhesion / reduced warping. Parallel
+// arrays so the (host-tested) pb_bambu_zone_match() can take ZONE_NAMES directly.
+static const char *const ZONE_NAMES[PB_BAMBU_ZONE_COUNT] = { "PLA", "PETG", "ABS", "ASA", "PC", "TPU" };
+static const char *const ZONE_KEYS [PB_BAMBU_ZONE_COUNT] = { "zone_pla", "zone_petg", "zone_abs", "zone_asa", "zone_pc", "zone_tpu" };
+static const uint8_t     ZONE_DEF  [PB_BAMBU_ZONE_COUNT] = { 0, 40, 45, 45, 50, 0 };
 
 static uint8_t s_zone_c[PB_BAMBU_ZONE_COUNT];   // RAM cache of the resolved targets
 static bool    s_zones_loaded = false;
@@ -372,8 +327,8 @@ static void zones_load(void)
     nvs_handle_t h;
     bool have = (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK);
     for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++) {
-        uint8_t v = ZONES[i].def_c;
-        if (have) nvs_get_u8(h, ZONES[i].key, &v);   // leaves default if key absent
+        uint8_t v = ZONE_DEF[i];
+        if (have) nvs_get_u8(h, ZONE_KEYS[i], &v);   // leaves default if key absent
         s_zone_c[i] = v;
     }
     if (have) nvs_close(h);
@@ -382,13 +337,9 @@ static void zones_load(void)
 
 uint8_t pb_bambu_zone_target(const char *filament)
 {
-    if (!filament || !filament[0]) return 0;
     if (!s_zones_loaded) zones_load();
-    // Case-insensitive prefix match so "PETG-CF" / "PLA Basic" resolve to their base.
-    for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++)
-        if (strncasecmp(filament, ZONES[i].name, strlen(ZONES[i].name)) == 0)
-            return s_zone_c[i];
-    return 0;
+    int i = pb_bambu_zone_match(filament, ZONE_NAMES, PB_BAMBU_ZONE_COUNT);
+    return i < 0 ? 0 : s_zone_c[i];
 }
 
 int pb_bambu_zone_get_all(pb_bambu_zone_t *out, int max)
@@ -396,7 +347,7 @@ int pb_bambu_zone_get_all(pb_bambu_zone_t *out, int max)
     if (!s_zones_loaded) zones_load();
     int n = 0;
     for (int i = 0; i < PB_BAMBU_ZONE_COUNT && n < max; i++, n++) {
-        snprintf(out[n].name, sizeof out[n].name, "%s", ZONES[i].name);
+        snprintf(out[n].name, sizeof out[n].name, "%s", ZONE_NAMES[i]);
         out[n].target_c = s_zone_c[i];
     }
     return n;
@@ -407,13 +358,13 @@ esp_err_t pb_bambu_zone_set(const char *name, uint8_t target_c)
     if (!name) return ESP_ERR_INVALID_ARG;
     int idx = -1;
     for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++)
-        if (strcasecmp(name, ZONES[i].name) == 0) { idx = i; break; }
+        if (strcasecmp(name, ZONE_NAMES[i]) == 0) { idx = i; break; }
     if (idx < 0) return ESP_ERR_NOT_FOUND;
     if (target_c > 70) target_c = 70;   // settable ceiling; pb_policy enforces hard cutoffs
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
-    err = nvs_set_u8(h, ZONES[idx].key, target_c);
+    err = nvs_set_u8(h, ZONE_KEYS[idx], target_c);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     if (err == ESP_OK) { if (!s_zones_loaded) zones_load(); s_zone_c[idx] = target_c; }

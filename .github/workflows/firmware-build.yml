@@ -61,6 +61,9 @@ jobs:
       - name: Test heater safety-trip decision (over-temp / fail-closed / watchdog)
         run: sh tests/run_heater_safety_host_test.sh
 
+      - name: Test Bambu report parser (filament tri-state + zone match)
+        run: sh tests/run_bambu_host_test.sh
+
       - name: Test HIL scenario runner
         run: python3 -m unittest tests/test_hil_runner.py
 
