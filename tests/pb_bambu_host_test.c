@@ -54,8 +54,21 @@ int main(void)
     expect_fila("delta no filament",
         "{\"print\":{\"bed_temper\":60.0,\"chamber_temper\":40.0}}",
         PB_FILA_ABSENT, NULL);
-    // The reviewer's PETG -> no-spool transition: the second report is EMPTY, which
-    // is what tells parse_report to clear the stored PETG (see pb_bambu.c).
+    // ABSENT: partial-AMS delta — slot is named (tray_now) but the tray payload is
+    // absent. Must NOT clear a known filament (review round 2).
+    expect_fila("partial-ams delta",
+        "{\"print\":{\"ams\":{\"tray_now\":\"0\"}}}",
+        PB_FILA_ABSENT, NULL);
+    // ABSENT: external selected (254) but no vt_tray payload in this delta -> keep.
+    expect_fila("ext selected, no vt",
+        "{\"print\":{\"ams\":{\"tray_now\":\"254\"}}}",
+        PB_FILA_ABSENT, NULL);
+    // EMPTY: external spool present but explicitly empty -> clear.
+    expect_fila("ext spool empty",
+        "{\"print\":{\"vt_tray\":{\"id\":\"254\",\"tray_type\":\"\"}}}",
+        PB_FILA_EMPTY, NULL);
+    // The reviewer's PETG -> no-spool transition: an EMPTY report tells parse_report
+    // to clear the stored PETG (see pb_bambu.c); ABSENT deltas leave it untouched.
 
     // --- filament -> zone matching (case-insensitive prefix) ---
     expect_zone("PETG", 1);

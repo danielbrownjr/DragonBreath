@@ -53,32 +53,35 @@ static inline pb_fila_result_t pb_bambu_active_filament(const char *json, char *
                    ? strtol(trayn, NULL, 10) : -1;
     char tt[16];
 
-    // An AMS slot is selected: report the active tray's type. An empty type there
-    // means that slot has nothing loaded -> EMPTY (do NOT fall back to vt_tray).
+    if (now == 255) return PB_FILA_EMPTY;   // tray_now explicitly says nothing is loaded
+
+    // AMS slot selected: resolve the active tray's type ONLY IF this report carries it.
+    // A delta may name the slot (tray_now) without including the tray payload — that is
+    // ABSENT (keep the last known filament), not empty. Only an active tray whose
+    // tray_type is explicitly present-and-empty counts as EMPTY.
     if (now >= 0 && now < 250) {
         if (ams) {
             const char *p = ams; long idx = -1;
             while ((p = strstr(p, "\"tray_type\"")) != NULL) {
-                if (++idx == now) {
-                    if (pb_bambu_find_string(p, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
-                        snprintf(out, outsz, "%s", tt); return PB_FILA_PRESENT;
+                if (++idx == now) {                 // the active tray IS in this report
+                    if (pb_bambu_find_string(p, "\"tray_type\"", tt, sizeof tt)) {
+                        if (tt[0]) { snprintf(out, outsz, "%s", tt); return PB_FILA_PRESENT; }
+                        return PB_FILA_EMPTY;        // active tray present but empty
                     }
                     break;
                 }
                 p += 11;
             }
         }
-        return PB_FILA_EMPTY;
+        return PB_FILA_ABSENT;   // selected tray's payload not in this (delta) report
     }
 
     // External spool (tray_now 254, or tray_now absent with a vt_tray present).
-    if (vt && pb_bambu_find_string(vt, "\"tray_type\"", tt, sizeof tt) && tt[0]) {
-        snprintf(out, outsz, "%s", tt); return PB_FILA_PRESENT;
+    if (vt && pb_bambu_find_string(vt, "\"tray_type\"", tt, sizeof tt)) {
+        if (tt[0]) { snprintf(out, outsz, "%s", tt); return PB_FILA_PRESENT; }
+        return PB_FILA_EMPTY;    // external spool present but empty
     }
-
-    // Filament state was present in the report, but nothing is loaded/active
-    // (tray_now 255, empty vt_tray, ...). Explicit empty -> clear.
-    return PB_FILA_EMPTY;
+    return PB_FILA_ABSENT;       // couldn't resolve -> don't clobber the last value
 }
 
 // Index of the first zone whose base name is a case-insensitive prefix of `filament`
