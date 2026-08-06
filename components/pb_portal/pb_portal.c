@@ -842,7 +842,7 @@ static esp_err_t save_post(httpd_req_t *req)
         int nz = pb_bambu_zone_get_all(zones, PB_BAMBU_ZONE_COUNT);
         for (int i = 0; i < nz; i++) {
             char field[12] = {0}, val[8] = {0};
-            snprintf(field, sizeof field, "z_%.7s", zones[i].name);   // name is char[8]
+            snprintf(field, sizeof field, "z_%.7s", zones[i].name);   // built-ins only; names ≤4 chars
             form_get(body, field, val, sizeof val);
             if (val[0]) {
                 int t = atoi(val);

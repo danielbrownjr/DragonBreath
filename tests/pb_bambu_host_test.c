@@ -87,6 +87,28 @@ int main(void)
     expect_zone("PVA", -1);      // unknown -> no zone
     expect_zone("", -1);
 
+    // --- longest-prefix wins when a custom profile shadows a built-in ---
+    // Combined built-ins + customs, exactly as pb_bambu_zone_target builds the array.
+    {
+        static const char *const combo[] = { "PLA","PETG","ABS","ASA","PC","TPU","PETG-CF","PA" };
+        int n = 8;
+        struct { const char *fil; int want; } cases[] = {
+            { "PETG-CF Bambu", 6 },   // custom "PETG-CF" beats built-in "PETG"
+            { "PETG",          1 },   // plain PETG still the built-in
+            { "PAHT-CF",       7 },   // custom "PA" prefix matches
+            { "PA6-GF",        7 },
+            { "PC",            4 },
+            { "PVA",          -1 },
+        };
+        for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+            int got = pb_bambu_zone_match(cases[i].fil, combo, n);
+            int ok = got == cases[i].want;
+            if (!ok) fails++;
+            printf("[%s] custom-zone %-14s want=%d got=%d\n", ok ? "PASS" : "FAIL",
+                   cases[i].fil, cases[i].want, got);
+        }
+    }
+
     // --- print-state classifier (preheat starts on PREPARE) ---
     expect_active("PREPARE", 1);
     expect_active("RUNNING", 1);

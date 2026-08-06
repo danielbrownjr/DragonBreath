@@ -53,20 +53,32 @@ esp_err_t pb_bambu_clear_config(void);
 // Maps the active filament type to a chamber target so a Bambu print gets a warm
 // chamber (e.g. PETG -> 40 C) without any bed-threshold AUTO. Klipper doesn't use
 // this — it drives the chamber via M141/M191. A zone target of 0 = "no zone" (off).
-#define PB_BAMBU_ZONE_COUNT 6
+//
+// There are 6 BUILT-IN filament types (fixed defaults, editable target) plus up to
+// PB_BAMBU_CUSTOM_MAX USER profiles the operator can add/remove for filaments not in
+// the built-in set (PA, PCTG, ...). get_all returns the built-ins first, then customs.
+#define PB_BAMBU_ZONE_COUNT  6                                        // built-in types
+#define PB_BAMBU_CUSTOM_MAX  8                                        // user profiles
+#define PB_BAMBU_ZONE_MAX    (PB_BAMBU_ZONE_COUNT + PB_BAMBU_CUSTOM_MAX)
 
 typedef struct {
-    char    name[8];     // base filament type, e.g. "PETG"
+    char    name[12];    // filament type ("PETG", or a custom name like "PCTG")
     uint8_t target_c;    // chamber target (°C); 0 = no zone / off
+    uint8_t default_c;   // built-in default (for the UI's "default N" hint); 0 for customs
+    bool    custom;      // true = a user-added profile (removable)
 } pb_bambu_zone_t;
 
-// Resolve the chamber target for a filament type string (case-insensitive prefix
-// match, so "PETG-CF"/"PLA Basic" resolve to PETG/PLA). 0 = no zone / unknown.
+// Resolve the chamber target for a filament type string. Longest case-insensitive
+// prefix match over built-ins + customs (so a custom "PETG-CF" beats "PETG"). 0 = none.
 uint8_t pb_bambu_zone_target(const char *filament);
 
-// Fill `out` (capacity `max`) with the current zone map (NVS overrides or defaults);
-// returns the number written.
+// Fill `out` (capacity `max`) with built-in zones then custom profiles; returns the
+// number written (<= PB_BAMBU_ZONE_MAX).
 int pb_bambu_zone_get_all(pb_bambu_zone_t *out, int max);
 
-// Set one zone's target by name (case-insensitive). Persists to NVS. 0 disables it.
+// Set/update a zone by name (case-insensitive). A built-in name updates its target;
+// an unknown name ADDS a custom profile (up to PB_BAMBU_CUSTOM_MAX). Persists.
 esp_err_t pb_bambu_zone_set(const char *name, uint8_t target_c);
+
+// Remove a custom profile by name (built-ins cannot be removed). Persists.
+esp_err_t pb_bambu_zone_remove(const char *name);

@@ -313,19 +313,23 @@ esp_err_t pb_bambu_clear_config(void)
 
 // ---------- filament chamber zones (issue #64, Bambu only) ----------
 
-// Base filament type -> default chamber target (°C). 0 = no zone (off). Opinionated
-// but sane; all user-overridable via NVS. PLA/TPU default off (a hot chamber hurts
-// PLA); PETG/ABS/ASA/PC want warmth for layer adhesion / reduced warping. Parallel
-// arrays so the (host-tested) pb_bambu_zone_match() can take ZONE_NAMES directly.
+// Built-in filament types: fixed names + per-key NVS target override + a default
+// (shown as the UI's "default N" hint). PLA/TPU off (a hot chamber hurts PLA);
+// PETG/ABS/ASA/PC want warmth for adhesion / reduced warping.
 static const char *const ZONE_NAMES[PB_BAMBU_ZONE_COUNT] = { "PLA", "PETG", "ABS", "ASA", "PC", "TPU" };
 static const char *const ZONE_KEYS [PB_BAMBU_ZONE_COUNT] = { "zone_pla", "zone_petg", "zone_abs", "zone_asa", "zone_pc", "zone_tpu" };
 //                                                            PLA PETG ABS ASA PC  TPU
 static const uint8_t     ZONE_DEF  [PB_BAMBU_ZONE_COUNT] = {  0,  40, 55, 55, 60,  0 };
 
-static uint8_t s_zone_c[PB_BAMBU_ZONE_COUNT];   // RAM cache of the resolved targets
-static bool    s_zones_loaded = false;
+// User custom profiles — persisted together as one NVS blob "zone_custom".
+typedef struct { char name[12]; uint8_t target_c; } custom_zone_t;
 
-// Load the zone targets (NVS override, else default) into the RAM cache.
+static uint8_t       s_zone_c[PB_BAMBU_ZONE_COUNT];   // built-in target cache
+static custom_zone_t s_custom[PB_BAMBU_CUSTOM_MAX];   // custom profile cache
+static int           s_custom_n = 0;
+static bool          s_zones_loaded = false;
+
+// Load built-in targets (NVS override, else default) + custom profiles into RAM.
 static void zones_load(void)
 {
     nvs_handle_t h;
@@ -335,15 +339,40 @@ static void zones_load(void)
         if (have) nvs_get_u8(h, ZONE_KEYS[i], &v);   // leaves default if key absent
         s_zone_c[i] = v;
     }
-    if (have) nvs_close(h);
+    s_custom_n = 0;
+    if (have) {
+        size_t len = sizeof s_custom;
+        if (nvs_get_blob(h, "zone_custom", s_custom, &len) == ESP_OK)
+            s_custom_n = (int)(len / sizeof(custom_zone_t));
+        nvs_close(h);
+    }
     s_zones_loaded = true;
+}
+
+static esp_err_t customs_persist(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    if (s_custom_n > 0) err = nvs_set_blob(h, "zone_custom", s_custom, s_custom_n * sizeof(custom_zone_t));
+    else                nvs_erase_key(h, "zone_custom");
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
 }
 
 uint8_t pb_bambu_zone_target(const char *filament)
 {
     if (!s_zones_loaded) zones_load();
-    int i = pb_bambu_zone_match(filament, ZONE_NAMES, PB_BAMBU_ZONE_COUNT);
-    return i < 0 ? 0 : s_zone_c[i];
+    if (!filament || !filament[0]) return 0;
+    // Longest-prefix match over built-ins + customs (a custom "PETG-CF" beats "PETG").
+    const char *names[PB_BAMBU_ZONE_MAX];
+    uint8_t     temps[PB_BAMBU_ZONE_MAX];
+    int n = 0;
+    for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++) { names[n] = ZONE_NAMES[i];   temps[n] = s_zone_c[i];        n++; }
+    for (int i = 0; i < s_custom_n;          i++) { names[n] = s_custom[i].name; temps[n] = s_custom[i].target_c; n++; }
+    int idx = pb_bambu_zone_match(filament, names, n);
+    return idx < 0 ? 0 : temps[idx];
 }
 
 int pb_bambu_zone_get_all(pb_bambu_zone_t *out, int max)
@@ -352,25 +381,63 @@ int pb_bambu_zone_get_all(pb_bambu_zone_t *out, int max)
     int n = 0;
     for (int i = 0; i < PB_BAMBU_ZONE_COUNT && n < max; i++, n++) {
         snprintf(out[n].name, sizeof out[n].name, "%s", ZONE_NAMES[i]);
-        out[n].target_c = s_zone_c[i];
+        out[n].target_c  = s_zone_c[i];
+        out[n].default_c = ZONE_DEF[i];
+        out[n].custom    = false;
+    }
+    for (int i = 0; i < s_custom_n && n < max; i++, n++) {
+        snprintf(out[n].name, sizeof out[n].name, "%.11s", s_custom[i].name);
+        out[n].target_c  = s_custom[i].target_c;
+        out[n].default_c = 0;
+        out[n].custom    = true;
     }
     return n;
 }
 
 esp_err_t pb_bambu_zone_set(const char *name, uint8_t target_c)
 {
-    if (!name) return ESP_ERR_INVALID_ARG;
-    int idx = -1;
-    for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++)
-        if (strcasecmp(name, ZONE_NAMES[i]) == 0) { idx = i; break; }
-    if (idx < 0) return ESP_ERR_NOT_FOUND;
+    if (!name || !name[0]) return ESP_ERR_INVALID_ARG;
     if (target_c > 70) target_c = 70;   // settable ceiling; pb_policy enforces hard cutoffs
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
-    if (err != ESP_OK) return err;
-    err = nvs_set_u8(h, ZONE_KEYS[idx], target_c);
-    if (err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
-    if (err == ESP_OK) { if (!s_zones_loaded) zones_load(); s_zone_c[idx] = target_c; }
-    return err;
+    if (!s_zones_loaded) zones_load();
+
+    // Built-in: update its NVS key + cache.
+    for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++) {
+        if (strcasecmp(name, ZONE_NAMES[i]) == 0) {
+            nvs_handle_t h;
+            esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+            if (err != ESP_OK) return err;
+            err = nvs_set_u8(h, ZONE_KEYS[i], target_c);
+            if (err == ESP_OK) err = nvs_commit(h);
+            nvs_close(h);
+            if (err == ESP_OK) s_zone_c[i] = target_c;
+            return err;
+        }
+    }
+    // Existing custom profile: update in place.
+    for (int i = 0; i < s_custom_n; i++)
+        if (strcasecmp(name, s_custom[i].name) == 0) {
+            s_custom[i].target_c = target_c;
+            return customs_persist();
+        }
+    // New custom profile: append if there's room and the name fits.
+    if (s_custom_n >= PB_BAMBU_CUSTOM_MAX) return ESP_ERR_NO_MEM;
+    if (strlen(name) >= sizeof s_custom[0].name) return ESP_ERR_INVALID_SIZE;
+    memset(&s_custom[s_custom_n], 0, sizeof s_custom[0]);
+    snprintf(s_custom[s_custom_n].name, sizeof s_custom[s_custom_n].name, "%.11s", name);
+    s_custom[s_custom_n].target_c = target_c;
+    s_custom_n++;
+    return customs_persist();
+}
+
+esp_err_t pb_bambu_zone_remove(const char *name)
+{
+    if (!name || !name[0]) return ESP_ERR_INVALID_ARG;
+    if (!s_zones_loaded) zones_load();
+    for (int i = 0; i < s_custom_n; i++)
+        if (strcasecmp(name, s_custom[i].name) == 0) {
+            for (int j = i; j < s_custom_n - 1; j++) s_custom[j] = s_custom[j + 1];
+            s_custom_n--;
+            return customs_persist();
+        }
+    return ESP_ERR_NOT_FOUND;   // not a custom (built-ins can't be removed)
 }

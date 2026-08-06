@@ -383,11 +383,19 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   .chamber-reading strong{ font-size: 32px; }
 }
 .zones-list{ display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; align-items: center; margin-top: 10px; }
-.zones-list .zone-lbl{ color: var(--muted-foreground); font-size: 13px; }
+#zones-custom-list{ grid-template-columns: 1fr auto auto; }
+.zones-list .zone-lbl{ color: var(--foreground); font-size: 13px; display: flex; flex-direction: column; }
+.zones-list .zone-def{ color: var(--muted-foreground); font-size: 11px; }
 .zones-list .zone-in{ width: 4.2em; text-align: center; padding: 5px 6px; font: inherit;
   color: var(--foreground); background: var(--background);
   border: 1px solid var(--input); border-radius: var(--radius-lg); }
 .zones-list .zone-in:focus{ outline: none; border-color: var(--primary); }
+.zones-list .zone-rm{ background: none; border: none; color: var(--muted-foreground); cursor: pointer;
+  padding: 4px; display: inline-flex; border-radius: var(--radius-lg); }
+.zones-list .zone-rm:hover{ color: var(--destructive, #e5484d); background: var(--input); }
+.zones-add{ display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.zones-add .zone-in-name{ width: auto; flex: 1; text-align: left; }
+.zones-empty{ color: var(--muted-foreground); font-size: 13px; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -404,6 +412,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
   <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9z"/></symbol>
   <symbol id="i-square" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
@@ -463,6 +472,7 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
             <div id="db-auto-row" hidden><dt>Auto</dt><dd id="db-auto">--</dd></div>
             <div id="db-drying-row" hidden><dt>Drying</dt><dd id="db-drying">--</dd></div>
             <div><dt id="db-printer-label">Printer</dt><dd id="db-printer">--</dd></div>
+            <div id="db-filament-row" hidden><dt>Filament</dt><dd id="db-filament">--</dd></div>
             <div><dt>Fault</dt><dd id="db-fault">--</dd></div>
           </dl>
           <div class="actions">
@@ -486,11 +496,22 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
           </div>
         </section>
         <!-- Filament chamber zones (Bambu only): shown when the control source is
-             Bambu; edits apply live via /api/v2/zones (no reboot). -->
+             Bambu; edits apply live via /api/v2/zones (no reboot). Two cards: the
+             built-in filament types (left) and user-added custom profiles (right). -->
         <section class="card zones-card" id="zones-card" hidden>
           <h3><svg class="icon"><use href="#i-spool"/></svg> Filament zones</h3>
           <p class="muted">Chamber target by filament while a Bambu print runs (°C, 0 = off).</p>
           <div id="zones-list" class="zones-list"></div>
+        </section>
+        <section class="card zones-card" id="zones-custom-card" hidden>
+          <h3><svg class="icon"><use href="#i-spool"/></svg> Custom profiles</h3>
+          <p class="muted">Add profiles for filaments not in the built-in set (PA, PCTG, …).</p>
+          <div id="zones-custom-list" class="zones-list"></div>
+          <div class="zones-add">
+            <input id="zc-name" class="zone-in zone-in-name" type="text" placeholder="name" maxlength="11" autocomplete="off">
+            <input id="zc-temp" class="zone-in" type="number" min="0" max="70" step="1" placeholder="°C">
+            <button class="btn btn-sm" type="button" id="zc-add"><svg class="icon"><use href="#i-plus"/></svg> Add</button>
+          </div>
         </section>
       </div>
 
@@ -961,27 +982,65 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
 
   /* Filament chamber zones (Bambu only). Fetched once when the Bambu card first
      shows; each input edit is applied live via POST /api/v2/zones (no reboot). */
-  var zonesLoaded = false;
+  var zonesLoaded = false, zonesCustomMax = 8;
+  function esc(t){ return String(t).replace(/[<>&"]/g, function(ch){
+    return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[ch]; }); }
+  /* Push a single zone target (create/update) then re-render both lists. */
+  function zoneSet(name, v){
+    fetch('/api/v2/zones',{method:'POST',headers:hdr(),body:JSON.stringify({name:name,target_c:v})})
+      .then(function(r){return r.json();}).then(function(d){ if(d && d.zones) renderZones(d.zones); }).catch(function(){});
+  }
+  function zoneRemove(name){
+    fetch('/api/v2/zones',{method:'POST',headers:hdr(),body:JSON.stringify({remove:name})})
+      .then(function(r){return r.json();}).then(function(d){ if(d && d.zones) renderZones(d.zones); }).catch(function(){});
+  }
   function renderZones(zones){
-    var list = document.getElementById('zones-list');
-    if(!list) return;
-    list.innerHTML = zones.map(function(z){
-      return '<span class="zone-lbl">'+z.name+'</span>'+
-        '<input class="zone-in" type="number" min="0" max="70" step="1" data-zone="'+z.name+'" value="'+z.target_c+'">';
+    var builtins = document.getElementById('zones-list');
+    var customs  = document.getElementById('zones-custom-list');
+    if(!builtins || !customs) return;
+    var bi = zones.filter(function(z){ return !z.custom; });
+    var cu = zones.filter(function(z){ return z.custom; });
+    builtins.innerHTML = bi.map(function(z){
+      var def = z.default_c ? 'default '+z.default_c+' °C' : 'default off';
+      return '<span class="zone-lbl">'+esc(z.name)+'<span class="zone-def">'+def+'</span></span>'+
+        '<input class="zone-in" type="number" min="0" max="70" step="1" data-zone="'+esc(z.name)+'" value="'+z.target_c+'">';
     }).join('');
-    list.querySelectorAll('.zone-in').forEach(function(inp){
-      inp.addEventListener('change', function(){
-        var v = Math.max(0, Math.min(70, parseInt(inp.value||'0',10)||0));
-        inp.value = v;
-        fetch('/api/v2/zones',{method:'POST',headers:hdr(),body:JSON.stringify({name:inp.dataset.zone,target_c:v})}).catch(function(){});
+    customs.innerHTML = cu.length ? cu.map(function(z){
+      return '<span class="zone-lbl">'+esc(z.name)+'</span>'+
+        '<input class="zone-in" type="number" min="0" max="70" step="1" data-zone="'+esc(z.name)+'" value="'+z.target_c+'">'+
+        '<button class="zone-rm" type="button" title="Remove" data-rm="'+esc(z.name)+'"><svg class="icon"><use href="#i-trash"/></svg></button>';
+    }).join('') : '<span class="zones-empty">No custom profiles yet.</span>';
+    [builtins, customs].forEach(function(list){
+      list.querySelectorAll('.zone-in').forEach(function(inp){
+        inp.addEventListener('change', function(){
+          var v = Math.max(0, Math.min(70, parseInt(inp.value||'0',10)||0));
+          inp.value = v; zoneSet(inp.dataset.zone, v);
+        });
+      });
+      list.querySelectorAll('.zone-rm').forEach(function(btn){
+        btn.addEventListener('click', function(){ zoneRemove(btn.dataset.rm); });
       });
     });
+    // Disable the add button once the custom store is full.
+    var add = document.getElementById('zc-add');
+    if(add) add.disabled = (cu.length >= zonesCustomMax);
+  }
+  function zoneAdd(){
+    var ni = document.getElementById('zc-name'), ti = document.getElementById('zc-temp');
+    if(!ni || !ti) return;
+    var name = (ni.value||'').trim();
+    if(!name) { ni.focus(); return; }
+    var v = Math.max(0, Math.min(70, parseInt(ti.value||'0',10)||0));
+    zoneSet(name, v);
+    ni.value=''; ti.value=''; ni.focus();
   }
   function loadZones(){
     if(zonesLoaded) return;
     zonesLoaded = true;
+    var add = document.getElementById('zc-add');
+    if(add) add.addEventListener('click', zoneAdd);
     fetch('/api/v2/zones').then(function(r){return r.json();})
-      .then(function(d){ renderZones(d.zones||[]); })
+      .then(function(d){ if(d.custom_max) zonesCustomMax = d.custom_max; renderZones(d.zones||[]); })
       .catch(function(){ zonesLoaded = false; });
   }
 
@@ -1045,8 +1104,18 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
        link + bed); Home Assistant has no printer to follow (HA is the controller),
        so relabel the row and show the source instead of a misleading "not connected". */
     var src = s.environment.control_source || 'klipper';
+    var isBambu = (src==='bambu');
     var zc = document.getElementById('zones-card');
-    if(zc){ zc.hidden = (src!=='bambu'); if(src==='bambu') loadZones(); }
+    var zcc = document.getElementById('zones-custom-card');
+    if(zc){ zc.hidden = !isBambu; if(isBambu) loadZones(); }
+    if(zcc) zcc.hidden = !isBambu;
+    /* Bambu-only: show the active print's filament in the status card. */
+    var frow = $('db-filament-row');
+    if(frow){
+      var fila = isBambu && s.environment.bambu_printing ? s.environment.bambu_filament : null;
+      frow.hidden = !fila;
+      if(fila) u('db-filament', fila);
+    }
     var plabel = $('db-printer-label');
     if(src==='ha'){
       if(plabel) plabel.textContent='Source';

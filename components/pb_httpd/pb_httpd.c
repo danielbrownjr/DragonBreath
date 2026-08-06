@@ -164,6 +164,15 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
         pb_bambu_config_t bc;
         if (pb_bambu_get_config(&bc) == ESP_OK && bc.serial[0])
             cJSON_AddStringToObject(environment, "bambu_serial", bc.serial);
+        // Surface the active print's filament so the dashboard status card can show
+        // "Filament: PETG" while a Bambu print runs (Bambu-only; Klipper drives the
+        // chamber via macros and reports no filament here).
+        pb_bambu_status_t bs;
+        if (pb_bambu_get_status(&bs) == ESP_OK) {
+            cJSON_AddBoolToObject(environment, "bambu_printing", bs.printing);
+            if (bs.printing && bs.filament[0])
+                cJSON_AddStringToObject(environment, "bambu_filament", bs.filament);
+        }
     }
     cJSON_AddBoolToObject(environment, "moonraker_connected", s->moonraker_connected);
     add_num1(environment, "bed_temperature_c", s->bed_c);
@@ -894,13 +903,16 @@ static esp_err_t zones_send(httpd_req_t *req)
     if (!o) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
     cJSON_AddNumberToObject(o, "api_version", API_VERSION);
     cJSON_AddNumberToObject(o, "max", PB_HEATER_ABS_MAX_TARGET_C);
+    cJSON_AddNumberToObject(o, "custom_max", PB_BAMBU_CUSTOM_MAX);
     cJSON *arr = cJSON_AddArrayToObject(o, "zones");
-    pb_bambu_zone_t z[PB_BAMBU_ZONE_COUNT];
-    int n = pb_bambu_zone_get_all(z, PB_BAMBU_ZONE_COUNT);
+    pb_bambu_zone_t z[PB_BAMBU_ZONE_MAX];
+    int n = pb_bambu_zone_get_all(z, PB_BAMBU_ZONE_MAX);
     for (int i = 0; i < n; i++) {
         cJSON *e = cJSON_CreateObject();
         cJSON_AddStringToObject(e, "name", z[i].name);
         cJSON_AddNumberToObject(e, "target_c", z[i].target_c);
+        cJSON_AddNumberToObject(e, "default_c", z[i].default_c);
+        cJSON_AddBoolToObject(e, "custom", z[i].custom);
         cJSON_AddItemToArray(arr, e);
     }
     return send_json(req, o);
@@ -909,13 +921,25 @@ static esp_err_t zones_send(httpd_req_t *req)
 static esp_err_t zones_get(httpd_req_t *req) { return zones_send(req); }
 
 // POST /api/v2/zones — {"name":"PETG","target_c":45} sets one, or
-// {"zones":[{"name":..,"target_c":..},...]} sets several. Auth-gated; applies live.
+// {"zones":[{"name":..,"target_c":..},...]} sets several, or {"remove":"PCTG"} deletes
+// a custom profile. Auth-gated; applies live.
 static esp_err_t zones_post(httpd_req_t *req)
 {
     if (auth_reject(req)) return ESP_OK;
     cJSON *root = recv_json(req);
     if (!root)
         return api_error(req, "400 Bad Request", "invalid_command", "invalid JSON body", NULL);
+
+    // Remove a custom profile.
+    cJSON *rm = cJSON_GetObjectItemCaseSensitive(root, "remove");
+    if (cJSON_IsString(rm)) {
+        esp_err_t err = pb_bambu_zone_remove(rm->valuestring);
+        cJSON_Delete(root);
+        if (err != ESP_OK)
+            return api_error(req, "404 Not Found", "invalid_command",
+                             "no such custom profile (built-ins cannot be removed)", NULL);
+        return zones_send(req);
+    }
 
     bool applied = false;
     cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "zones");

@@ -84,14 +84,22 @@ static inline pb_fila_result_t pb_bambu_active_filament(const char *json, char *
     return PB_FILA_ABSENT;       // couldn't resolve -> don't clobber the last value
 }
 
-// Index of the first zone whose base name is a case-insensitive prefix of `filament`
-// (so "PETG-CF" / "PLA Basic" resolve to PETG / PLA), or -1 if none match.
+// Index of the zone whose base name is the LONGEST case-insensitive prefix of
+// `filament` (so "PETG-CF" resolves to a custom "PETG-CF" over "PETG", and
+// "PLA Basic" to "PLA"), or -1 if none match.
 static inline int pb_bambu_zone_match(const char *filament, const char *const names[], int count)
 {
     if (!filament || !filament[0]) return -1;
-    for (int i = 0; i < count; i++)
-        if (strncasecmp(filament, names[i], strlen(names[i])) == 0) return i;
-    return -1;
+    int best = -1;
+    size_t bestlen = 0;
+    for (int i = 0; i < count; i++) {
+        size_t n = strlen(names[i]);
+        if (n > 0 && n > bestlen && strncasecmp(filament, names[i], n) == 0) {
+            best = i;
+            bestlen = n;
+        }
+    }
+    return best;
 }
 
 // Is a Bambu gcode_state "active" for chamber-zone purposes? PREPARE (so the chamber
