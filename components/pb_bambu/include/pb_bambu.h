@@ -46,3 +46,25 @@ esp_err_t pb_bambu_get_status(pb_bambu_status_t *out);
 
 // Wipe saved Bambu config (factory reset).
 esp_err_t pb_bambu_clear_config(void);
+
+// --- Filament chamber zones (Bambu only, issue #64) -------------------------
+// Maps the active filament type to a chamber target so a Bambu print gets a warm
+// chamber (e.g. PETG -> 40 C) without any bed-threshold AUTO. Klipper doesn't use
+// this — it drives the chamber via M141/M191. A zone target of 0 = "no zone" (off).
+#define PB_BAMBU_ZONE_COUNT 6
+
+typedef struct {
+    char    name[8];     // base filament type, e.g. "PETG"
+    uint8_t target_c;    // chamber target (°C); 0 = no zone / off
+} pb_bambu_zone_t;
+
+// Resolve the chamber target for a filament type string (case-insensitive prefix
+// match, so "PETG-CF"/"PLA Basic" resolve to PETG/PLA). 0 = no zone / unknown.
+uint8_t pb_bambu_zone_target(const char *filament);
+
+// Fill `out` (capacity `max`) with the current zone map (NVS overrides or defaults);
+// returns the number written.
+int pb_bambu_zone_get_all(pb_bambu_zone_t *out, int max);
+
+// Set one zone's target by name (case-insensitive). Persists to NVS. 0 disables it.
+esp_err_t pb_bambu_zone_set(const char *name, uint8_t target_c);

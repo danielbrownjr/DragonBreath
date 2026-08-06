@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>   // strncasecmp / strcasecmp for filament zone matching
 
 static const char *TAG = "pb_bambu";
 
@@ -345,4 +346,76 @@ esp_err_t pb_bambu_clear_config(void)
     nvs_commit(h);
     nvs_close(h);
     return ESP_OK;
+}
+
+// ---------- filament chamber zones (issue #64, Bambu only) ----------
+
+// Base filament type -> default chamber target (°C). 0 = no zone (off). Opinionated
+// but sane; all user-overridable via NVS. PLA/TPU default off (a hot chamber hurts
+// PLA); PETG/ABS/ASA/PC want warmth for layer adhesion / reduced warping.
+static const struct { const char *name; const char *key; uint8_t def_c; }
+ZONES[PB_BAMBU_ZONE_COUNT] = {
+    { "PLA",  "zone_pla",  0  },
+    { "PETG", "zone_petg", 40 },
+    { "ABS",  "zone_abs",  45 },
+    { "ASA",  "zone_asa",  45 },
+    { "PC",   "zone_pc",   50 },
+    { "TPU",  "zone_tpu",  0  },
+};
+
+static uint8_t s_zone_c[PB_BAMBU_ZONE_COUNT];   // RAM cache of the resolved targets
+static bool    s_zones_loaded = false;
+
+// Load the zone targets (NVS override, else default) into the RAM cache.
+static void zones_load(void)
+{
+    nvs_handle_t h;
+    bool have = (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK);
+    for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++) {
+        uint8_t v = ZONES[i].def_c;
+        if (have) nvs_get_u8(h, ZONES[i].key, &v);   // leaves default if key absent
+        s_zone_c[i] = v;
+    }
+    if (have) nvs_close(h);
+    s_zones_loaded = true;
+}
+
+uint8_t pb_bambu_zone_target(const char *filament)
+{
+    if (!filament || !filament[0]) return 0;
+    if (!s_zones_loaded) zones_load();
+    // Case-insensitive prefix match so "PETG-CF" / "PLA Basic" resolve to their base.
+    for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++)
+        if (strncasecmp(filament, ZONES[i].name, strlen(ZONES[i].name)) == 0)
+            return s_zone_c[i];
+    return 0;
+}
+
+int pb_bambu_zone_get_all(pb_bambu_zone_t *out, int max)
+{
+    if (!s_zones_loaded) zones_load();
+    int n = 0;
+    for (int i = 0; i < PB_BAMBU_ZONE_COUNT && n < max; i++, n++) {
+        snprintf(out[n].name, sizeof out[n].name, "%s", ZONES[i].name);
+        out[n].target_c = s_zone_c[i];
+    }
+    return n;
+}
+
+esp_err_t pb_bambu_zone_set(const char *name, uint8_t target_c)
+{
+    if (!name) return ESP_ERR_INVALID_ARG;
+    int idx = -1;
+    for (int i = 0; i < PB_BAMBU_ZONE_COUNT; i++)
+        if (strcasecmp(name, ZONES[i].name) == 0) { idx = i; break; }
+    if (idx < 0) return ESP_ERR_NOT_FOUND;
+    if (target_c > 70) target_c = 70;   // settable ceiling; pb_policy enforces hard cutoffs
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(h, ZONES[idx].key, target_c);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) { if (!s_zones_loaded) zones_load(); s_zone_c[idx] = target_c; }
+    return err;
 }
