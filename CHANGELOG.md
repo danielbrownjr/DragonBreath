@@ -7,10 +7,10 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
-## [1.0.4-rc1]
+## [1.0.4] - 2026-08-06
 
 **Bambu filament heating zones — the chamber target now follows the filament type of
-the active Bambu print (issue #64). Pre-release for community testing.**
+the active Bambu print (issue #64).**
 
 ### Added
 - **Filament chamber zones (Bambu source only).** During a Bambu print, DragonBreath
