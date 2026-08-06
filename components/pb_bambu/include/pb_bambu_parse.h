@@ -93,3 +93,14 @@ static inline int pb_bambu_zone_match(const char *filament, const char *const na
         if (strncasecmp(filament, names[i], strlen(names[i])) == 0) return i;
     return -1;
 }
+
+// Is a Bambu gcode_state "active" for chamber-zone purposes? PREPARE (so the chamber
+// preheats before the print), RUNNING, and PAUSE (hold heat across a pause) are active;
+// IDLE / FINISH / FAILED / SLICING are not. Case-sensitive: Bambu emits upper-case.
+static inline bool pb_bambu_gcode_active(const char *state)
+{
+    if (!state || !state[0]) return false;
+    return strcmp(state, "RUNNING") == 0
+        || strcmp(state, "PREPARE") == 0
+        || strcmp(state, "PAUSE")   == 0;
+}

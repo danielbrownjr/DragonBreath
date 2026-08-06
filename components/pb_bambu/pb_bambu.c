@@ -122,6 +122,8 @@ static void parse_report(const char *json)
     // goal) works on all models via bed_temper/bed_target_temper.
     char fila[16];
     pb_fila_result_t fr = pb_bambu_active_filament(json, fila, sizeof fila);
+    char gs[16];
+    bool got_gs = pb_bambu_find_string(json, "\"gcode_state\"", gs, sizeof gs);  // print state
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (got_bed) {
@@ -131,6 +133,7 @@ static void parse_report(const char *json)
     }
     if (got_tgt)  s_status.bed_target = bedtgt;
     if (got_cham) s_status.chamber_temp = cham;
+    if (got_gs)   s_status.printing = pb_bambu_gcode_active(gs);   // keep prior if a delta omits it
     // Tri-state: PRESENT updates the filament; EMPTY (unload / print end / no spool)
     // CLEARS it so a stale zone is never applied; ABSENT (a delta that simply omits
     // the AMS/tray block) leaves the last known value untouched.
@@ -316,7 +319,8 @@ esp_err_t pb_bambu_clear_config(void)
 // arrays so the (host-tested) pb_bambu_zone_match() can take ZONE_NAMES directly.
 static const char *const ZONE_NAMES[PB_BAMBU_ZONE_COUNT] = { "PLA", "PETG", "ABS", "ASA", "PC", "TPU" };
 static const char *const ZONE_KEYS [PB_BAMBU_ZONE_COUNT] = { "zone_pla", "zone_petg", "zone_abs", "zone_asa", "zone_pc", "zone_tpu" };
-static const uint8_t     ZONE_DEF  [PB_BAMBU_ZONE_COUNT] = { 0, 40, 45, 45, 50, 0 };
+//                                                            PLA PETG ABS ASA PC  TPU
+static const uint8_t     ZONE_DEF  [PB_BAMBU_ZONE_COUNT] = {  0,  40, 55, 55, 60,  0 };
 
 static uint8_t s_zone_c[PB_BAMBU_ZONE_COUNT];   // RAM cache of the resolved targets
 static bool    s_zones_loaded = false;

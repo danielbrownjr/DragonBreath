@@ -28,6 +28,14 @@ static void expect_zone(const char *filament, int want_idx)
     printf("[%s] zone %-12s want=%d got=%d\n", ok ? "PASS" : "FAIL", filament, want_idx, got);
 }
 
+static void expect_active(const char *state, int want)
+{
+    int got = pb_bambu_gcode_active(state);
+    int ok = got == want;
+    if (!ok) fails++;
+    printf("[%s] gcode %-9s want=%d got=%d\n", ok ? "PASS" : "FAIL", state, want, got);
+}
+
 int main(void)
 {
     // --- active-filament tri-state ---
@@ -78,6 +86,15 @@ int main(void)
     expect_zone("petg", 1);      // case-insensitive
     expect_zone("PVA", -1);      // unknown -> no zone
     expect_zone("", -1);
+
+    // --- print-state classifier (preheat starts on PREPARE) ---
+    expect_active("PREPARE", 1);
+    expect_active("RUNNING", 1);
+    expect_active("PAUSE",   1);
+    expect_active("IDLE",    0);
+    expect_active("FINISH",  0);
+    expect_active("FAILED",  0);
+    expect_active("",        0);
 
     printf(fails ? "\n%d FAILED\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;

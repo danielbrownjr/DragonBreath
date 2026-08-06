@@ -336,27 +336,27 @@ static void test_auto_requires_live_moonraker_and_uses_hysteresis(void)
     CHECK(pb_policy_set_auto(
         60.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
 
-    pb_policy_set_env(99.0f, 99.0f, true);
+    pb_policy_set_env(99.0f, 99.0f, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().effective_target_c == 0.0f);
 
-    pb_policy_set_env(100.0f, 100.0f, true);
+    pb_policy_set_env(100.0f, 100.0f, true, 0.0f);
     pb_policy_tick();
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.auto_engaged);
     CHECK(snap.effective_target_c == 60.0f);
 
-    pb_policy_set_env(98.0f, 98.0f, true);
+    pb_policy_set_env(98.0f, 98.0f, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().auto_engaged);
 
-    pb_policy_set_env(96.9f, 96.9f, true);
+    pb_policy_set_env(96.9f, 96.9f, true, 0.0f);
     pb_policy_tick();
     snap = snapshot();
     CHECK(!snap.auto_engaged);
     CHECK(snap.effective_target_c == 0.0f);
 
-    pb_policy_set_env(105.0f, 105.0f, false);
+    pb_policy_set_env(105.0f, 105.0f, false, 0.0f);
     pb_policy_tick();
     CHECK(!snapshot().auto_engaged);
 
@@ -365,11 +365,11 @@ static void test_auto_requires_live_moonraker_and_uses_hysteresis(void)
     // immediately; a hot bed whose setpoint has dropped disengages.
     CHECK(pb_policy_set_auto(
         60.0f, 100.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
-    pb_policy_set_env(20.0f /*measured cold*/, 100.0f /*setpoint*/, true);
+    pb_policy_set_env(20.0f /*measured cold*/, 100.0f /*setpoint*/, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().auto_engaged);
     CHECK(snapshot().effective_target_c == 60.0f);
-    pb_policy_set_env(99.0f /*measured hot*/, 0.0f /*setpoint cleared*/, true);
+    pb_policy_set_env(99.0f /*measured hot*/, 0.0f /*setpoint cleared*/, true, 0.0f);
     pb_policy_tick();
     CHECK(!snapshot().auto_engaged);
     CHECK(snapshot().effective_target_c == 0.0f);
@@ -385,14 +385,14 @@ static void test_auto_filtration_band_fan_only_not_cooldown(void)
     CHECK(pb_policy_set_filter_config(30.0f, true) == PB_POLICY_OK);
 
     // Bed below filter_temp: no filtration, fan off.
-    pb_policy_set_env(25.0f, 25.0f, true);
+    pb_policy_set_env(25.0f, 25.0f, true, 0.0f);
     pb_policy_tick();
     pb_policy_snapshot_t snap = snapshot();
     CHECK(!snap.auto_filtering);
     CHECK(snap.effective_fan_percent == 0);
 
     // Bed >= filter_temp but below the heat threshold: fan-only filtration band.
-    pb_policy_set_env(40.0f, 40.0f, true);
+    pb_policy_set_env(40.0f, 40.0f, true, 0.0f);
     pb_policy_tick();
     snap = snapshot();
     CHECK(snap.auto_filtering);                 // filtering
@@ -402,20 +402,20 @@ static void test_auto_filtration_band_fan_only_not_cooldown(void)
     CHECK(!snap.thermal_purge);                 // P1: must NOT read as cooldown purge
 
     // Hysteresis: stays on within [filter_temp - 3, ...); releases only below it.
-    pb_policy_set_env(28.0f, 28.0f, true);
+    pb_policy_set_env(28.0f, 28.0f, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().auto_filtering);
-    pb_policy_set_env(26.0f, 26.0f, true);
+    pb_policy_set_env(26.0f, 26.0f, true, 0.0f);
     pb_policy_tick();
     snap = snapshot();
     CHECK(!snap.auto_filtering);
     CHECK(snap.effective_fan_percent == 0);
 
     // Moonraker disconnect fails to no-airflow even with a hot bed.
-    pb_policy_set_env(40.0f, 40.0f, true);
+    pb_policy_set_env(40.0f, 40.0f, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().auto_filtering);
-    pb_policy_set_env(40.0f, 40.0f, false);
+    pb_policy_set_env(40.0f, 40.0f, false, 0.0f);
     pb_policy_tick();
     snap = snapshot();
     CHECK(!snap.auto_filtering);
@@ -434,7 +434,7 @@ static void test_filtration_band_runs_outside_auto(void)
     CHECK(snap.mode == PB_MODE_OFF);
 
     // OFF BY DEFAULT (opt-in): a hot bed while idle does NOT filter until enabled.
-    pb_policy_set_env(40.0f, 40.0f, true);
+    pb_policy_set_env(40.0f, 40.0f, true, 0.0f);
     pb_policy_tick();
     snap = snapshot();
     CHECK(!snap.auto_filtering);
@@ -460,7 +460,7 @@ static void test_filtration_band_runs_outside_auto(void)
 
     // Re-enabled but bed setpoint back below filter_temp: no filtration.
     CHECK(pb_policy_set_filter_config(30.0f, true) == PB_POLICY_OK);
-    pb_policy_set_env(20.0f, 20.0f, true);
+    pb_policy_set_env(20.0f, 20.0f, true, 0.0f);
     pb_policy_tick();
     snap = snapshot();
     CHECK(!snap.auto_filtering);
@@ -493,7 +493,7 @@ static void test_runtime_limits_drive_auto_and_remote_lease(void)
     CHECK(pb_policy_set_auto(
         65.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
     CHECK(snapshot().requested_target_c == 52.0f);
-    pb_policy_set_env(100.0f, 100.0f, true);
+    pb_policy_set_env(100.0f, 100.0f, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().effective_target_c == 52.0f);
 
@@ -752,12 +752,12 @@ static void test_panel_leds_track_mode(void)
     pb_policy_set_mode_off(PB_SOURCE_WEB);
     CHECK(pb_policy_set_auto(
         60.0f, 100.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
-    pb_policy_set_env(20.0f, 20.0f, false);
+    pb_policy_set_env(20.0f, 20.0f, false, 0.0f);
     pb_policy_tick();
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_BLINK_SLOW);
     CHECK(led_pattern[PB_LED_ON] == PB_LED_OFF);
 
-    pb_policy_set_env(105.0f, 105.0f, true);
+    pb_policy_set_env(105.0f, 105.0f, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().auto_engaged);
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_SOLID);
@@ -1059,6 +1059,39 @@ static void test_purge_decide_session_and_hysteresis(void)
     CHECK(pb_purge_decide(false, &heated, true, 49.9f, true, 49.0f, true, hot) == false);
 }
 
+// A source-requested chamber target (e.g. a Bambu filament zone) engages AUTO heat
+// directly, overriding the configured AUTO target and bypassing the bed threshold
+// ("zone wins"); clearing it reverts to normal bed-AUTO / idle. Value is clamped.
+static void test_auto_source_zone_overrides_bed_threshold(void)
+{
+    reset_fixture();
+    CHECK(pb_policy_set_auto(60.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
+
+    // Cold bed, no bed setpoint (0 < 100) -> bed-AUTO alone does NOT engage.
+    pb_policy_set_env(20.0f, 0.0f, true, 0.0f);
+    pb_policy_tick();
+    CHECK(!snapshot().auto_engaged);
+
+    // A source zone target (55) engages heat and overrides the 60 AUTO target.
+    pb_policy_set_env(20.0f, 0.0f, true, 55.0f);
+    pb_policy_tick();
+    pb_policy_snapshot_t snap = snapshot();
+    CHECK(snap.auto_engaged);
+    CHECK(snap.effective_target_c == 55.0f);
+
+    // Zone clears (print end) with no bed setpoint -> disengage (revert to idle/AUTO).
+    pb_policy_set_env(20.0f, 0.0f, true, 0.0f);
+    pb_policy_tick();
+    snap = snapshot();
+    CHECK(!snap.auto_engaged);
+    CHECK(snap.effective_target_c == 0.0f);
+
+    // Out-of-range zone target is clamped to the settable ceiling (70 C).
+    pb_policy_set_env(20.0f, 0.0f, true, 999.0f);
+    pb_policy_tick();
+    CHECK(snapshot().effective_target_c == 70.0f);
+}
+
 int main(void)
 {
     test_boot_is_off();
@@ -1066,6 +1099,7 @@ int main(void)
     test_new_command_supersedes_old_lease_and_off_is_unconditional();
     test_lease_expiry_latches_watchdog_fault();
     test_auto_requires_live_moonraker_and_uses_hysteresis();
+    test_auto_source_zone_overrides_bed_threshold();
     test_auto_filtration_band_fan_only_not_cooldown();
     test_filtration_band_runs_outside_auto();
     test_drying_is_bounded_and_expires_off();

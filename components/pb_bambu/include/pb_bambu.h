@@ -33,6 +33,8 @@ typedef struct {
     float chamber_temp;   // chamber_temper (°C); NaN if the model has no sensor
     char  filament[16];   // active filament type from AMS / ext spool (e.g. "PETG");
                           // "" if unknown. Feeds filament-based chamber zones.
+    bool  printing;       // gcode_state is PREPARE/RUNNING/PAUSE (a print is active);
+                          // gates when a filament zone is applied.
 } pb_bambu_status_t;
 
 esp_err_t pb_bambu_start(void);
