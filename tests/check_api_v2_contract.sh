@@ -47,7 +47,7 @@ if grep -Eq '\.uri = "/(status|target|heartbeat|reset)"' "$httpd"; then
     exit 1
 fi
 
-# Dashboard/control ownership invariants (now in the shared dc_ui SPA):
+# Dashboard/control ownership invariants (now in the shared dc_ui SPA, $portal):
 grep -q "EventSource('/api/v2/events')" "$portal"    # SSE observer
 grep -q "if(polling)" "$portal"                      # serialized poll fallback (no overlapping fetches)
 grep -q "lease_id:lease" "$portal"                   # heartbeat sends the exact device-issued lease
