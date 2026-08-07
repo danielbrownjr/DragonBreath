@@ -254,7 +254,7 @@ static void test_boot_is_off(void)
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.state_revision == 1);
     CHECK(snap.mode == PB_MODE_OFF);
-    CHECK(snap.source == PB_SOURCE_BOOT);
+    CHECK(snap.source == DB_SOURCE_BOOT);
     CHECK(snap.effective_target_c == 0.0f);
     CHECK(!snap.lease_active);
 }
@@ -264,13 +264,13 @@ static void test_remote_lease_and_stale_revision(void)
     reset_fixture();
     pb_policy_lease_t first;
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_KLIPPER, "u1", 1, &first) == PB_POLICY_OK);
+        45.0f, DB_SOURCE_KLIPPER, "u1", 1, &first) == PB_POLICY_OK);
     CHECK(strlen(first.id) == PB_POLICY_LEASE_ID_LEN);
 
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.state_revision == 2);
     CHECK(snap.mode == PB_MODE_POWER_ON);
-    CHECK(snap.source == PB_SOURCE_KLIPPER);
+    CHECK(snap.source == DB_SOURCE_KLIPPER);
     CHECK(snap.requested_target_c == 45.0f);
     CHECK(snap.lease_active);
     CHECK(strcmp(snap.lease_owner, "u1") == 0);
@@ -278,7 +278,7 @@ static void test_remote_lease_and_stale_revision(void)
 
     pb_policy_lease_t rejected = {0};
     CHECK(pb_policy_set_power_on(
-        50.0f, PB_SOURCE_WEB, "old-tab", 1, &rejected)
+        50.0f, DB_SOURCE_WEB, "old-tab", 1, &rejected)
         == PB_POLICY_REVISION_CONFLICT);
     CHECK(rejected.id[0] == '\0');
     CHECK(snapshot().requested_target_c == 45.0f);
@@ -292,16 +292,16 @@ static void test_new_command_supersedes_old_lease_and_off_is_unconditional(void)
     reset_fixture();
     pb_policy_lease_t first, second;
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_WEB, "tab-1", 1, &first) == PB_POLICY_OK);
+        45.0f, DB_SOURCE_WEB, "tab-1", 1, &first) == PB_POLICY_OK);
     uint32_t rev = snapshot().state_revision;
     CHECK(pb_policy_set_power_on(
-        50.0f, PB_SOURCE_KLIPPER, "u1", rev, &second) == PB_POLICY_OK);
+        50.0f, DB_SOURCE_KLIPPER, "u1", rev, &second) == PB_POLICY_OK);
     CHECK(strcmp(first.id, second.id) != 0);
     CHECK(pb_policy_heartbeat(&first) == PB_POLICY_STALE_LEASE);
     CHECK(pb_policy_heartbeat(&second) == PB_POLICY_OK);
 
     // OFF ignores an arbitrarily stale caller revision by design.
-    pb_policy_set_mode_off(PB_SOURCE_WEB);
+    pb_policy_set_mode_off(DB_SOURCE_WEB);
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
     CHECK(snap.effective_target_c == 0.0f);
@@ -314,7 +314,7 @@ static void test_lease_expiry_latches_watchdog_fault(void)
     reset_fixture();
     pb_policy_lease_t lease;
     CHECK(pb_policy_set_power_on(
-        55.0f, PB_SOURCE_KLIPPER, "u1", 1, &lease) == PB_POLICY_OK);
+        55.0f, DB_SOURCE_KLIPPER, "u1", 1, &lease) == PB_POLICY_OK);
     pb_policy_tick();
     CHECK(pb_heater_is_on());
 
@@ -322,7 +322,7 @@ static void test_lease_expiry_latches_watchdog_fault(void)
     pb_policy_tick();
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
-    CHECK(snap.source == PB_SOURCE_WATCHDOG);
+    CHECK(snap.source == DB_SOURCE_WATCHDOG);
     CHECK(snap.fault_latched);
     CHECK(strcmp(snap.fault_reason, "controller lease expired") == 0);
     CHECK(!snap.heater_output);
@@ -334,7 +334,7 @@ static void test_auto_requires_live_moonraker_and_uses_hysteresis(void)
 {
     reset_fixture();
     CHECK(pb_policy_set_auto(
-        60.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
+        60.0f, 100.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
 
     pb_policy_set_env(99.0f, 99.0f, true, 0.0f);
     pb_policy_tick();
@@ -364,7 +364,7 @@ static void test_auto_requires_live_moonraker_and_uses_hysteresis(void)
     // measured bed temperature. A cold bed with a high setpoint engages
     // immediately; a hot bed whose setpoint has dropped disengages.
     CHECK(pb_policy_set_auto(
-        60.0f, 100.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+        60.0f, 100.0f, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
     pb_policy_set_env(20.0f /*measured cold*/, 100.0f /*setpoint*/, true, 0.0f);
     pb_policy_tick();
     CHECK(snapshot().auto_engaged);
@@ -381,7 +381,7 @@ static void test_auto_filtration_band_fan_only_not_cooldown(void)
     // AUTO, heat threshold 100 C; filter_temp defaults to 30 C. The band is OFF by
     // default (opt-in), so enable it explicitly for this test.
     CHECK(pb_policy_set_auto(
-        60.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
+        60.0f, 100.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
     CHECK(pb_policy_set_filter_config(30.0f, true) == PB_POLICY_OK);
 
     // Bed below filter_temp: no filtration, fan off.
@@ -471,9 +471,9 @@ static void test_drying_is_bounded_and_expires_off(void)
 {
     reset_fixture();
     CHECK(pb_policy_start_drying(
-        55.0f, 13, PB_SOURCE_WEB, 1) == PB_POLICY_INVALID);
+        55.0f, 13, DB_SOURCE_WEB, 1) == PB_POLICY_INVALID);
     CHECK(pb_policy_start_drying(
-        55.0f, 1, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
+        55.0f, 1, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
     pb_policy_tick();
     CHECK(snapshot().drying);
     CHECK(snapshot().effective_target_c == 55.0f);
@@ -491,7 +491,7 @@ static void test_runtime_limits_drive_auto_and_remote_lease(void)
     reset_fixture();
     heater_max_target_c = 52.0f;
     CHECK(pb_policy_set_auto(
-        65.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
+        65.0f, 100.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
     CHECK(snapshot().requested_target_c == 52.0f);
     pb_policy_set_env(100.0f, 100.0f, true, 0.0f);
     pb_policy_tick();
@@ -501,7 +501,7 @@ static void test_runtime_limits_drive_auto_and_remote_lease(void)
     heater_comms_timeout_ms = 10000;
     pb_policy_lease_t lease;
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_KLIPPER, "u1", 1, &lease) == PB_POLICY_OK);
+        45.0f, DB_SOURCE_KLIPPER, "u1", 1, &lease) == PB_POLICY_OK);
     CHECK(snapshot().lease_expires_ms == heater_comms_timeout_ms);
     fake_now_us += (int64_t)heater_comms_timeout_ms * 1000 + 1;
     pb_policy_tick();
@@ -512,7 +512,7 @@ static void test_local_power_limit_expires_off_without_fault(void)
 {
     reset_fixture();
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_BUTTON, "panel", 1, NULL) == PB_POLICY_OK);
+        45.0f, DB_SOURCE_BUTTON, "panel", 1, NULL) == PB_POLICY_OK);
     pb_policy_tick();
     CHECK(snapshot().heater_output);
 
@@ -520,12 +520,12 @@ static void test_local_power_limit_expires_off_without_fault(void)
     pb_policy_tick();
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
-    CHECK(snap.source == PB_SOURCE_WATCHDOG);
+    CHECK(snap.source == DB_SOURCE_WATCHDOG);
     CHECK(!snap.fault_latched);
     CHECK(snap.effective_target_c == 0.0f);
 
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_BUTTON, "panel", snap.state_revision, NULL)
+        45.0f, DB_SOURCE_BUTTON, "panel", snap.state_revision, NULL)
         == PB_POLICY_OK);
 }
 
@@ -534,7 +534,7 @@ static void test_external_fault_sync_off_and_clear(void)
     reset_fixture();
     pb_policy_lease_t lease;
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_KLIPPER, "u1", 1, &lease) == PB_POLICY_OK);
+        45.0f, DB_SOURCE_KLIPPER, "u1", 1, &lease) == PB_POLICY_OK);
     pb_policy_tick();
     CHECK(led_pattern[PB_LED_POWER] == PB_LED_SOLID);
     CHECK(led_pattern[PB_LED_ON] == PB_LED_SOLID);
@@ -543,7 +543,7 @@ static void test_external_fault_sync_off_and_clear(void)
     pb_policy_tick();
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
-    CHECK(snap.source == PB_SOURCE_SAFETY);
+    CHECK(snap.source == DB_SOURCE_SAFETY);
     CHECK(snap.fault_latched);
     CHECK(strcmp(snap.fault_reason, "external trip") == 0);
     CHECK(!snap.lease_active);
@@ -551,7 +551,7 @@ static void test_external_fault_sync_off_and_clear(void)
     CHECK(led_pattern[PB_LED_ON] == PB_LED_OFF);   // fault forced mode OFF
 
     // OFF is unconditional even while the underlying safety fault remains latched.
-    pb_policy_set_mode_off(PB_SOURCE_WEB);
+    pb_policy_set_mode_off(DB_SOURCE_WEB);
     snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
     CHECK(snap.effective_target_c == 0.0f);
@@ -559,12 +559,12 @@ static void test_external_fault_sync_off_and_clear(void)
 
     uint32_t clear_revision = snap.state_revision;
     CHECK(pb_policy_clear_fault(
-        PB_SOURCE_WEB, clear_revision + 1) == PB_POLICY_REVISION_CONFLICT);
+        DB_SOURCE_WEB, clear_revision + 1) == PB_POLICY_REVISION_CONFLICT);
     CHECK(pb_policy_clear_fault(
-        PB_SOURCE_WEB, clear_revision) == PB_POLICY_OK);
+        DB_SOURCE_WEB, clear_revision) == PB_POLICY_OK);
     snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
-    CHECK(snap.source == PB_SOURCE_WEB);
+    CHECK(snap.source == DB_SOURCE_WEB);
     CHECK(!snap.fault_latched);
     CHECK(snap.effective_target_c == 0.0f);
 }
@@ -638,7 +638,7 @@ static void test_params_persist_only_changed_keys(void)
     pb_policy_load_params();
 
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        45.0f, DB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
         == PB_POLICY_OK);
     CHECK(pb_policy_persist_pending());
     CHECK(nvs_read("md_last") == 4500);
@@ -649,7 +649,7 @@ static void test_params_persist_only_changed_keys(void)
 
     unsigned before = nvs_writes;
     CHECK(pb_policy_set_auto(
-        55.0f, 90.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+        55.0f, 90.0f, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
     CHECK(pb_policy_persist_pending());
     CHECK(nvs_read("md_auto_tgt") == 5500);
     CHECK(nvs_read("md_auto_bed") == 9000);
@@ -657,7 +657,7 @@ static void test_params_persist_only_changed_keys(void)
     CHECK(nvs_writes - before == 2);
 
     CHECK(pb_policy_start_drying(
-        50.0f, 3, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+        50.0f, 3, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
     CHECK(pb_policy_persist_pending());
     CHECK(nvs_read("md_dry_tgt") == 5000);
     CHECK(nvs_read("md_dry_hrs") == 3);
@@ -672,7 +672,7 @@ static void test_params_persist_canonical_post_clamp_value(void)
     heater_max_target_c = 55.0f;
 
     CHECK(pb_policy_set_power_on(
-        70.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        70.0f, DB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
         == PB_POLICY_OK);
     CHECK(pb_policy_persist_pending());
     // The clamped value reaches flash, not the raw 70 that was requested.
@@ -690,7 +690,7 @@ static void test_params_failed_write_stays_dirty_and_retries(void)
 
     nvs_write_fails = true;
     CHECK(pb_policy_set_power_on(
-        65.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        65.0f, DB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
         == PB_POLICY_OK);
     CHECK(pb_policy_persist_pending());     // attempted
     CHECK(!nvs_has("md_last"));             // but nothing landed
@@ -708,7 +708,7 @@ static void test_params_survive_reboot_but_mode_does_not(void)
     reset_fixture();
     pb_policy_load_params();
     CHECK(pb_policy_start_drying(
-        45.0f, 6, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+        45.0f, 6, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
     CHECK(pb_policy_persist_pending());
     CHECK(snapshot().mode == PB_MODE_DRYING);
 
@@ -724,7 +724,7 @@ static void test_params_survive_reboot_but_mode_does_not(void)
     // ...but the active mode, target, and deadline are gone.
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.mode == PB_MODE_OFF);
-    CHECK(snap.source == PB_SOURCE_BOOT);
+    CHECK(snap.source == DB_SOURCE_BOOT);
     CHECK(!snap.drying);
     CHECK(snap.effective_target_c == 0.0f);
     CHECK(!snap.lease_active);
@@ -742,16 +742,16 @@ static void test_panel_leds_track_mode(void)
     CHECK(led_pattern[PB_LED_DRY] == PB_LED_OFF);
 
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_WEB, "tab", 1, NULL) == PB_POLICY_OK);
+        45.0f, DB_SOURCE_WEB, "tab", 1, NULL) == PB_POLICY_OK);
     pb_policy_tick();
     CHECK(led_pattern[PB_LED_ON] == PB_LED_SOLID);
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_OFF);
     CHECK(led_pattern[PB_LED_DRY] == PB_LED_OFF);
 
     // AUTO armed but not engaged (no printer link) -> slow blink, not solid.
-    pb_policy_set_mode_off(PB_SOURCE_WEB);
+    pb_policy_set_mode_off(DB_SOURCE_WEB);
     CHECK(pb_policy_set_auto(
-        60.0f, 100.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+        60.0f, 100.0f, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
     pb_policy_set_env(20.0f, 20.0f, false, 0.0f);
     pb_policy_tick();
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_BLINK_SLOW);
@@ -762,9 +762,9 @@ static void test_panel_leds_track_mode(void)
     CHECK(snapshot().auto_engaged);
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_SOLID);
 
-    pb_policy_set_mode_off(PB_SOURCE_WEB);
+    pb_policy_set_mode_off(DB_SOURCE_WEB);
     CHECK(pb_policy_start_drying(
-        55.0f, 2, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+        55.0f, 2, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
     pb_policy_tick();
     CHECK(led_pattern[PB_LED_DRY] == PB_LED_SOLID);
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_OFF);
@@ -792,10 +792,10 @@ static void test_fault_clear_requires_current_revision(void)
     heater_reason = "test fault";
     pb_policy_snapshot_t snap = snapshot();
     CHECK(pb_policy_clear_fault(
-        PB_SOURCE_WEB, snap.state_revision + 1) == PB_POLICY_REVISION_CONFLICT);
+        DB_SOURCE_WEB, snap.state_revision + 1) == PB_POLICY_REVISION_CONFLICT);
     CHECK(heater_fault);
     CHECK(pb_policy_clear_fault(
-        PB_SOURCE_WEB, snap.state_revision) == PB_POLICY_OK);
+        DB_SOURCE_WEB, snap.state_revision) == PB_POLICY_OK);
     CHECK(!heater_fault);
 }
 
@@ -809,7 +809,7 @@ static void test_button_short_toggles_modes(void)
     CHECK(wake_calls == 1);
     pb_policy_snapshot_t snap = snapshot();
     CHECK(snap.mode == PB_MODE_POWER_ON);
-    CHECK(snap.source == PB_SOURCE_BUTTON);
+    CHECK(snap.source == DB_SOURCE_BUTTON);
     CHECK(snap.requested_target_c == 50.0f);
     CHECK(!snap.lease_active);
     // Press again -> OFF.
@@ -822,7 +822,7 @@ static void test_button_short_toggles_modes(void)
     CHECK(wake_calls == 3);
     snap = snapshot();
     CHECK(snap.mode == PB_MODE_AUTO);
-    CHECK(snap.source == PB_SOURCE_BUTTON);
+    CHECK(snap.source == DB_SOURCE_BUTTON);
     CHECK(snap.auto_bed_threshold_c == 100.0f);
     pb_policy_on_button(PB_BUTTON_AUTO, PB_BUTTON_SHORT);
     CHECK(wake_calls == 4);
@@ -858,7 +858,7 @@ static void test_button_invalidates_remote_lease(void)
     pb_policy_load_params();
     pb_policy_lease_t lease;
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_KLIPPER, "klippy", 1, &lease) == PB_POLICY_OK);
+        45.0f, DB_SOURCE_KLIPPER, "klippy", 1, &lease) == PB_POLICY_OK);
     CHECK(snapshot().lease_active);
     wake_calls = 0;
 
@@ -866,7 +866,7 @@ static void test_button_invalidates_remote_lease(void)
     pb_policy_on_button(PB_BUTTON_POWER, PB_BUTTON_SHORT);
     CHECK(!snapshot().lease_active);
     CHECK(pb_policy_heartbeat(&lease) == PB_POLICY_STALE_LEASE);
-    CHECK(snapshot().source == PB_SOURCE_BUTTON);
+    CHECK(snapshot().source == DB_SOURCE_BUTTON);
     CHECK(wake_calls == 1);
 }
 
@@ -876,23 +876,23 @@ static void test_remote_commands_wake_only_when_accepted(void)
     pb_policy_load_params();
 
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        45.0f, DB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
         == PB_POLICY_OK);
     CHECK(wake_calls == 1);
 
-    pb_policy_set_mode_off(PB_SOURCE_WEB);
+    pb_policy_set_mode_off(DB_SOURCE_WEB);
     CHECK(wake_calls == 2);
 
     CHECK(pb_policy_set_auto(
-        50.0f, 60.0f, PB_SOURCE_WEB, PB_POLICY_REVISION_ANY)
+        50.0f, 60.0f, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY)
         == PB_POLICY_OK);
     CHECK(wake_calls == 3);
 
-    pb_policy_set_mode_off(PB_SOURCE_KLIPPER);
+    pb_policy_set_mode_off(DB_SOURCE_KLIPPER);
     CHECK(wake_calls == 4);
 
     CHECK(pb_policy_start_drying(
-        50.0f, 2, PB_SOURCE_KLIPPER, PB_POLICY_REVISION_ANY)
+        50.0f, 2, DB_SOURCE_KLIPPER, PB_POLICY_REVISION_ANY)
         == PB_POLICY_OK);
     CHECK(wake_calls == 5);
 
@@ -900,12 +900,12 @@ static void test_remote_commands_wake_only_when_accepted(void)
     heater_fault = true;
     heater_reason = "test fault";
     CHECK(pb_policy_set_power_on(
-        45.0f, PB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
+        45.0f, DB_SOURCE_WEB, "tab", PB_POLICY_REVISION_ANY, NULL)
         == PB_POLICY_FAULT_LATCHED);
     CHECK(wake_calls == 5);
 
     CHECK(pb_policy_clear_fault(
-        PB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
+        DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
     CHECK(wake_calls == 6);
 }
 
@@ -929,7 +929,7 @@ static void test_button_long_press_panic_off(void)
     pb_policy_load_params();
     pb_policy_lease_t lease;
     CHECK(pb_policy_set_power_on(
-        50.0f, PB_SOURCE_WEB, "tab", 1, &lease) == PB_POLICY_OK);
+        50.0f, DB_SOURCE_WEB, "tab", 1, &lease) == PB_POLICY_OK);
     pb_policy_tick();
     CHECK(pb_heater_is_on());
 
@@ -938,7 +938,7 @@ static void test_button_long_press_panic_off(void)
     pb_policy_snapshot_t snap = snapshot();
     // Attributed to BUTTON, NOT SAFETY -- this is the whole point of routing
     // panic-off through the policy rather than a bare heater latch.
-    CHECK(snap.source == PB_SOURCE_BUTTON);
+    CHECK(snap.source == DB_SOURCE_BUTTON);
     CHECK(snap.fault_latched);
     CHECK(snap.mode == PB_MODE_OFF);
     CHECK(!snap.lease_active);
@@ -950,7 +950,7 @@ static void test_button_long_press_panic_off(void)
     CHECK(!pb_heater_is_on());
 
     // And the tick must NOT re-stamp the transition as SAFETY.
-    CHECK(snapshot().source == PB_SOURCE_BUTTON);
+    CHECK(snapshot().source == DB_SOURCE_BUTTON);
 }
 
 static void test_button_power_long_clears_or_holds_fault(void)
@@ -988,11 +988,11 @@ static void test_fault_clear_persist_failure_stays_latched(void)
     heater_reason = "test fault";
     heater_clear_persist_fails = true;
     pb_policy_snapshot_t snap = snapshot();
-    CHECK(pb_policy_clear_fault(PB_SOURCE_WEB, snap.state_revision) == PB_POLICY_PERSIST_FAILED);
+    CHECK(pb_policy_clear_fault(DB_SOURCE_WEB, snap.state_revision) == PB_POLICY_PERSIST_FAILED);
     CHECK(heater_fault);                         // stays latched (fail-safe)
     heater_clear_persist_fails = false;          // persistence recovers
     snap = snapshot();
-    CHECK(pb_policy_clear_fault(PB_SOURCE_WEB, snap.state_revision) == PB_POLICY_OK);
+    CHECK(pb_policy_clear_fault(DB_SOURCE_WEB, snap.state_revision) == PB_POLICY_OK);
     CHECK(!heater_fault);
 }
 
@@ -1065,7 +1065,7 @@ static void test_purge_decide_session_and_hysteresis(void)
 static void test_auto_source_zone_overrides_bed_threshold(void)
 {
     reset_fixture();
-    CHECK(pb_policy_set_auto(60.0f, 100.0f, PB_SOURCE_WEB, 1) == PB_POLICY_OK);
+    CHECK(pb_policy_set_auto(60.0f, 100.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
 
     // Cold bed, no bed setpoint (0 < 100) -> bed-AUTO alone does NOT engage.
     pb_policy_set_env(20.0f, 0.0f, true, 0.0f);

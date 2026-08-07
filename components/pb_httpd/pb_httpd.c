@@ -444,9 +444,9 @@ static esp_err_t command_post(httpd_req_t *req)
     }
     char actor_id_buf[PB_POLICY_OWNER_LEN + 1];
     snprintf(actor_id_buf, sizeof actor_id_buf, "%s", actor_id->valuestring);
-    pb_source_t source;
-    if (strcmp(kind->valuestring, "klipper") == 0) source = PB_SOURCE_KLIPPER;
-    else if (strcmp(kind->valuestring, "web") == 0) source = PB_SOURCE_WEB;
+    db_source_t source;
+    if (strcmp(kind->valuestring, "klipper") == 0) source = DB_SOURCE_KLIPPER;
+    else if (strcmp(kind->valuestring, "web") == 0) source = DB_SOURCE_WEB;
     else {
         cJSON_Delete(root);
         return api_error(req, "400 Bad Request", "invalid_command",

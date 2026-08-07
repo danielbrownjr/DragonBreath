@@ -100,7 +100,7 @@ static esp_err_t nvs_save(const pb_ha_config_t *cfg)
 // ---------- control mapping ----------
 
 // Turn heat ON at a target (idempotent target update). Takes a fresh lease and
-// remembers it so pb_ha_tick() can heartbeat. Reuses PB_SOURCE_WEB (no new policy
+// remembers it so pb_ha_tick() can heartbeat. Reuses DB_SOURCE_WEB (no new policy
 // source) with owner "ha" for attribution.
 static void start_heat(float target_c)
 {
@@ -108,7 +108,7 @@ static void start_heat(float target_c)
     if (target_c > TARGET_MAX_C) target_c = TARGET_MAX_C;
     pb_policy_lease_t lease = {0};
     pb_policy_result_t r = pb_policy_set_power_on(
-        target_c, PB_SOURCE_WEB, "ha", PB_POLICY_REVISION_ANY, &lease);
+        target_c, DB_SOURCE_WEB, "ha", PB_POLICY_REVISION_ANY, &lease);
     if (r == PB_POLICY_OK) {
         xSemaphoreTake(s_lock, portMAX_DELAY);
         s_lease = lease;
@@ -124,7 +124,7 @@ static void start_heat(float target_c)
 
 static void stop_heat(void)
 {
-    pb_policy_set_mode_off(PB_SOURCE_WEB);
+    pb_policy_set_mode_off(DB_SOURCE_WEB);
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_have_lease = false;
     xSemaphoreGive(s_lock);
