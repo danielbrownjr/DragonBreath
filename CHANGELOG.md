@@ -286,7 +286,7 @@ is untouched and source-independent. Consolidates the 0.8.0-rc1…rc3 pre-releas
 - **Selectable control source (Klipper / Bambu / Home Assistant).** The device now
   binds to exactly one printer/controller, chosen in `/setup` under a new "Control
   source" card. Klipper (Moonraker) remains the default and is unchanged. A new
-  `pb_source` selector persists the choice; `app_main` starts only the selected
+  `dc_source` selector persists the choice; `app_main` starts only the selected
   client and feeds the existing AUTO seam (`pb_policy_set_env`) — the heater safety
   model is unchanged and fully source-independent.
 - **Home Assistant integration (tested).** New `pb_ha` MQTT client connects to your
@@ -297,7 +297,7 @@ is untouched and source-independent. Consolidates the 0.8.0-rc1…rc3 pre-releas
   °C↔°F correctly in both display and setpoints. Validated end-to-end on real
   hardware (device + Home Assistant + Mosquitto).
 - **Bambu LAN integration (experimental — untested against a printer).** New
-  `pb_bambu` MQTT-over-TLS client reads a Bambu printer's bed temperature over its
+  `dc_bambu` MQTT-over-TLS client reads a Bambu printer's bed temperature over its
   on-device LAN broker (`mqtts://<ip>:8883`, `bblp` + LAN access code, subscribe
   `device/<serial>/report`, `pushall` on connect) so AUTO can follow a Bambu print.
   Read-only — no control commands are ever sent to the printer. Built from the
@@ -497,7 +497,7 @@ is untouched and source-independent. Consolidates the 0.8.0-rc1…rc3 pre-releas
 - **Vendored the OpenVent shared core locally (no more submodule).** The three
   board-agnostic components that were built from the `external/OpenVent` git
   submodule (`pv_evlog`, `pv_wifi`, `pv_moonraker`) are now first-party components
-  in `components/`, renamed `pb_evlog` / `pb_wifi` / `pb_moonraker` to match the
+  in `components/`, renamed `dc_evlog` / `dc_wifi` / `dc_moonraker` to match the
   rest of the codebase. The submodule, `.gitmodules`, and `EXTRA_COMPONENT_DIRS`
   are removed; CI no longer checks out submodules; the release manifest records
   the vendored-core provenance instead. `git clone` no longer needs

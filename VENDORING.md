@@ -11,9 +11,9 @@ external submodule dependency.
 
 | Local component | Upstream (OpenVent) | Purpose |
 |---|---|---|
-| `components/pb_evlog`     | `pv_evlog`     | in-memory event ring |
-| `components/pb_wifi`      | `pv_wifi`      | Wi-Fi STA/AP provisioning, mDNS, captive portal support |
-| `components/pb_moonraker` | `pv_moonraker` | Moonraker WebSocket client (printer/bed state) |
+| `components/dc_evlog`     | `pv_evlog`     | in-memory event ring |
+| `components/dc_wifi`      | `pv_wifi`      | Wi-Fi STA/AP provisioning, mDNS, captive portal support |
+| `components/dc_moonraker` | `pv_moonraker` | Moonraker WebSocket client (printer/bed state) |
 
 Only these three were ever built by DragonBreath. The rest of the OpenVent
 submodule (`pv_button`, `pv_policy`, `pv_portal`, `pv_status_led`, `pv_board`,
@@ -31,7 +31,7 @@ vendored.
 
 - The `pv_` prefix was renamed to `pb_` throughout (directories, component names,
   files, all functions, and `PV_*` macros → `PB_*`) to match the rest of the
-  DragonBreath codebase. `pb_moonraker` requires `pb_evlog`.
+  DragonBreath codebase. `dc_moonraker` requires `dc_evlog`.
 - App-layer overrides remain in `main/app_main.c`: the mDNS/netif hostname and the
   Wi-Fi AP SSID prefix are set there (not in the vendored components), so the
   product identity is DragonBreath rather than the OpenVent defaults.

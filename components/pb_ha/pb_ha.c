@@ -373,7 +373,7 @@ esp_err_t pb_ha_set_config(const pb_ha_config_t *cfg)
         s_cfg = *cfg;
         xSemaphoreGive(s_lock);
     }
-    return ESP_OK;   // takes effect on next boot (matches pb_moonraker semantics)
+    return ESP_OK;   // takes effect on next boot (matches dc_moonraker semantics)
 }
 
 esp_err_t pb_ha_get_config(pb_ha_config_t *out)

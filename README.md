@@ -104,7 +104,7 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | `pb_heater` | ✅ Bang-bang + full safety cutoffs + per-board element foldback; heat cycle and foldback validated on hardware |
 | `pb_fan` | ✅ TRIAC **on/off held-gate** (stock model — the gate is never PWM'd/phase-chopped) |
 | `pb_policy` | ✅ Authoritative mode/target/lease state machine |
-| Network core: `pb_wifi` / `pb_evlog` / `pb_moonraker` | ✅ Vendored locally (derived from OpenVent, MIT — see [VENDORING.md](VENDORING.md)); WiFi + Moonraker validated on hardware |
+| Network core: `dc_wifi` / `dc_evlog` / `dc_moonraker` | ✅ Vendored locally (derived from OpenVent, MIT — see [VENDORING.md](VENDORING.md)); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard | ✅ Captive provisioning + v2 dashboard (manual / auto / dry / advanced cards, SSE-driven) |
 | Status LEDs (`pb_leds`) | ✅ All four driven from policy: Power = device-alive/fault, On/Auto/Dry = active mode (Auto slow-blinks when armed but waiting). |
 | Front-panel buttons (`pb_buttons`) | ✅ All four polled with debounce + short/long-press; short toggles the labeled mode, 2 s long-press = panic-off (Power-long while faulted = fault clear). Real-Panda + devboard-HIL benches passed. |
@@ -117,13 +117,13 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | Flasher (`tools/flash.py`) | ✅ Recovery/backup tool: `--backup-only` saves a verified full stock backup, `--restore` writes one back, default path unbricks over USB |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware — accepts a DragonBreath **or** a stock `panda_breath` image (for revert); refused while heating |
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |
-| Control source (`pb_source`/`pb_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (experimental, untested on real hardware) |
+| Control source (`dc_source`/`dc_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (experimental, untested on real hardware) |
 | On-device diagnostics pages | ✅ `/diag` (live SSE telemetry + trend + CSV) and `/console` (firmware `ESP_LOGx` viewer via auth-gated `GET /api/v2/console`) — shipped v0.8.0 |
 | Diagnostics (`tools/diag.py`) | ✅ Read-only 2 Hz logger (chamber/PTC/SSR/mode/fault + resolved Rref) → live view + CSV; run during a heat cycle to capture behavior. `python3 tools/diag.py [host] [token]` |
 
 **Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
 client) derives from the [OpenVent](https://github.com/justinh-rahb/OpenVent) family
-but is now **vendored locally** as `components/pb_wifi` / `pb_evlog` / `pb_moonraker`
+but is now **vendored locally** as `components/dc_wifi` / `dc_evlog` / `dc_moonraker`
 (no submodule) — see [VENDORING.md](VENDORING.md) for provenance and the `pv_`→`pb_`
 rename. Everything device-specific — the board map, sensors, heater/fan actuation,
 and the portal / LED / button UI — is likewise first-party in this repo.
@@ -300,12 +300,12 @@ components/
   pb_heater/   SSR control + safety cutoffs + comms watchdog
   pb_fan/      TRIAC on/off held-gate blower control (never PWM)
   pb_policy/   authoritative control state, modes, leases -> actuators
-  pb_source/   control-source selector (Klipper / Bambu / HA), NVS-backed
-  pb_bambu/    Bambu LAN MQTT bed-follow source (experimental)
+  dc_source/   control-source selector (Klipper / Bambu / HA), NVS-backed
+  dc_bambu/    Bambu LAN MQTT bed-follow source (experimental)
   pb_ha/       Home Assistant MQTT-Discovery client (source + controller)
-  pb_moonraker/ Moonraker WebSocket client (Klipper bed state)   [vendored]
-  pb_wifi/     Wi-Fi + captive portal core                        [vendored]
-  pb_evlog/    in-memory event log ring                           [vendored]
+  dc_moonraker/ Moonraker WebSocket client (Klipper bed state)   [vendored]
+  dc_wifi/     Wi-Fi + captive portal core                        [vendored]
+  dc_evlog/    in-memory event log ring                           [vendored]
   pb_leds/     front-panel status LEDs
   pb_buttons/  front-panel button poll/debounce + short/long-press
   pb_hil/      JSON serial HIL console + safe dev-board injection

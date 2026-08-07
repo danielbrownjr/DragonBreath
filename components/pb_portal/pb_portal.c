@@ -2,10 +2,10 @@
 #include "pb_portal.h"
 #include "pb_dns.h"
 #include "pb_httpd.h"
-#include "pb_wifi.h"
-#include "pb_source.h"
-#include "pb_moonraker.h"
-#include "pb_bambu.h"
+#include "dc_wifi.h"
+#include "dc_source.h"
+#include "dc_moonraker.h"
+#include "dc_bambu.h"
 #include "pb_ha.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -478,7 +478,7 @@ static esp_err_t diag_page(httpd_req_t *req)
 }
 
 // Firmware console page (GET /console): the raw ESP_LOGx stream captured into the
-// pb_evlog byte ring, fetched from the auth-gated GET /api/v2/console and shown in a
+// dc_evlog byte ring, fetched from the auth-gated GET /api/v2/console and shown in a
 // scrolling monospace view with auto-refresh + Download. Read-only / non-interactive.
 // The device page itself is open (a GET can't carry the auth header); the DATA fetch
 // is gated (JS sends X-DragonBreath-Auth), so the chatty log isn't world-readable.
@@ -566,7 +566,7 @@ static esp_err_t config_page(httpd_req_t *req)
         sz = sizeof ha_topic;  nvs_get_str(h, "ha_topic", ha_topic, &sz);
         nvs_close(h);
     }
-    pb_ctl_source_t src = pb_source_get();
+    dc_ctl_source_t src = dc_source_get();
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     SEND(req, PAGE_HEAD);
@@ -577,7 +577,7 @@ static esp_err_t config_page(httpd_req_t *req)
     // server-side so it renders even in a phone's captive-portal mini-browser.
     {
         char fssid[33], freason[160];
-        if (pb_wifi_last_sta_fail(fssid, sizeof fssid, freason, sizeof freason)) {
+        if (dc_wifi_last_sta_fail(fssid, sizeof fssid, freason, sizeof freason)) {
             char eb[200], banner[512];
             html_attr_escape(fssid, eb, sizeof eb);
             snprintf(banner, sizeof banner,
@@ -590,7 +590,7 @@ static esp_err_t config_page(httpd_req_t *req)
     // In STA mode Wi-Fi is already provisioned, so the network dropdown defaults to
     // "keep current Wi-Fi" (blank) — a config-only save won't rewrite creds. In AP
     // provisioning there are no creds yet, so a network must be chosen.
-    if (pb_wifi_state() != PB_WIFI_STATE_AP_PORTAL)
+    if (dc_wifi_state() != DC_WIFI_STATE_AP_PORTAL)
         SEND(req, "<script>window.DB_KEEPWIFI=1;</script>");
     SEND(req, CONFIG_WIFI);
 
@@ -615,10 +615,10 @@ static esp_err_t config_page(httpd_req_t *req)
         "<option value=2%s>Home Assistant</option>"
         "<option value=3%s>None (unbound)</option></select>"
         "<button type=button class=sec onclick='unbind()' style='margin-top:8px'>Unbind current source</button>",
-        src == PB_SRC_KLIPPER ? " selected" : "",
-        src == PB_SRC_BAMBU   ? " selected" : "",
-        src == PB_SRC_HA      ? " selected" : "",
-        src == PB_SRC_NONE    ? " selected" : "");
+        src == DC_SRC_KLIPPER ? " selected" : "",
+        src == DC_SRC_BAMBU   ? " selected" : "",
+        src == DC_SRC_HA      ? " selected" : "",
+        src == DC_SRC_NONE    ? " selected" : "");
     SEND(req, buf);
 
     // Klipper group.
@@ -627,7 +627,7 @@ static esp_err_t config_page(httpd_req_t *req)
         "<div class=grp data-src=0 style='display:%s'>"
         "<label>Host / IP</label><input name=mk_host value=\"%s\" placeholder='e.g. 10.168.2.34'>"
         "<label>Port</label><input name=mk_port value=\"%u\"></div>",
-        src == PB_SRC_KLIPPER ? "block" : "none", esc, (unsigned)mk_port);
+        src == DC_SRC_KLIPPER ? "block" : "none", esc, (unsigned)mk_port);
     SEND(req, buf);
 
     // Bambu group.
@@ -635,7 +635,7 @@ static esp_err_t config_page(httpd_req_t *req)
     snprintf(buf, sizeof buf,
         "<div class=grp data-src=1 style='display:%s'>"
         "<label>Printer IP</label><input name=bb_host value=\"%s\" placeholder='e.g. 10.168.2.50'>",
-        src == PB_SRC_BAMBU ? "block" : "none", esc);
+        src == DC_SRC_BAMBU ? "block" : "none", esc);
     SEND(req, buf);
     html_attr_escape(bb_serial, esc, sizeof esc);
     snprintf(buf, sizeof buf,
@@ -652,8 +652,8 @@ static esp_err_t config_page(httpd_req_t *req)
         "When a Bambu print runs, the chamber follows the active filament's target "
         "here (overrides bed-follow).</small>");
     {
-        pb_bambu_zone_t zones[PB_BAMBU_ZONE_COUNT];
-        int nz = pb_bambu_zone_get_all(zones, PB_BAMBU_ZONE_COUNT);
+        dc_bambu_zone_t zones[DC_BAMBU_ZONE_COUNT];
+        int nz = dc_bambu_zone_get_all(zones, DC_BAMBU_ZONE_COUNT);
         for (int i = 0; i < nz; i++) {
             snprintf(buf, sizeof buf,
                 "<div style='display:flex;align-items:center;gap:8px;margin-bottom:4px'>"
@@ -671,7 +671,7 @@ static esp_err_t config_page(httpd_req_t *req)
         "<div class=grp data-src=2 style='display:%s'>"
         "<label>MQTT broker</label><input name=ha_host value=\"%s\" placeholder='e.g. 10.168.2.10'>"
         "<label>Port</label><input name=ha_port value=\"%u\">",
-        src == PB_SRC_HA ? "block" : "none", esc, (unsigned)ha_port);
+        src == DC_SRC_HA ? "block" : "none", esc, (unsigned)ha_port);
     SEND(req, buf);
     html_attr_escape(ha_user, esc, sizeof esc);
     snprintf(buf, sizeof buf,
@@ -723,15 +723,15 @@ static esp_err_t favicon_ico(httpd_req_t *req)
 // on setup; in STA mode serve the live dashboard SPA.
 static esp_err_t root_page(httpd_req_t *req)
 {
-    if (pb_wifi_state() == PB_WIFI_STATE_AP_PORTAL) return config_page(req);
+    if (dc_wifi_state() == DC_WIFI_STATE_AP_PORTAL) return config_page(req);
     return app_page(req);
 }
 
 static esp_err_t scan_json(httpd_req_t *req)
 {
-    wifi_ap_record_t recs[PB_WIFI_SCAN_MAX];
-    int n = pb_wifi_get_scan_results(recs, PB_WIFI_SCAN_MAX);
-    if (n == 0 && !pb_wifi_is_scanning()) pb_wifi_scan_start();
+    wifi_ap_record_t recs[DC_WIFI_SCAN_MAX];
+    int n = dc_wifi_get_scan_results(recs, DC_WIFI_SCAN_MAX);
+    if (n == 0 && !dc_wifi_is_scanning()) dc_wifi_scan_start();
 
     // cJSON handles comma placement and escaping (quotes/backslashes/control chars),
     // so a skipped/odd SSID can't produce invalid JSON.
@@ -752,7 +752,7 @@ static esp_err_t scan_json(httpd_req_t *req)
 
 static esp_err_t rescan_post(httpd_req_t *req)
 {
-    pb_wifi_scan_start();
+    dc_wifi_scan_start();
     httpd_resp_set_status(req, "204 No Content");
     return httpd_resp_send(req, NULL, 0);
 }
@@ -762,7 +762,7 @@ static esp_err_t save_post(httpd_req_t *req)
     // Provisioning is open only in AP/setup mode (no credentials yet to send a
     // header from). Once joined to a network (STA), rewriting Wi-Fi config is a
     // mutating control action, so require the CSRF header like the other POSTs.
-    if (pb_wifi_state() != PB_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
+    if (dc_wifi_state() != DC_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
         httpd_resp_set_status(req, "403 Forbidden");
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"error\":\"missing/invalid X-DragonBreath-Auth header\"}");
@@ -804,7 +804,7 @@ static esp_err_t save_post(httpd_req_t *req)
     // existing creds and just applies the control-source/config change — so
     // switching source (or editing Bambu/HA fields) never forces a Wi-Fi re-entry.
     bool have_wifi = chosen[0] != '\0';
-    if (!have_wifi && pb_wifi_state() == PB_WIFI_STATE_AP_PORTAL) {
+    if (!have_wifi && dc_wifi_state() == DC_WIFI_STATE_AP_PORTAL) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no Wi-Fi network chosen");
         return ESP_FAIL;
     }
@@ -814,7 +814,7 @@ static esp_err_t save_post(httpd_req_t *req)
         // Control source (0=klipper/1=bambu/2=ha); ignore out-of-range.
         if (src_s[0]) {
             int s = atoi(src_s);
-            if (s >= PB_SRC_KLIPPER && s <= PB_SRC_NONE) nvs_set_u8(h, "ctl_src", (uint8_t)s);
+            if (s >= DC_SRC_KLIPPER && s <= DC_SRC_NONE) nvs_set_u8(h, "ctl_src", (uint8_t)s);
         }
         // Klipper.
         if (mk_host[0]) nvs_set_str(h, "mk_host", mk_host);
@@ -835,11 +835,11 @@ static esp_err_t save_post(httpd_req_t *req)
         nvs_close(h);
     }
 
-    // Filament chamber zones (z_<TYPE>). pb_bambu_zone_set() opens its own NVS
+    // Filament chamber zones (z_<TYPE>). dc_bambu_zone_set() opens its own NVS
     // handle, so do this after the block above closes. Only write on change.
     {
-        pb_bambu_zone_t zones[PB_BAMBU_ZONE_COUNT];
-        int nz = pb_bambu_zone_get_all(zones, PB_BAMBU_ZONE_COUNT);
+        dc_bambu_zone_t zones[DC_BAMBU_ZONE_COUNT];
+        int nz = dc_bambu_zone_get_all(zones, DC_BAMBU_ZONE_COUNT);
         for (int i = 0; i < nz; i++) {
             char field[12] = {0}, val[8] = {0};
             snprintf(field, sizeof field, "z_%.7s", zones[i].name);   // built-ins only; names ≤4 chars
@@ -847,7 +847,7 @@ static esp_err_t save_post(httpd_req_t *req)
             if (val[0]) {
                 int t = atoi(val);
                 if (t >= 0 && t <= 70 && (uint8_t)t != zones[i].target_c)
-                    pb_bambu_zone_set(zones[i].name, (uint8_t)t);
+                    dc_bambu_zone_set(zones[i].name, (uint8_t)t);
             }
         }
     }
@@ -861,7 +861,7 @@ static esp_err_t save_post(httpd_req_t *req)
         "<p><small>This page will disconnect \xE2\x80\x94 that's expected.</small></p>");
     if (have_wifi) {
         ESP_LOGI(TAG, "provisioned SSID='%s' — rebooting", chosen);
-        pb_wifi_save_creds_and_reboot(chosen, pass);   // writes ssid/password + reboots
+        dc_wifi_save_creds_and_reboot(chosen, pass);   // writes ssid/password + reboots
     } else {
         // STA config-only change: keep Wi-Fi creds, apply the new source on reboot.
         ESP_LOGI(TAG, "config saved (Wi-Fi unchanged) — rebooting");
@@ -875,20 +875,20 @@ static esp_err_t save_post(httpd_req_t *req)
 // mutating action, so it needs the CSRF header in STA mode (open in AP provisioning).
 static esp_err_t unbind_post(httpd_req_t *req)
 {
-    if (pb_wifi_state() != PB_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
+    if (dc_wifi_state() != DC_WIFI_STATE_AP_PORTAL && !pb_httpd_auth_ok(req)) {
         httpd_resp_set_status(req, "403 Forbidden");
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"error\":\"missing/invalid X-DragonBreath-Auth header\"}");
     }
-    pb_ctl_source_t src = pb_source_get();
+    dc_ctl_source_t src = dc_source_get();
     switch (src) {
-    case PB_SRC_KLIPPER: pb_moonraker_clear_config(); break;
-    case PB_SRC_BAMBU:   pb_bambu_clear_config();     break;
-    case PB_SRC_HA:      pb_ha_clear_config();        break;
+    case DC_SRC_KLIPPER: dc_moonraker_clear_config(); break;
+    case DC_SRC_BAMBU:   dc_bambu_clear_config();     break;
+    case DC_SRC_HA:      pb_ha_clear_config();        break;
     default: break;   // already None — nothing to clear
     }
-    pb_source_set(PB_SRC_NONE);
-    ESP_LOGI(TAG, "unbind: cleared %s config, control source -> none; rebooting", pb_source_str(src));
+    dc_source_set(DC_SRC_NONE);
+    ESP_LOGI(TAG, "unbind: cleared %s config, control source -> none; rebooting", dc_source_str(src));
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, "{\"ok\":true,\"unbound\":true}");
@@ -923,11 +923,11 @@ esp_err_t pb_portal_start(void)
     httpd_register_uri_handler(s, &favic);  // before the catch-all so /favicon.ico != SPA
     httpd_register_uri_handler(s, &root);   // catch-all LAST (captive-portal probes)
 
-    if (pb_wifi_state() == PB_WIFI_STATE_AP_PORTAL) {
-        pb_wifi_ap_config_t ap;
-        pb_wifi_get_ap_config(&ap);
+    if (dc_wifi_state() == DC_WIFI_STATE_AP_PORTAL) {
+        dc_wifi_ap_config_t ap;
+        dc_wifi_get_ap_config(&ap);
         pb_dns_start(htonl(ap.ip));
-        pb_wifi_scan_start();
+        dc_wifi_scan_start();
         ESP_LOGI(TAG, "AP captive portal active");
     } else {
         ESP_LOGI(TAG, "config portal available (STA mode)");

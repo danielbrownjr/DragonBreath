@@ -26,7 +26,7 @@ is what `/console` is for. `/diag` is the companion: a live telemetry view (the
   SSR output, mode, fault+reason, sensor status), pushed ~every 2 s and on every
   transition. `tools/diag.py` is just a 2 Hz poll of this plus a client-side running
   peak + CSV.
-- **`/api/v2/logs`** — the **event ring** (`pb_evlog`, 64 × 96 B `{ms,text}`), the
+- **`/api/v2/logs`** — the **event ring** (`dc_evlog`, 64 × 96 B `{ms,text}`), the
   *curated* notable events (mode/fault transitions). **Already rendered** in the
   dashboard's Settings → "Event log". This is NOT the raw `ESP_LOGx` stream — nothing
   captures that today.
@@ -114,7 +114,7 @@ while adding `/diag` first.
 1. **`/diag`** (front-end only, zero firmware risk): shared page scaffolding + the
    SSE-driven telemetry view + client-side CSV download.
 2. **`/console`**:
-   - `pb_evlog` (or a new `pb_conlog`) gains a 16 KB byte ring + `esp_log_set_vprintf`
+   - `dc_evlog` (or a new `pb_conlog`) gains a 16 KB byte ring + `esp_log_set_vprintf`
      hook, initialised early in `app_main`.
    - `GET /api/v2/console` (auth-gated) returns the ring as text.
    - `/console` page (themed, polling, auto-scroll, `[Download]`).
@@ -135,5 +135,5 @@ while adding `/diag` first.
 - Confirm the `esp_log_set_vprintf` hook composes cleanly with the existing UART
   console and the `CONFIG_PB_POWER_LED` TX-repurposing (verify on a release build).
 - Ring size final (16 KB proposed) vs. a `Kconfig`-tunable.
-- Whether `/console` should also fold in the `pb_evlog` curated events inline, or keep
+- Whether `/console` should also fold in the `dc_evlog` curated events inline, or keep
   them separate (Settings already shows the event ring).
