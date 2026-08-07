@@ -1,159 +1,175 @@
-# RFC: Dragon\* firmware family — unification
+# RFC: Dragon firmware family unification
 
-Status: **Draft / design — for review (plastikman + @justinh-rahb).** Unify the BIGTREETECH
-**Panda** open-firmware efforts under one **Dragon\*** family: a single board-agnostic
-**shared core** consumed by product firmwares (DragonBreath, DragonVent), living in a
-new shared GitHub org. This RFC is the umbrella; the
-[HTTP device-interface decouple RFC](decouple-httpd-device-interface.md) is its
-technical prerequisite.
+Status: **Accepted; implementation in progress.** Updated after the initial
+dragon-core extraction landed in DragonBreath via
+[#68](https://github.com/plastikman/DragonBreath/pull/68).
 
-## Decisions locked (plastikman + @justinh-rahb)
+The Dragon family uses one board-neutral ESP-IDF core and thin product firmware
+repositories. Products own their hardware and safety behavior; dragon-core owns
+services and transports that can be reused without product-specific GPIO, sensor,
+or actuator assumptions.
 
-1. **Shared core = a new standalone repo with a family-neutral prefix**, and a
-   **clean-break prefix rename across the board**: kill `pb_`/`pv_` (legacy Panda
-   product branding) → **`dc_`/`dcore_`** (core), **`db_`** (DragonBreath), **`dv_`**
-   (DragonVent). No aliases (mirrors the OpenBreath→DragonBreath rebrand).
-2. **DragonVent is a fresh repo built on the extracted core** (not on OpenVent's core).
-   OpenVent is archived with a pointer to DragonVent.
-3. **A new shared GitHub org**, co-owned by plastikman + @justinh-rahb, is the home for the
-   core, the products, **and the Klipper helper(s)** (`dragonbreath-klipper` moves in).
-4. **Scope for this pass: DragonBreath + DragonVent only.** Other Panda\* products
-   onboard later by supplying a device implementation + UI descriptor.
+## What has landed
 
-## Names — proposed, confirm before use
+As of 2026-08-07:
 
-Placeholders below; the category is decided, the strings are not. Pick once, then
-they're load-bearing (repo URLs, prefixes, `idf_component.yml`).
+- [`justinh-rahb/dragon-core`](https://github.com/justinh-rahb/dragon-core) exists and
+  uses the family-neutral `dc_` / `DC_` namespace.
+- DragonBreath #68 extracted `dc_evlog`, `dc_source`, `dc_bambu`, `dc_wifi`, and
+  `dc_moonraker`. DragonBreath consumes all five through ESP-IDF Component Manager
+  manifests pinned to dragon-core commit `ec44eb4`.
+- The extraction preserved NVS namespaces, keys, and persisted enum values. Existing
+  Wi-Fi, Moonraker, Bambu, and control-source configuration survives the upgrade.
+- DragonBreath's product-local policy command-origin enum now uses `db_source_t` and
+  `DB_SOURCE_*`, keeping it distinct from dragon-core's `dc_ctl_source_t` and
+  `DC_SRC_*` control-source selector.
+- DragonBreath #68 passed host tests, its ESP-IDF CI build, and the complete safe
+  ESP32-C3 devboard HIL suite: 3 scenarios, 66 steps, 0 failures, with Panda mains
+  GPIO/ADC backends compiled out.
+- dragon-core has a provisional annotated `v0.1.0` tag at `9b7db48`. Its CI runs the
+  Bambu host parser tests and compiles/links all five components together with
+  ESP-IDF 5.3 for ESP32-C3. The component sources at the tag are unchanged from the
+  revision currently pinned by DragonBreath.
 
-| Thing | Proposal | Notes |
+The first extraction did **not** require HTTP or UI decoupling. That work remains the
+prerequisite for moving the HTTP/OTA/portal/shared-SPA layer into dragon-core; see
+[the follow-on decoupling RFC](decouple-httpd-device-interface.md).
+
+## Namespace and compatibility rules
+
+| Ownership | C/component namespace | Status |
 |---|---|---|
-| Shared GitHub org | **`dragon-fw`** | neutral, unbranded; holds core **+ products + the Klipper helper(s)** |
-| Shared core repo | **`dragon-core`** | the board-agnostic ESP-IDF component set |
-| Core component prefix | **`dc_`** (or `dcore_`) | `dragon-core`; replaces `pb_*`/`pv_*` on shared components |
-| Product prefixes | Breath **`db_`** (was `pb_`), Vent **`dv_`** (was `pv_`) | **full rename — everything Dragon-branded, no legacy `pb_`/`pv_`** |
+| dragon-core shared code | `dc_*` / `DC_*` | Active |
+| DragonBreath product code | `db_*` / `DB_*` | Target convention |
+| DragonVent product code | `dv_*` / `DV_*` | Target convention |
+| Existing DragonBreath `pb_*` / `PB_*` | Transitional legacy | Migrate in focused follow-ups |
 
-**Prefix scheme (decided): kill `pb_` and `pv_` outright.** Every component gets a
-Dragon prefix — **`dc_`/`dcore_`** (shared core), **`db_`** (DragonBreath), **`dv_`**
-(DragonVent). `pb_` = "Panda Breath" and `pv_` = "Panda Vent" are legacy product
-branding; the family rename is a clean break with no aliases (mirrors the earlier
-OpenBreath→DragonBreath rebrand). The core-prefix choice (`dc_` vs `dcore_`) is the one
-string still open.
+New DragonBreath components use `db_*`; existing `pb_*` components are not precedent
+for new names. In particular, new app-side Klipper MQTT work should use
+`db_klipper_mqtt`, while an independently reusable transport would be a `dc_*`
+component.
 
-## Architecture — one core, N products
+The source namespace may change, but compatibility-sensitive identifiers do not
+change merely for naming consistency. Preserve these unless an explicit migration is
+designed and tested:
 
-The **core** owns everything a Panda product shares; the **product** owns its board,
-sensors, actuators, policy, and a device implementation that plugs into the core.
+- NVS namespaces, keys, and numeric enum values;
+- HTTP routes, JSON fields, auth headers, and other wire contracts;
+- partition labels and OTA/project identities;
+- persisted configuration strings and externally consumed names.
 
+The remaining `pb_*` to `db_*` source rename should be mechanical and isolated from
+behavior changes. Compatibility exceptions are intentional, documented exceptions to
+the source-prefix rule.
+
+## Architecture
+
+### Shared core
+
+The landed core owns:
+
+| Component | Responsibility |
+|---|---|
+| `dc_evlog` | Event and diagnostic-console rings |
+| `dc_source` | Persisted external-control source selection |
+| `dc_bambu` | Bambu LAN MQTT status client |
+| `dc_wifi` | Wi-Fi, provisioning, scanning, and mDNS with product identity input |
+| `dc_moonraker` | Moonraker WebSocket client and Klipper status |
+
+Candidate follow-on modules include HTTP/OTA, the portal and shared SPA, discovery and
+group management, and reusable RGB LED behavior. A candidate moves to core only after
+its product hardware and policy dependencies are behind a narrow capability boundary.
+
+### Products
+
+Products retain board maps, sensors, actuators, safety policy, and product composition:
+
+```text
+dragon-core (dc_*)                 product repositories
+  transport and service code        DragonBreath: db_* target; legacy pb_* remains
+  no product GPIO assumptions        DragonVent:   dv_*
+  no heater/motor policy              DragonStatus: product/controller-board layer
 ```
-dragon-core (dc_*/dcore_*)                 DragonBreath repo (db_*)
-  dc_httpd     transport/auth/SSE/OTA/       db_board    GPIO map
-               events/log + dc_device vtable  db_ntc      sensors
-  dc_portal    setup/fw/diag/console UI       db_heater   actuator + safety
-  dc_wifi      wifi + captive portal          db_fan
-  dc_moonraker Klipper bed state              db_policy   state machine
-  dc_bambu     Bambu LAN MQTT                 db_leds / db_buttons
-  dc_ha        Home Assistant MQTT            db_device   <- implements dc_device
-  dc_source    control-source selector        main/       wires product -> core
-  dc_evlog     event ring
-                                             DragonVent repo (dv_*): dv_board,
-                                             dv_motor…, dv_device -> same dc_ core
-```
 
-- **The seam is the `dc_device` vtable** from the decouple RFC: the product supplies
-  `state_json` / `command` / optional `calibration` / a **UI descriptor**, and the core
-  supplies transport, OTA, and the single shared SPA. DragonVent has no NTC calibration
-  (returns `NULL`) and describes motor groups instead of a heater — same core, no forks.
-- **Consumed via the ESP-IDF component manager** (`idf_component.yml` git dependency +
-  `dependencies.lock` pin) — the mechanism already used for `espressif/mdns` and
-  `espressif/esp_websocket_client`. **Not a submodule**: `external/OpenVent` +
-  `EXTRA_COMPONENT_DIRS` was tried and abandoned in favour of vendoring; the manager is
-  the version-pinned successor.
-- **Branding is data, not code**: product name, `<title>`, favicon, and CSS custom
-  properties are supplied by the product/descriptor, so one HTML renders every product.
+The proposed `dc_device` capability boundary is a follow-on seam, not something #68
+already implemented. DragonBreath would provide a `db_device` implementation;
+DragonVent and DragonStatus would provide their own product implementations.
 
-## Sequencing
+## Shared web client and same-LAN management
 
-Ordered so nothing ships broken and the risky moves land behind a proven core. Steps
-1–2 happen **in DragonBreath** (the only repo with hardware, HIL, and a shipped 1.0);
-extraction and DragonVent follow.
+The UI is already a browser-hosted SPA. Today it uses HTTP requests plus server-sent
+events; the firmware's Moonraker client, not the browser UI, is the current WebSocket
+consumer. When the UI becomes the family SPA, the bundle can carry sibling-product
+screens once and select them from device capabilities; no native mobile app is
+required.
 
-**0. Stand up the family scaffolding.** Create the org, agree the names table above,
-commit this RFC + the decouple RFC (done here). No code yet.
+The management-plane follow-on is intentionally same-LAN and opt-in:
 
-**1. Land the decouple RFC in DragonBreath** ([its PRs 1–4](decouple-httpd-device-interface.md)):
-extract pure JSON builders + **golden-response contract test** (the safety net — the
-current `check_api_v2_contract.sh` is grep-over-source and would pass a broken
-refactor), introduce the `dc_device` vtable, move the HTML to an asset pipeline, add the
-runtime UI descriptor (folded into `/api/v2/info`). **No API v2 behavior change**;
-validated on real hardware + HIL. DragonBreath stays shippable throughout.
+1. A user enables sibling discovery in configuration.
+2. The device discovers other Dragon-family devices on the LAN and presents them for
+   explicit selection.
+3. Selected devices form a group; membership is reflected to the group members.
+4. Opening any group member's UI presents the selected siblings in one tabbed or
+   otherwise unified pane.
+5. The browser maintains a live session with each selected device so every view stays
+   current. This can extend today's HTTP/SSE model or introduce a family WebSocket
+   transport after measuring device and browser constraints.
 
-**2. Rename + extract `dragon-core`.** Two scripted renames in one step: the
-board-agnostic set `pb_*` → `dc_*` (moves to the new repo, consumed via the component
-manager) and the DragonBreath-specific set `pb_*` → `db_*` (stays in-repo). One
-mechanical pass so review is "did the rename touch anything it shouldn't." Acceptance:
-DragonBreath builds, host tests + HIL green, `/update` + revert unchanged — the core is
-only proven once the shipped product still passes on it.
+Discovery must not imply authorization or control. Product differences are expressed
+through capabilities, and grouping remains explicit rather than silently claiming
+every device found on the subnet.
 
-**3. Move everything into the org.** Transfer `DragonBreath` **and `dragonbreath-klipper`**
-(GitHub redirects cover old links); update cross-references (`idf_component.yml`, READMEs,
-Moonraker `[update_manager]` origins, `help_url`s). The Klipper helper lives in the
-family org alongside the firmware.
+## Delivery sequence
 
-**4. DragonVent — fresh repo on `dragon-core`.** New `DragonVent` repo; @justinh-rahb supplies
-the Vent device implementation (`dv_*` board + motor groups + kit auto-detect ADC) and
-its UI descriptor. Validate on Vent hardware. **Archive OpenVent** with a README pointer
-to DragonVent (no history migration — the core lineage differs).
+1. **Initial core extraction — complete.** dragon-core stood up; five components
+   extracted; DragonBreath #68 merged after CI and hardware HIL.
+2. **MQTT-Klipper coordination.** Land #68 first (done), then add
+   `DC_SRC_KLIPPER_MQTT = 4` to dragon-core while preserving `DC_SRC_NONE = 3`, add an
+   exclusive `DC_SRC_MAX` range bound, and rebase DragonBreath #67 onto the `dc_*` API.
+3. **Finish product source namespacing.** Migrate remaining DragonBreath-owned
+   `pb_*`/`PB_*` identifiers to `db_*`/`DB_*` in a focused change. New app code uses
+   `db_*` immediately; persisted and wire identifiers remain compatible.
+4. **Decouple and extract the web layer.** Add golden response coverage, introduce the
+   product capability boundary, then move reusable HTTP/OTA/portal/shared-SPA pieces
+   into dragon-core without changing API v2 or recovery semantics.
+5. **DragonVent.** Create a fresh firmware repository on dragon-core, with `dv_*`
+   board/motor/device code. Archive OpenVent with a pointer after replacement hardware
+   behavior is proven.
+6. **DragonStatus.** Build one product family for Panda Status, Pop Status, and Panda
+   LUX P2, which share a controller board. Model product variations as capabilities or
+   configuration. Evaluate the Vent RGB implementation as a reusable `dc_*` LED module
+   that products can specialize.
+7. **Same-LAN single pane.** Add opt-in discovery, explicit grouping, multi-device
+   live sessions, and the unified family SPA after the device/capability contract is
+   stable.
 
-**5. (Later) Other Panda\* products** onboard by repeating step 4: a device impl + a UI
-descriptor, no core fork.
+## Repository ownership and releases
 
-## Division of labor
+The current, working home of the shared core is `justinh-rahb/dragon-core`. Moving the
+core and products into a jointly owned organization remains an organizational option,
+not a prerequisite and not a completed decision.
 
-- **Core + DragonBreath refactor (steps 1–3): plastikman** — owns the code, the
-  hardware, the HIL harness, and the shipped 1.0 the refactor must not regress.
-- **DragonVent device impl (step 4): @justinh-rahb** — owns the Vent hardware and its behavior.
-- **`dragon-core` interface + governance: joint** — both maintain; the `dc_device`
-  contract changes need both products in mind.
+Products should pin every selected core component to one tag or one full commit from
+the same core revision. DragonBreath currently uses a full SHA. dragon-core's own
+ESP-IDF compile fixture commits its dependency lock; DragonBreath currently regenerates
+and ignores its application lock, so its component manifests are the reviewed pin.
 
-## Risks
+## Non-goals of the extraction
 
-- **Contract-test rewrite is on the critical path** (from the decouple RFC). If it
-  slips, the extraction proceeds without a net that can catch a JSON regression.
-- **`/update` is high-consequence** — a bad image path strands a user's only route back
-  to stock. OTA is untouched by design but shares the file being restructured; HIL a
-  real board before merging step 2.
-- **Prefix churn (`pb_*` → `dc_*`) is a large mechanical diff** — do it as one scripted
-  rename in step 2, not smeared across PRs, so review is "did the rename touch anything
-  it shouldn't" rather than reading every hunk.
-- **Org transfer breaks external links** — GitHub redirects cover most; the klipper
-  helper's `update_manager` origin and any `help_url`s need explicit updates.
-- **Two owners on a shared core needs light governance** — agree upfront who can cut a
-  `dragon-core` release and how products pin it (`dependencies.lock`).
-- **The UI descriptor may not express both dashboards** — falsify early: express the
-  Breath dashboard AND a sketch of the Vent panel in the schema *before* committing to
-  descriptor-driven UI. Lease/actor semantics and the runtime `maximum_c` ceiling are
-  the known sticking points for Breath; motor-group controls are the unknown for Vent.
+- No API v2, OTA, or revert-to-stock behavior change.
+- No product hardware policy in dragon-core.
+- No native management app; the browser SPA is the client.
+- No forced NVS or wire-format rename to match source namespaces.
+- No claim that every candidate module is shared before two products validate its
+  boundary.
 
-## Non-goals
+## Open decisions
 
-- **No API v2 behavior change** in the extraction — `docs/api-v2.md` is a published
-  contract and revert-to-stock depends on `/update` semantics.
-- **No JS build toolchain** — the build needs only ESP-IDF + `gzip`; the favicon is
-  pre-rendered so no headless browser is required. Keep that for every product.
-- **No rename of the "Panda Breath"/"Panda Vent" hardware descriptors** — those name
-  BIQU's boards and stay as hardware descriptors only.
-
-## Open questions
-
-1. **Confirm the strings** — org name (`dragon-fw`?), core repo (`dragon-core`?), and
-   the **core prefix `dc_` vs `dcore_`** (the one prefix still open; product prefixes
-   `db_`/`dv_` are decided).
-2. **Where does the Breath `dc_device` implementation live** — `main/`, or its own
-   `db_device` component? (Decouple RFC leans component, for symmetry across products.)
-   Same question for the Vent side (`dv_device`).
-3. **Klipper helper structure — per-product or one shared helper?** It's decided the
-   helper(s) move into the family org; open is whether DragonBreath's heater helper and
-   any DragonVent fan/filter helper are **separate repos** or **one `dragon-klipper`**
-   with per-product config. Leaning separate until the Vent actually needs a Klipper
-   object. (`dragonbreath-klipper` also gets `pb_`→`db_` naming where it references the
-   firmware's auth header / config keys — deploy lockstep, so rename together.)
+1. The exact `dc_device` capability contract and where each product implementation
+   lives.
+2. Whether Klipper helpers remain per-product or converge after DragonVent has a real
+   Klipper use case.
+3. The discovery protocol, group-membership persistence, browser trust model, and
+   whether multi-device live state uses SSE/HTTP or a new WebSocket transport.
+4. Which RGB behaviors are generic enough for core versus product-specific policy.
+5. Whether and when the repositories move into a jointly owned organization.

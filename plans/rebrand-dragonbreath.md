@@ -1,7 +1,7 @@
 # Rebrand: OpenBreath → DragonBreath
 
 > **Status:** proposal / RFC — sharing for input before execution.
-> **Owner:** plastikman. @justinh-rahb's review is advisory (esp. the OpenVent shared-core boundary — see *Input wanted*).
+> **Owner:** plastikman. Justin's review is advisory (esp. the OpenVent shared-core boundary — see *Input wanted*).
 
 ## Context
 We're renaming the open chamber-heater project **OpenBreath → DragonBreath** (one word).
@@ -31,7 +31,7 @@ This affects three repos plus the PAXX firmware overlay:
 - **Naming convention** — `DragonBreath` for display/class names; lowercase `dragonbreath` for config
   keys, filenames, identifiers, and the hostname (mirrors today's lowercase `openbreath`).
 
-## ⭐ Input wanted from @justinh-rahb — the OpenVent shared-core boundary
+## ⭐ Input wanted from Justin — the OpenVent shared-core boundary
 The firmware sits on the shared **OpenVent** core (`external/OpenVent/…`, `pv_wifi`/`pv_evlog`/
 `pv_moonraker`). Two "everything" rename items touch that boundary, and we want to keep them
 **upstream-friendly** (no edits to the submodule):
