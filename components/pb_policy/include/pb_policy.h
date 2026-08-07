@@ -30,13 +30,13 @@ typedef enum {
 } pb_mode_t;
 
 typedef enum {
-    PB_SOURCE_BOOT = 0,
-    PB_SOURCE_WEB,
-    PB_SOURCE_KLIPPER,
-    PB_SOURCE_BUTTON,
-    PB_SOURCE_SAFETY,
-    PB_SOURCE_WATCHDOG,
-} pb_source_t;
+    DB_SOURCE_BOOT = 0,
+    DB_SOURCE_WEB,
+    DB_SOURCE_KLIPPER,
+    DB_SOURCE_BUTTON,
+    DB_SOURCE_SAFETY,
+    DB_SOURCE_WATCHDOG,
+} db_source_t;
 
 typedef enum {
     PB_POLICY_OK = 0,
@@ -72,7 +72,7 @@ typedef struct {
 typedef struct {
     uint32_t state_revision;
     pb_mode_t mode;
-    pb_source_t source;
+    db_source_t source;
 
     float requested_target_c;
     float effective_target_c;
@@ -130,7 +130,7 @@ bool pb_policy_persist_pending(void);
 // OFF, another mode command, safety/watchdog action, or reboot.
 pb_policy_result_t pb_policy_set_power_on(
     float target_c,
-    pb_source_t source,
+    db_source_t source,
     const char *owner,
     uint32_t expected_revision,
     pb_policy_lease_t *lease_out);
@@ -138,19 +138,19 @@ pb_policy_result_t pb_policy_set_power_on(
 pb_policy_result_t pb_policy_set_auto(
     float target_c,
     float bed_threshold_c,
-    pb_source_t source,
+    db_source_t source,
     uint32_t expected_revision);
 
 pb_policy_result_t pb_policy_start_drying(
     float target_c,
     uint8_t hours,
-    pb_source_t source,
+    db_source_t source,
     uint32_t expected_revision);
 
 // OFF is deliberately unconditional: stale state must never prevent a caller
 // from making the device safer.
-void pb_policy_set_mode_off(pb_source_t source);
-void pb_policy_stop_drying(pb_source_t source);
+void pb_policy_set_mode_off(db_source_t source);
+void pb_policy_stop_drying(db_source_t source);
 
 // Manual filtration blower: run the blower fan-only (0 = off, 1..100 = on; the
 // hardware fan is on/off, so any non-zero runs it). Heater is untouched.
@@ -160,7 +160,7 @@ void pb_policy_stop_drying(pb_source_t source);
 // heater is heating or the cooldown purge is running, so a manual toggle can't
 // disturb the heat cycle. Turning it OFF (percent == 0) is always allowed, so
 // "Stop" can clear a lingering filtration request mid-cycle.
-pb_policy_result_t pb_policy_set_fan(uint8_t percent, pb_source_t source);
+pb_policy_result_t pb_policy_set_fan(uint8_t percent, db_source_t source);
 
 // AUTO fan-only filtration band (persisted): when enabled, AUTO runs the blower
 // alone once the printer bed reaches filter_temp_c, before the heater engages at
@@ -179,7 +179,12 @@ bool  pb_policy_get_filter_auto_enable(void);
 // fan-only filtration band trigger on — heat/airflow engage as soon as the print
 // COMMANDS a bed >= threshold, not when the bed physically reaches it (stock
 // parity). Pass bed_target_c = 0 when unknown/disconnected.
-void pb_policy_set_env(float bed_c, float bed_target_c, bool moonraker_connected);
+//
+// src_target_c is an optional source-requested chamber target (e.g. a Bambu filament
+// zone while a print is active): when > 0 in AUTO mode it engages heat to that target
+// directly, overriding the configured AUTO target and bypassing the bed threshold
+// ("zone wins"). Pass 0 for the normal bed-threshold AUTO behaviour.
+void pb_policy_set_env(float bed_c, float bed_target_c, bool source_connected, float src_target_c);
 
 // Refresh exactly the active lease.  A stale/superseded lease cannot keep heat
 // alive.
@@ -189,7 +194,7 @@ pb_policy_result_t pb_policy_heartbeat(const pb_policy_lease_t *lease);
 // caller's observed revision. Unlike OFF, stale state must not clear a newer
 // fault or safety transition.
 pb_policy_result_t pb_policy_clear_fault(
-    pb_source_t source,
+    db_source_t source,
     uint32_t expected_revision);
 
 // Periodic control tick (call at ~1-2 Hz).  Computes the effective target,
@@ -222,7 +227,7 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev);
 // panic-off reports source=BUTTON, not SAFETY) and invalidates the lease
 // immediately.  The registered wake callback fires afterward so the control task
 // drops the SSR without waiting for the next periodic tick.
-void pb_policy_request_panic_off(pb_source_t source, const char *reason);
+void pb_policy_request_panic_off(db_source_t source, const char *reason);
 
 // Callback invoked (outside any policy lock) whenever an accepted control
 // command or safety transition needs the control task to run a tick promptly.
@@ -234,5 +239,5 @@ void pb_policy_set_wake_cb(pb_policy_wake_fn fn);
 void pb_policy_get_snapshot(pb_policy_snapshot_t *out);
 pb_mode_t pb_policy_get_mode(void);
 const char *pb_policy_mode_str(pb_mode_t mode);
-const char *pb_policy_source_str(pb_source_t source);
+const char *pb_policy_source_str(db_source_t source);
 const char *pb_policy_result_str(pb_policy_result_t result);

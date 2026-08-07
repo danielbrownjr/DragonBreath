@@ -1,43 +1,41 @@
-# Vendored components
+# Shared-component provenance
 
-The board-agnostic core components below are **vendored** into this repository —
-they live in `components/` and are built like any first-party component. They were
-previously consumed from the [OpenVent](https://github.com/justinh-rahb/OpenVent)
-family via a git submodule (`external/OpenVent`, `EXTRA_COMPONENT_DIRS`); that
-submodule has been removed and the code pulled local so DragonBreath has no
-external submodule dependency.
+DragonBreath consumes its board-neutral services from
+[`justinh-rahb/dragon-core`](https://github.com/justinh-rahb/dragon-core) through
+ESP-IDF Component Manager. The exact revision is pinned for every component in
+[`main/idf_component.yml`](main/idf_component.yml); the source is no longer copied
+into DragonBreath's `components/` directory.
 
-## What was vendored
+## Current shared components
 
-| Local component | Upstream (OpenVent) | Purpose |
+| Component | Origin | Purpose |
 |---|---|---|
-| `components/pb_evlog`     | `pv_evlog`     | in-memory event ring |
-| `components/pb_wifi`      | `pv_wifi`      | Wi-Fi STA/AP provisioning, mDNS, captive portal support |
-| `components/pb_moonraker` | `pv_moonraker` | Moonraker WebSocket client (printer/bed state) |
+| `dc_evlog` | OpenVent `pv_evlog` via DragonBreath `pb_evlog` | in-memory event and console rings |
+| `dc_wifi` | OpenVent `pv_wifi` via DragonBreath `pb_wifi` | Wi-Fi STA/AP provisioning, scanning, and mDNS |
+| `dc_moonraker` | OpenVent `pv_moonraker` via DragonBreath `pb_moonraker` | Moonraker WebSocket client |
+| `dc_source` | DragonBreath `pb_source` | persisted control-source selection |
+| `dc_bambu` | DragonBreath `pb_bambu` | Bambu LAN MQTT client and printer status |
 
-Only these three were ever built by DragonBreath. The rest of the OpenVent
-submodule (`pv_button`, `pv_policy`, `pv_portal`, `pv_status_led`, `pv_board`,
-`pv_motor`) was unused — DragonBreath has its own `pb_*` equivalents — and was not
-vendored.
+DragonBreath retains its product-specific board, sensor, actuator, safety-policy,
+HTTP API, portal, LED, button, Home Assistant, and HIL components.
 
-## Provenance & license
+## OpenVent lineage
 
-- **Source:** https://github.com/justinh-rahb/OpenVent
-- **Commit:** `ec4691f8d7fe95be8e3c6af4cac35d4992b08c79` (`v0.3.0-4-gec4691f`)
-- **License:** MIT (upstream `LICENSE`); the SPDX headers in each vendored file are
-  retained. This attribution stands even though the symbols were renamed.
+The first three components originated in
+[`justinh-rahb/OpenVent`](https://github.com/justinh-rahb/OpenVent) at commit
+`ec4691f8d7fe95be8e3c6af4cac35d4992b08c79` (`v0.3.0-4-gec4691f`). DragonBreath
+initially consumed them through a submodule, then copied them locally in v0.6.1 and
+renamed their `pv_*` APIs to `pb_*`. The current extraction moves those copies, plus
+the DragonBreath-originated source selector and Bambu client, into `dragon-core` and
+renames their public APIs to the product-neutral `dc_*` namespace.
 
-## Changes made while vendoring
+`dc_wifi` additionally exposes a product identity API so each consumer supplies its
+own hostname, mDNS instance name, and provisioning-AP branding instead of applying
+post-start overrides.
 
-- The `pv_` prefix was renamed to `pb_` throughout (directories, component names,
-  files, all functions, and `PV_*` macros → `PB_*`) to match the rest of the
-  DragonBreath codebase. `pb_moonraker` requires `pb_evlog`.
-- App-layer overrides remain in `main/app_main.c`: the mDNS/netif hostname and the
-  Wi-Fi AP SSID prefix are set there (not in the vendored components), so the
-  product identity is DragonBreath rather than the OpenVent defaults.
+## License
 
-## Relationship to OpenVent
-
-This is a clean fork of the shared core, not a live dependency. Because the symbols
-were renamed to `pb_*`, OpenVent cannot drop-in reference these copies; keeping the
-two in sync (or extracting a shared library) would be a deliberate future effort.
+OpenVent and dragon-core are MIT licensed. The OpenVent attribution remains part of
+this provenance record even though the components have moved repositories and their
+symbols have changed. See each upstream repository's `LICENSE` file for the license
+text.

@@ -1,0 +1,21 @@
+dependencies:
+  dc_evlog:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_evlog
+    version: ec44eb4e0d897b58de14ed34500590019e3726c3
+  dc_source:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_source
+    version: ec44eb4e0d897b58de14ed34500590019e3726c3
+  dc_bambu:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_bambu
+    version: ec44eb4e0d897b58de14ed34500590019e3726c3
+  dc_wifi:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_wifi
+    version: ec44eb4e0d897b58de14ed34500590019e3726c3
+  dc_moonraker:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_moonraker
+    version: ec44eb4e0d897b58de14ed34500590019e3726c3
