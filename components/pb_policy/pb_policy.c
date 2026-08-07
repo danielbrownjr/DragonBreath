@@ -61,7 +61,7 @@ static const char *TAG = "pb_policy";
 
 typedef struct {
     pb_mode_t mode;
-    dc_source_t source;
+    pb_source_t source;
     uint32_t revision;
 
     float requested_target_c;
@@ -111,7 +111,7 @@ static void wake_control_task(void)
     if (s_wake_cb) s_wake_cb();
 }
 
-static bool source_is_remote(dc_source_t source)
+static bool source_is_remote(pb_source_t source)
 {
     return source == PB_SOURCE_WEB || source == PB_SOURCE_KLIPPER;
 }
@@ -122,7 +122,7 @@ static void copy_text(char *dst, size_t dst_size, const char *src)
     snprintf(dst, dst_size, "%s", src ? src : "");
 }
 
-static void revision_advance_locked(dc_source_t source)
+static void revision_advance_locked(pb_source_t source)
 {
     // Reserve zero as "no snapshot received".  Natural uint32 rollover remains
     // valid; skip zero so clients never confuse it with an uninitialized value.
@@ -179,7 +179,7 @@ static pb_policy_result_t heat_precheck_locked(float target_c,
     return PB_POLICY_OK;
 }
 
-static void set_off_locked(dc_source_t source)
+static void set_off_locked(pb_source_t source)
 {
     // Target zero is accepted even while faulted/inhibited.
     (void)pb_heater_set_target_c(0.0f);
@@ -421,7 +421,7 @@ esp_err_t pb_policy_init(void)
 
 pb_policy_result_t pb_policy_set_power_on(
     float target_c,
-    dc_source_t source,
+    pb_source_t source,
     const char *owner,
     uint32_t expected_revision,
     pb_policy_lease_t *lease_out)
@@ -471,7 +471,7 @@ pb_policy_result_t pb_policy_set_power_on(
 pb_policy_result_t pb_policy_set_auto(
     float target_c,
     float bed_threshold_c,
-    dc_source_t source,
+    pb_source_t source,
     uint32_t expected_revision)
 {
     if (!s_lock || !isfinite(bed_threshold_c)
@@ -508,7 +508,7 @@ pb_policy_result_t pb_policy_set_auto(
 pb_policy_result_t pb_policy_start_drying(
     float target_c,
     uint8_t hours,
-    dc_source_t source,
+    pb_source_t source,
     uint32_t expected_revision)
 {
     if (!s_lock || hours == 0 || hours > PB_DRYING_MAX_HOURS)
@@ -544,7 +544,7 @@ pb_policy_result_t pb_policy_start_drying(
     return PB_POLICY_OK;
 }
 
-void pb_policy_set_mode_off(dc_source_t source)
+void pb_policy_set_mode_off(pb_source_t source)
 {
     if (!s_lock) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -559,7 +559,7 @@ void pb_policy_set_mode_off(dc_source_t source)
 // add airflow on top of any heat mode (whichever wants more air wins in the tick).
 // Fan-only has no heat path, so it is safe even while faulted (extra cooling) and
 // needs no revision gate. It never persists: the device always boots OFF, fan 0.
-pb_policy_result_t pb_policy_set_fan(uint8_t percent, dc_source_t source)
+pb_policy_result_t pb_policy_set_fan(uint8_t percent, pb_source_t source)
 {
     if (!s_lock) return PB_POLICY_INVALID;
     if (percent > 100) percent = 100;
@@ -619,7 +619,7 @@ bool pb_policy_get_filter_auto_enable(void)
     return v;
 }
 
-void pb_policy_stop_drying(dc_source_t source)
+void pb_policy_stop_drying(pb_source_t source)
 {
     pb_policy_set_mode_off(source);
 }
@@ -661,7 +661,7 @@ pb_policy_result_t pb_policy_heartbeat(const pb_policy_lease_t *lease)
 }
 
 pb_policy_result_t pb_policy_clear_fault(
-    dc_source_t source,
+    pb_source_t source,
     uint32_t expected_revision)
 {
     if (!s_lock) return PB_POLICY_INHIBITED;
@@ -687,7 +687,7 @@ pb_policy_result_t pb_policy_clear_fault(
     return PB_POLICY_OK;
 }
 
-void pb_policy_request_panic_off(dc_source_t source, const char *reason)
+void pb_policy_request_panic_off(pb_source_t source, const char *reason)
 {
     if (!s_lock) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -1110,7 +1110,7 @@ const char *pb_policy_mode_str(pb_mode_t mode)
     }
 }
 
-const char *pb_policy_source_str(dc_source_t source)
+const char *pb_policy_source_str(pb_source_t source)
 {
     switch (source) {
         case PB_SOURCE_WEB:     return "web";

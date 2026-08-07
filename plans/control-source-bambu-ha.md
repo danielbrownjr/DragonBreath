@@ -50,8 +50,8 @@ The whole "follow the printer" feature funnels through two values, fed once per
 
 ```c
 // app_main.c ~194-198  (inside #ifndef CONFIG_PB_HIL_DEVBOARD)
-if (s_net_up && s_mk_up) dc_moonraker_get_status(&st);
-bool mk_connected = s_mk_up && st.state == DC_MK_SUBSCRIBED;
+if (s_net_up && s_mk_up) pb_moonraker_get_status(&st);
+bool mk_connected = s_mk_up && st.state == PB_MK_SUBSCRIBED;
 pb_policy_set_env(st.bed_temp, mk_connected);   // <-- the seam
 ```
 
@@ -62,7 +62,7 @@ plugs in by feeding this same seam** — nothing downstream changes.
 
 Config plumbing today (to mirror): captive-portal `/setup` form →
 `POST /save` (`components/pb_portal/pb_portal.c`, `save_post()`) → NVS namespace
-`app_nvs`, keys `mk_host`/`mk_port` → `dc_moonraker_start()` reads NVS at boot.
+`app_nvs`, keys `mk_host`/`mk_port` → `pb_moonraker_start()` reads NVS at boot.
 There is no runtime settings path and no source selector yet.
 
 ## Proposed design
@@ -78,18 +78,18 @@ Factory reset clears `ctl_src` back to Klipper.
 
 ```c
 float bed_c; bool connected;
-dc_source_get_env(&bed_c, &connected);   // dispatches on ctl_src
+pb_source_get_env(&bed_c, &connected);   // dispatches on ctl_src
 pb_policy_set_env(bed_c, connected);
 ```
 
-where `dc_source_*` is a thin dispatch over the one active client. Each client
-keeps the `dc_moonraker`-style lifecycle API
+where `pb_source_*` is a thin dispatch over the one active client. Each client
+keeps the `pb_moonraker`-style lifecycle API
 (`start`/`set_config`/`get_config`/`get_status`/`clear_config`) for symmetry.
 
-### 2. Bambu source — new `dc_bambu` component
+### 2. Bambu source — new `pb_bambu` component
 
 MQTT-over-TLS client to the printer itself (the printer is the broker in LAN
-mode). Mirrors `dc_moonraker`'s shape; uses ESP-IDF's bundled `esp-mqtt` +
+mode). Mirrors `pb_moonraker`'s shape; uses ESP-IDF's bundled `esp-mqtt` +
 `mbedTLS` (no new dependency).
 
 Connection (all confirmed against OpenBambuAPI + ha-bambulab):
@@ -147,7 +147,7 @@ New NVS keys: `ha_host`, `ha_port`, `ha_user`, `ha_pass`, `ha_topic` (prefix).
 `/setup` reveals these when HA is selected.
 
 Note: HA does **not** feed the AUTO bed-follow seam (there's no printer bed to
-follow); in HA mode `dc_source_get_env` reports `connected=false`/no bed, and HA
+follow); in HA mode `pb_source_get_env` reports `connected=false`/no bed, and HA
 drives target/mode directly. That asymmetry is intentional and matches stock.
 
 ### Shared MQTT plumbing
@@ -159,10 +159,10 @@ Bambu's TLS quirks out of the plain-broker HA path. Decide during implementation
 
 ## Implementation phases
 
-1. **Source selector scaffolding** — `ctl_src` NVS key, `dc_source_*` dispatch in
+1. **Source selector scaffolding** — `ctl_src` NVS key, `pb_source_*` dispatch in
    `app_main`, `/setup` `<select>` + field-reveal JS, factory-reset handling.
    Klipper remains default; behavior byte-identical when `ctl_src=0`.
-2. **`dc_bambu`** — esp-mqtt/TLS client, `pushall` on connect, streaming scan for
+2. **`pb_bambu`** — esp-mqtt/TLS client, `pushall` on connect, streaming scan for
    `bed_temper`/`gcode_state`/`chamber_temper`, feed the seam, reconnect+backoff.
    `sdkconfig` TLS buffer tuning.
 3. **`pb_ha`** — broker client, command-topic → policy commands, retained state

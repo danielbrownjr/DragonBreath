@@ -90,7 +90,7 @@ print(json.dumps({
     "source_sha":os.environ["SOURCE_SHA"],
     "idf_version":os.environ["IDF_VERSION"],
     "target":os.environ["TARGET"],"board":os.environ["BOARD"],
-    "vendored_core":{"source":"github.com/justinh-rahb/OpenVent","ref":"ec4691f (v0.3.0-4)","license":"MIT","components":["dc_evlog","dc_wifi","dc_moonraker"]},
+    "shared_core":{"source":"github.com/justinh-rahb/dragon-core","ref":"ec44eb4e0d897b58de14ed34500590019e3726c3","license":"MIT","components":["dc_evlog","dc_source","dc_bambu","dc_wifi","dc_moonraker"]},
     "built_at_utc":os.environ["BUILT_AT"],
     "note":"managed component versions in dependencies.lock (bundled)",
     "artifacts":arts,
