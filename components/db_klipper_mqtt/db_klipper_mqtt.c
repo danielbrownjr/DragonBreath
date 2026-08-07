@@ -6,9 +6,13 @@
 // on/off state for a Moonraker [power] device. See
 // plans/mqtt-klipper-implementation-design.md.
 //
-// Threading: the esp-mqtt event handler (mqtt task) updates arm/connection state under
-// s_lock; db_klipper_mqtt_tick() (control task) evaluates the machine, calls pb_policy,
-// and publishes. esp_mqtt_client_publish() is thread-safe; shared state is guarded.
+// Threading: the esp-mqtt event handler (mqtt task) only mutates s_lock-guarded shared
+// state (arm/connection/power/availability + the s_pub_pending request flag) and does
+// thread-safe esp_mqtt subscribes/publishes; it does NOT own pacing or publish-cadence
+// state. db_klipper_mqtt_tick() (control task) owns pacing, telemetry/power publishing,
+// and all pb_policy_* calls; the s_last_* pacing fields are touched only by tick. Both
+// tasks read/write shared state under s_lock, and s_lock is always released before any
+// esp_mqtt publish or pb_policy_* call.
 #include "db_klipper_mqtt.h"
 #include "db_klipper_mqtt_arm.h"
 #include "pb_policy.h"
@@ -57,8 +61,9 @@ static bool               s_have_lease  = false;
 static pb_policy_lease_t  s_lease       = {0};
 static bool               s_power_on    = true;   // Moonraker [power] master enable
 static bool               s_mrk_online  = true;   // Moonraker availability
+static bool               s_pub_pending = false;  // MQTT task asks tick to publish now
 
-// Pacing / writeback (control task only).
+// Pacing / publish state — CONTROL TASK ONLY (never touched from the MQTT callback).
 static int64_t  s_last_state_us = 0;
 static int64_t  s_last_hb_us    = 0;
 static uint32_t s_rpc_id        = 0;
@@ -191,20 +196,29 @@ static void handle_data(const char *topic, int tlen, const char *data, int dlen)
     n = dlen < (int)sizeof(d) - 1 ? dlen : (int)sizeof(d) - 1;
     memcpy(d, data, n); d[n] = '\0';
 
-    // Moonraker availability: {"server":"online"|"offline"}
+    // Moonraker availability: {"server":"online"|"offline"}. Update the shared flag
+    // under s_lock; force_disarm() takes s_lock itself, so call it after releasing.
     if (strstr(t, "/moonraker/status")) {
-        if (strstr(d, "offline")) { s_mrk_online = false; force_disarm(); }
-        else if (strstr(d, "online")) s_mrk_online = true;
+        if (strstr(d, "offline")) {
+            xSemaphoreTake(s_lock, portMAX_DELAY); s_mrk_online = false; xSemaphoreGive(s_lock);
+            force_disarm();
+        } else if (strstr(d, "online")) {
+            xSemaphoreTake(s_lock, portMAX_DELAY); s_mrk_online = true; xSemaphoreGive(s_lock);
+        }
         return;
     }
-    // Master power command from Moonraker [power]: payload "on"/"off".
+    // Master power command from Moonraker [power]: payload "on"/"off". Only touch
+    // lock-guarded state here; tick() owns pacing/publish (s_pub_pending requests a
+    // prompt power/state echo).
     char pset[80];
     snprintf(pset, sizeof pset, "%s/power/set", base());
     if (strcmp(t, pset) == 0) {
         bool on = (strstr(d, "on") != NULL) && (strstr(d, "off") == NULL);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
         s_power_on = on;
+        s_pub_pending = true;
+        xSemaphoreGive(s_lock);
         if (!on) force_disarm();
-        s_last_state_us = 0;   // force a prompt power/state echo
         return;
     }
     // Desired-state / heartbeat split-status.
@@ -291,11 +305,12 @@ static void mqtt_event_handler(void *args, esp_event_base_t evbase, int32_t id, 
         s_status.connected = true;
         db_km_arm_reset(&s_arm);      // retained state must NOT arm — start disarmed
         s_mrk_online = true;
+        s_pub_pending = true;         // tick() publishes power state + first telemetry
         xSemaphoreGive(s_lock);
+        // Availability + subscribes are thread-safe and touch no control-task state,
+        // so they stay here; power-state + telemetry publishing is left to tick().
         esp_mqtt_client_publish(s_client, s_avail_topic, "online", 0, 1, 1);
-        publish_power_state(s_power_on);
         subscribe_all();
-        s_last_state_us = 0;          // prompt first telemetry
         break;
     case MQTT_EVENT_DISCONNECTED:
         xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -374,10 +389,12 @@ void db_klipper_mqtt_tick(void)
     // Evaluate the arming machine under lock (it mutates arm state).
     float target = 0.0f;
     db_km_action_t action;
-    bool allow, hb_due = false;
+    bool allow, hb_due = false, pub_now, power_now;
     pb_policy_lease_t lease = {0};
     xSemaphoreTake(s_lock, portMAX_DELAY);
     allow = s_power_on && s_mrk_online;
+    power_now = s_power_on;                 // snapshot for publishing outside the lock
+    pub_now = s_pub_pending; s_pub_pending = false;
     action = db_km_arm_eval(&s_arm, now, LIVE_TIMEOUT_US, &target);
     if (action == DB_KM_ENGAGE && !allow) {   // master-off / Moonraker-offline gate
         s_arm.engaged = false;
@@ -401,9 +418,11 @@ void db_klipper_mqtt_tick(void)
         break;
     }
 
-    if (now - s_last_state_us >= STATE_PERIOD_US) {
+    // Publishing + pacing are control-task only (s_last_* never touched elsewhere).
+    // pub_now honors a connect / power-change request from the MQTT callback.
+    if (pub_now || now - s_last_state_us >= STATE_PERIOD_US) {
         s_last_state_us = now;
-        if (s_power_on != s_last_power_pub) publish_power_state(s_power_on);
+        if (power_now != s_last_power_pub) publish_power_state(power_now);
         publish_telemetry();
     }
 }
