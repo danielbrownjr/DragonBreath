@@ -7,6 +7,14 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Shared core extracted to `dragon-core`.** The board-neutral event log,
+  control-source selector, Bambu client, Wi-Fi/provisioning service, and Moonraker
+  client now come from the pinned
+  [`justinh-rahb/dragon-core`](https://github.com/justinh-rahb/dragon-core)
+  dependency under the product-neutral `dc_*` namespace. Existing NVS namespaces
+  and keys are preserved across the move.
+
 ## [1.0.4] - 2026-08-06
 
 **Bambu filament heating zones — the chamber target now follows the filament type of

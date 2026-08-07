@@ -4,9 +4,9 @@
 #include "pb_ntc.h"
 #include "pb_leds.h"
 #include "pb_policy.h"
-#include "pb_source.h"
-#include "pb_bambu.h"
-#include "pb_evlog.h"
+#include "dc_source.h"
+#include "dc_bambu.h"
+#include "dc_evlog.h"
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -156,19 +156,19 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
     // Active control source (klipper/bambu/ha). Read from NVS; since /setup reboots
     // on save, this matches the running source except for the sub-second window
     // between a save and the reboot. Lets the dashboard label the printer/source row.
-    pb_ctl_source_t ctl_src = pb_source_get();
-    cJSON_AddStringToObject(environment, "control_source", pb_source_str(ctl_src));
+    dc_ctl_source_t ctl_src = dc_source_get();
+    cJSON_AddStringToObject(environment, "control_source", dc_source_str(ctl_src));
     // In Bambu mode, surface the configured serial so the dashboard can label the
     // row "Bambu (<serial>)" — the LAN report carries no friendly printer name.
-    if (ctl_src == PB_SRC_BAMBU) {
-        pb_bambu_config_t bc;
-        if (pb_bambu_get_config(&bc) == ESP_OK && bc.serial[0])
+    if (ctl_src == DC_SRC_BAMBU) {
+        dc_bambu_config_t bc;
+        if (dc_bambu_get_config(&bc) == ESP_OK && bc.serial[0])
             cJSON_AddStringToObject(environment, "bambu_serial", bc.serial);
         // Surface the active print's filament so the dashboard status card can show
         // "Filament: PETG" while a Bambu print runs (Bambu-only; Klipper drives the
         // chamber via macros and reports no filament here).
-        pb_bambu_status_t bs;
-        if (pb_bambu_get_status(&bs) == ESP_OK) {
+        dc_bambu_status_t bs;
+        if (dc_bambu_get_status(&bs) == ESP_OK) {
             cJSON_AddBoolToObject(environment, "bambu_printing", bs.printing);
             if (bs.printing && bs.filament[0])
                 cJSON_AddStringToObject(environment, "bambu_filament", bs.filament);
@@ -444,9 +444,9 @@ static esp_err_t command_post(httpd_req_t *req)
     }
     char actor_id_buf[PB_POLICY_OWNER_LEN + 1];
     snprintf(actor_id_buf, sizeof actor_id_buf, "%s", actor_id->valuestring);
-    pb_source_t source;
-    if (strcmp(kind->valuestring, "klipper") == 0) source = PB_SOURCE_KLIPPER;
-    else if (strcmp(kind->valuestring, "web") == 0) source = PB_SOURCE_WEB;
+    db_source_t source;
+    if (strcmp(kind->valuestring, "klipper") == 0) source = DB_SOURCE_KLIPPER;
+    else if (strcmp(kind->valuestring, "web") == 0) source = DB_SOURCE_WEB;
     else {
         cJSON_Delete(root);
         return api_error(req, "400 Bad Request", "invalid_command",
@@ -903,10 +903,10 @@ static esp_err_t zones_send(httpd_req_t *req)
     if (!o) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
     cJSON_AddNumberToObject(o, "api_version", API_VERSION);
     cJSON_AddNumberToObject(o, "max", PB_HEATER_ABS_MAX_TARGET_C);
-    cJSON_AddNumberToObject(o, "custom_max", PB_BAMBU_CUSTOM_MAX);
+    cJSON_AddNumberToObject(o, "custom_max", DC_BAMBU_CUSTOM_MAX);
     cJSON *arr = cJSON_AddArrayToObject(o, "zones");
-    pb_bambu_zone_t z[PB_BAMBU_ZONE_MAX];
-    int n = pb_bambu_zone_get_all(z, PB_BAMBU_ZONE_MAX);
+    dc_bambu_zone_t z[DC_BAMBU_ZONE_MAX];
+    int n = dc_bambu_zone_get_all(z, DC_BAMBU_ZONE_MAX);
     for (int i = 0; i < n; i++) {
         cJSON *e = cJSON_CreateObject();
         cJSON_AddStringToObject(e, "name", z[i].name);
@@ -933,7 +933,7 @@ static esp_err_t zones_post(httpd_req_t *req)
     // Remove a custom profile.
     cJSON *rm = cJSON_GetObjectItemCaseSensitive(root, "remove");
     if (cJSON_IsString(rm)) {
-        esp_err_t err = pb_bambu_zone_remove(rm->valuestring);
+        esp_err_t err = dc_bambu_zone_remove(rm->valuestring);
         cJSON_Delete(root);
         if (err != ESP_OK)
             return api_error(req, "404 Not Found", "invalid_command",
@@ -949,14 +949,14 @@ static esp_err_t zones_post(httpd_req_t *req)
             cJSON *nm = cJSON_GetObjectItemCaseSensitive(e, "name");
             double t;
             if (cJSON_IsString(nm) && json_number(e, "target_c", &t)
-                && pb_bambu_zone_set(nm->valuestring, (uint8_t)(t < 0 ? 0 : t)) == ESP_OK)
+                && dc_bambu_zone_set(nm->valuestring, (uint8_t)(t < 0 ? 0 : t)) == ESP_OK)
                 applied = true;
         }
     } else {
         cJSON *nm = cJSON_GetObjectItemCaseSensitive(root, "name");
         double t;
         if (cJSON_IsString(nm) && json_number(root, "target_c", &t)
-            && pb_bambu_zone_set(nm->valuestring, (uint8_t)(t < 0 ? 0 : t)) == ESP_OK)
+            && dc_bambu_zone_set(nm->valuestring, (uint8_t)(t < 0 ? 0 : t)) == ESP_OK)
             applied = true;
     }
     cJSON_Delete(root);
@@ -1202,16 +1202,16 @@ static esp_err_t factory_reset_post(httpd_req_t *req)
     return ESP_OK;
 }
 
-// GET /api/v2/logs — read-only (open, like /state). Snapshots the pb_evlog ring
+// GET /api/v2/logs — read-only (open, like /state). Snapshots the dc_evlog ring
 // (newest first) as JSON. Never energizes the heater or feeds the watchdog.
 static esp_err_t logs_get(httpd_req_t *req)
 {
-    pb_evlog_entry_t *entries = calloc(PB_EVLOG_MAX_ENTRIES, sizeof *entries);
+    dc_evlog_entry_t *entries = calloc(DC_EVLOG_MAX_ENTRIES, sizeof *entries);
     if (!entries) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
         return ESP_FAIL;
     }
-    size_t n = pb_evlog_snapshot(entries, PB_EVLOG_MAX_ENTRIES);
+    size_t n = dc_evlog_snapshot(entries, DC_EVLOG_MAX_ENTRIES);
     cJSON *o = cJSON_CreateObject();
     if (!o) { free(entries); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
     cJSON_AddNumberToObject(o, "api_version", API_VERSION);
@@ -1229,7 +1229,7 @@ static esp_err_t logs_get(httpd_req_t *req)
 }
 
 // GET /api/v2/console — auth-gated (raw firmware log is chattier than the curated
-// event ring: IPs, Wi-Fi/mDNS detail). Snapshots the pb_evlog console byte ring as
+// event ring: IPs, Wi-Fi/mDNS detail). Snapshots the dc_evlog console byte ring as
 // text/plain, oldest -> newest. Read-only; never energizes the heater.
 static esp_err_t console_get(httpd_req_t *req)
 {
@@ -1238,12 +1238,12 @@ static esp_err_t console_get(httpd_req_t *req)
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"error\":\"missing/invalid X-DragonBreath-Auth header\"}");
     }
-    char *buf = malloc(PB_EVLOG_CONSOLE_BYTES + 1);
+    char *buf = malloc(DC_EVLOG_CONSOLE_BYTES + 1);
     if (!buf) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
         return ESP_FAIL;
     }
-    size_t n = pb_evlog_console_snapshot(buf, PB_EVLOG_CONSOLE_BYTES + 1);
+    size_t n = dc_evlog_console_snapshot(buf, DC_EVLOG_CONSOLE_BYTES + 1);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     esp_err_t r = httpd_resp_send(req, buf, n);
     free(buf);
