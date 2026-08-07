@@ -53,9 +53,12 @@ is still sitting there to go back to.
    ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
 2. Open the **stock** Panda web UI and use its **Firmware Update** to upload that
    `.bin`. Stock writes it to the inactive OTA slot and reboots into it.
-3. DragonBreath comes up. If it doesn't rejoin your WiFi, connect to the
-   **`DragonBreath_XXXX`** AP (password **`987654321`**, same as the stock Panda) and
-   a browser should pop the setup page automatically (or open `http://192.168.4.1`).
+3. DragonBreath comes up and **rejoins your WiFi automatically** — it carries the WiFi
+   credentials (and the Moonraker host) over from the stock firmware's stored config on
+   first boot, so there's normally nothing to re-enter. If it can't join (e.g. you've
+   since changed networks), connect to the **`DragonBreath_XXXX`** AP (password
+   **`987654321`**, same as the stock Panda) and a browser should pop the setup page
+   automatically (or open `http://192.168.4.1`).
 
 > ⚠️ **Don't hold a front-panel button while powering the board on.** Power, Auto,
 > and Dry sit on ESP32-C3 strapping pins (GPIO9 is ROM download-mode); a held
@@ -101,7 +104,7 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | `pb_heater` | ✅ Bang-bang + full safety cutoffs + per-board element foldback; heat cycle and foldback validated on hardware |
 | `pb_fan` | ✅ TRIAC **on/off held-gate** (stock model — the gate is never PWM'd/phase-chopped) |
 | `pb_policy` | ✅ Authoritative mode/target/lease state machine |
-| Network core: `pb_wifi` / `pb_evlog` / `pb_moonraker` | ✅ Vendored locally (derived from OpenVent, MIT — see [VENDORING.md](VENDORING.md)); WiFi + Moonraker validated on hardware |
+| Network core: `dc_wifi` / `dc_evlog` / `dc_moonraker` | ✅ Consumed from pinned [`dragon-core`](https://github.com/justinh-rahb/dragon-core) components (derived in part from OpenVent, MIT — see [VENDORING.md](VENDORING.md)); WiFi + Moonraker validated on hardware |
 | Portal / status dashboard | ✅ Captive provisioning + v2 dashboard (manual / auto / dry / advanced cards, SSE-driven) |
 | Status LEDs (`pb_leds`) | ✅ All four driven from policy: Power = device-alive/fault, On/Auto/Dry = active mode (Auto slow-blinks when armed but waiting). |
 | Front-panel buttons (`pb_buttons`) | ✅ All four polled with debounce + short/long-press; short toggles the labeled mode, 2 s long-press = panic-off (Power-long while faulted = fault clear). Real-Panda + devboard-HIL benches passed. |
@@ -114,16 +117,16 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | Flasher (`tools/flash.py`) | ✅ Recovery/backup tool: `--backup-only` saves a verified full stock backup, `--restore` writes one back, default path unbricks over USB |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware — accepts a DragonBreath **or** a stock `panda_breath` image (for revert); refused while heating |
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |
-| Control source (`pb_source`/`pb_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (experimental, untested on real hardware) |
+| Control source (`dc_source`/`dc_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (experimental, untested on real hardware) |
 | On-device diagnostics pages | ✅ `/diag` (live SSE telemetry + trend + CSV) and `/console` (firmware `ESP_LOGx` viewer via auth-gated `GET /api/v2/console`) — shipped v0.8.0 |
 | Diagnostics (`tools/diag.py`) | ✅ Read-only 2 Hz logger (chamber/PTC/SSR/mode/fault + resolved Rref) → live view + CSV; run during a heat cycle to capture behavior. `python3 tools/diag.py [host] [token]` |
 
-**Shared-core boundary:** board-agnostic infrastructure (WiFi, event log, Moonraker
-client) derives from the [OpenVent](https://github.com/justinh-rahb/OpenVent) family
-but is now **vendored locally** as `components/pb_wifi` / `pb_evlog` / `pb_moonraker`
-(no submodule) — see [VENDORING.md](VENDORING.md) for provenance and the `pv_`→`pb_`
-rename. Everything device-specific — the board map, sensors, heater/fan actuation,
-and the portal / LED / button UI — is likewise first-party in this repo.
+**Shared-core boundary:** board-agnostic infrastructure is consumed from the pinned
+[`dragon-core`](https://github.com/justinh-rahb/dragon-core) revision declared in
+[`main/idf_component.yml`](main/idf_component.yml). DragonBreath keeps the board map,
+sensors, heater/fan actuation, safety policy, HTTP API, portal, LEDs, buttons, and UI.
+The OpenVent-to-DragonBreath-to-dragon-core history and MIT provenance are recorded in
+[VENDORING.md](VENDORING.md).
 
 ## Chamber temperature — what to expect
 The stock Panda firmware caps the chamber target at **60 °C**. **DragonBreath lifts
@@ -297,12 +300,7 @@ components/
   pb_heater/   SSR control + safety cutoffs + comms watchdog
   pb_fan/      TRIAC on/off held-gate blower control (never PWM)
   pb_policy/   authoritative control state, modes, leases -> actuators
-  pb_source/   control-source selector (Klipper / Bambu / HA), NVS-backed
-  pb_bambu/    Bambu LAN MQTT bed-follow source (experimental)
   pb_ha/       Home Assistant MQTT-Discovery client (source + controller)
-  pb_moonraker/ Moonraker WebSocket client (Klipper bed state)   [vendored]
-  pb_wifi/     Wi-Fi + captive portal core                        [vendored]
-  pb_evlog/    in-memory event log ring                           [vendored]
   pb_leds/     front-panel status LEDs
   pb_buttons/  front-panel button poll/debounce + short/long-press
   pb_hil/      JSON serial HIL console + safe dev-board injection
@@ -311,6 +309,10 @@ components/
 main/          app_main: safety-first init + control loop
 docs/          hardware map, safety model, HIL guide, NTC RE report
 ```
+
+Managed components fetched from `dragon-core` are `dc_evlog`, `dc_source`,
+`dc_bambu`, `dc_wifi`, and `dc_moonraker`; they are not stored under this repository's
+`components/` directory.
 
 ## Credits
 Hardware + firmware reverse-engineering builds on the BTT Panda Breath work in

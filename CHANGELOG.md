@@ -7,6 +7,60 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Shared core extracted to `dragon-core`.** The board-neutral event log,
+  control-source selector, Bambu client, Wi-Fi/provisioning service, and Moonraker
+  client now come from the pinned
+  [`justinh-rahb/dragon-core`](https://github.com/justinh-rahb/dragon-core)
+  dependency under the product-neutral `dc_*` namespace. Existing NVS namespaces
+  and keys are preserved across the move.
+
+## [1.0.4] - 2026-08-06
+
+**Bambu filament heating zones — the chamber target now follows the filament type of
+the active Bambu print (issue #64).**
+
+### Added
+- **Filament chamber zones (Bambu source only).** During a Bambu print, DragonBreath
+  reads the active tray's filament type from the LAN report and sets the chamber target
+  from a per-filament map — e.g. PETG → 40 °C — instead of the bed-threshold AUTO seam.
+  Preheats on `PREPARE`, holds through `PAUSE`, reverts to idle/AUTO when the print ends.
+  A zone target of `0` means "no zone / off"; an unrecognised filament also resolves to 0.
+  (Klipper is unaffected — it drives the chamber via `M141`/`M191` macros.)
+- **Six built-in filament types** with sensible defaults (PLA/TPU off; PETG 40; ABS/ASA
+  55; PC 60), each editable. Built-in targets can be set during initial config on `/setup`.
+- **User-defined custom profiles.** Add up to 8 custom filament profiles (PA, PCTG, …)
+  from the dashboard's **Custom profiles** card; add/update/remove applies live (no
+  reboot) and persists across reboots. Longest-prefix matching means a custom `PETG-CF`
+  wins over the built-in `PETG`.
+- **Dashboard:** a Bambu-only **Filament** row in the system-status card shows the active
+  print's filament; the **Filament zones** + **Custom profiles** cards appear when the
+  control source is Bambu. New API `GET/POST /api/v2/zones` (live edits, auth-gated POST).
+
+## [1.0.2] - 2026-07-31
+
+**Seamless config carry-over when installing over stock — WiFi, Moonraker, and Home
+Assistant now transfer automatically, with no captive-portal re-provisioning.**
+
+### Added
+- **Stock → DragonBreath NVS carry-over shim.** When DragonBreath is OTA-installed over
+  the stock Panda firmware, it reads stock's `app_nvs` blobs on first boot and populates
+  its own keys, so the device **rejoins the same WiFi and reconnects to Moonraker/HA
+  automatically:**
+  - `wifi_info` → `ssid` / `password` (rejoins WiFi — previously the OTA dropped to AP
+    setup, because stock stores WiFi as a blob under different keys than we read).
+  - `moonraker_info` → `mk_host` (`mk_port` defaults to Moonraker's `7125`, since stock's
+    port field is the printer's HTTP port).
+  - `ha_mqtt_info` → `ha_host` / `ha_user` / `ha_pass` / `ha_port` (Home Assistant MQTT).
+
+  Runs once and is non-destructive: it only fills in keys that are absent (never
+  overrides a user who provisioned via `/setup`), and the stock blobs are left intact.
+  Verified on hardware for all three (blob layouts RE'd with distinctive dummy values;
+  identical on stock 1.0.3/1.0.4). This is the linchpin for the no-USB Panda→DragonBreath
+  migration (`plans/panda-to-dragon-migration.md`).
+  Bambu (`bambu_mqtt_info`) is intentionally not carried yet — stock won't persist a
+  Bambu config without a live printer to bind, so there's no populated sample to RE from.
+
 ## [1.0.1] - 2026-07-31
 
 Makes the automatic fan-only **filtration band** work without arming AUTO mode — it now

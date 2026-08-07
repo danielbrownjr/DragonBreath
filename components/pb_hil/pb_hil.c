@@ -198,7 +198,7 @@ static pb_policy_result_t run_mode_command(
     const cJSON *mode = cJSON_GetObjectItemCaseSensitive(request, "mode");
     if (!cJSON_IsString(mode)) return PB_POLICY_INVALID;
     if (strcmp(mode->valuestring, "off") == 0) {
-        pb_policy_set_mode_off(PB_SOURCE_WEB);
+        pb_policy_set_mode_off(DB_SOURCE_WEB);
         return PB_POLICY_OK;
     }
 
@@ -206,7 +206,7 @@ static pb_policy_result_t run_mode_command(
     if (!json_number(request, "target_c", &target)) return PB_POLICY_INVALID;
     if (strcmp(mode->valuestring, "power_on") == 0) {
         return pb_policy_set_power_on(
-            (float)target, PB_SOURCE_WEB, "hil-serial",
+            (float)target, DB_SOURCE_WEB, "hil-serial",
             PB_POLICY_REVISION_ANY, lease);
     }
     if (strcmp(mode->valuestring, "auto") == 0) {
@@ -214,7 +214,7 @@ static pb_policy_result_t run_mode_command(
         if (!json_number(request, "bed_threshold_c", &threshold))
             return PB_POLICY_INVALID;
         return pb_policy_set_auto(
-            (float)target, (float)threshold, PB_SOURCE_WEB,
+            (float)target, (float)threshold, DB_SOURCE_WEB,
             PB_POLICY_REVISION_ANY);
     }
     if (strcmp(mode->valuestring, "drying") == 0) {
@@ -223,7 +223,7 @@ static pb_policy_result_t run_mode_command(
                 || hours < 1.0 || hours > 12.0 || floor(hours) != hours)
             return PB_POLICY_INVALID;
         return pb_policy_start_drying(
-            (float)target, (uint8_t)hours, PB_SOURCE_WEB,
+            (float)target, (uint8_t)hours, DB_SOURCE_WEB,
             PB_POLICY_REVISION_ANY);
     }
     return PB_POLICY_INVALID;
@@ -243,7 +243,7 @@ static void handle_request(const cJSON *request)
             || strcmp(cmd->valuestring, "state") == 0) {
         cJSON_AddBoolToObject(response, "ok", true);
     } else if (strcmp(cmd->valuestring, "off") == 0) {
-        pb_policy_set_mode_off(PB_SOURCE_WEB);
+        pb_policy_set_mode_off(DB_SOURCE_WEB);
         cJSON_AddBoolToObject(response, "ok", true);
     } else if (strcmp(cmd->valuestring, "mode") == 0) {
         pb_policy_lease_t lease = {0};
@@ -263,7 +263,7 @@ static void handle_request(const cJSON *request)
         pb_policy_snapshot_t snap;
         pb_policy_get_snapshot(&snap);
         pb_policy_result_t result =
-            pb_policy_clear_fault(PB_SOURCE_WEB, snap.state_revision);
+            pb_policy_clear_fault(DB_SOURCE_WEB, snap.state_revision);
         cJSON_AddBoolToObject(response, "ok", result == PB_POLICY_OK);
         cJSON_AddStringToObject(response, "result", pb_policy_result_str(result));
 #ifdef CONFIG_PB_HIL_DEVBOARD
@@ -303,7 +303,11 @@ static void handle_request(const cJSON *request)
         // "measured == trigger" behavior is preserved for existing HIL scenarios).
         double bed_target_c = bed_c;
         json_number(request, "bed_target_c", &bed_target_c);
-        pb_policy_set_env((float)bed_c, (float)bed_target_c, cJSON_IsTrue(connected));
+        // src_target_c: optional source-requested chamber target (Bambu filament zone);
+        // absent -> 0 (normal bed-AUTO), so existing scenarios are unchanged.
+        double src_target_c = 0.0;
+        json_number(request, "src_target_c", &src_target_c);
+        pb_policy_set_env((float)bed_c, (float)bed_target_c, cJSON_IsTrue(connected), (float)src_target_c);
         cJSON_AddBoolToObject(response, "ok", true);
     } else if (strcmp(cmd->valuestring, "zero_cross") == 0) {
         double count = 1.0;

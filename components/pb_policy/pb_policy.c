@@ -6,7 +6,7 @@
 #include "pb_ntc.h"
 #include "pb_leds.h"
 #include "pb_buttons.h"
-#include "pb_evlog.h"
+#include "dc_evlog.h"
 
 #include "esp_log.h"
 #include "esp_random.h"
@@ -61,7 +61,7 @@ static const char *TAG = "pb_policy";
 
 typedef struct {
     pb_mode_t mode;
-    pb_source_t source;
+    db_source_t source;
     uint32_t revision;
 
     float requested_target_c;
@@ -73,6 +73,9 @@ typedef struct {
     float auto_bed_threshold_c;
     bool auto_engaged;
     bool auto_filtering;         // AUTO fan-only band latch (blower on, no heat)
+    float src_target_c;          // source-requested chamber target (e.g. Bambu filament
+                                 // zone); 0 = none. When >0 in AUTO it engages heat to
+                                 // this target directly, bypassing the bed threshold.
 
     int64_t drying_deadline_us;
     int64_t local_power_deadline_us;
@@ -108,9 +111,9 @@ static void wake_control_task(void)
     if (s_wake_cb) s_wake_cb();
 }
 
-static bool source_is_remote(pb_source_t source)
+static bool source_is_remote(db_source_t source)
 {
-    return source == PB_SOURCE_WEB || source == PB_SOURCE_KLIPPER;
+    return source == DB_SOURCE_WEB || source == DB_SOURCE_KLIPPER;
 }
 
 static void copy_text(char *dst, size_t dst_size, const char *src)
@@ -119,7 +122,7 @@ static void copy_text(char *dst, size_t dst_size, const char *src)
     snprintf(dst, dst_size, "%s", src ? src : "");
 }
 
-static void revision_advance_locked(pb_source_t source)
+static void revision_advance_locked(db_source_t source)
 {
     // Reserve zero as "no snapshot received".  Natural uint32 rollover remains
     // valid; skip zero so clients never confuse it with an uninitialized value.
@@ -176,7 +179,7 @@ static pb_policy_result_t heat_precheck_locked(float target_c,
     return PB_POLICY_OK;
 }
 
-static void set_off_locked(pb_source_t source)
+static void set_off_locked(db_source_t source)
 {
     // Target zero is accepted even while faulted/inhibited.
     (void)pb_heater_set_target_c(0.0f);
@@ -401,7 +404,7 @@ esp_err_t pb_policy_init(void)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     memset(&s, 0, sizeof s);
     s.mode = PB_MODE_OFF;
-    s.source = PB_SOURCE_BOOT;
+    s.source = DB_SOURCE_BOOT;
     s.revision = 1;
     s.auto_bed_threshold_c = PB_DEFAULT_AUTO_BED_C;
     s.last_faulted = pb_heater_is_faulted();
@@ -418,7 +421,7 @@ esp_err_t pb_policy_init(void)
 
 pb_policy_result_t pb_policy_set_power_on(
     float target_c,
-    pb_source_t source,
+    db_source_t source,
     const char *owner,
     uint32_t expected_revision,
     pb_policy_lease_t *lease_out)
@@ -468,7 +471,7 @@ pb_policy_result_t pb_policy_set_power_on(
 pb_policy_result_t pb_policy_set_auto(
     float target_c,
     float bed_threshold_c,
-    pb_source_t source,
+    db_source_t source,
     uint32_t expected_revision)
 {
     if (!s_lock || !isfinite(bed_threshold_c)
@@ -505,7 +508,7 @@ pb_policy_result_t pb_policy_set_auto(
 pb_policy_result_t pb_policy_start_drying(
     float target_c,
     uint8_t hours,
-    pb_source_t source,
+    db_source_t source,
     uint32_t expected_revision)
 {
     if (!s_lock || hours == 0 || hours > PB_DRYING_MAX_HOURS)
@@ -541,7 +544,7 @@ pb_policy_result_t pb_policy_start_drying(
     return PB_POLICY_OK;
 }
 
-void pb_policy_set_mode_off(pb_source_t source)
+void pb_policy_set_mode_off(db_source_t source)
 {
     if (!s_lock) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -556,7 +559,7 @@ void pb_policy_set_mode_off(pb_source_t source)
 // add airflow on top of any heat mode (whichever wants more air wins in the tick).
 // Fan-only has no heat path, so it is safe even while faulted (extra cooling) and
 // needs no revision gate. It never persists: the device always boots OFF, fan 0.
-pb_policy_result_t pb_policy_set_fan(uint8_t percent, pb_source_t source)
+pb_policy_result_t pb_policy_set_fan(uint8_t percent, db_source_t source)
 {
     if (!s_lock) return PB_POLICY_INVALID;
     if (percent > 100) percent = 100;
@@ -616,18 +619,23 @@ bool pb_policy_get_filter_auto_enable(void)
     return v;
 }
 
-void pb_policy_stop_drying(pb_source_t source)
+void pb_policy_stop_drying(db_source_t source)
 {
     pb_policy_set_mode_off(source);
 }
 
-void pb_policy_set_env(float bed_c, float bed_target_c, bool moonraker_connected)
+void pb_policy_set_env(float bed_c, float bed_target_c, bool source_connected, float src_target_c)
 {
     if (!s_lock) return;
+    // Clamp the source-requested target to the settable ceiling; the fixed heater
+    // cutoffs (chamber/element over-temp) still protect regardless.
+    if (!isfinite(src_target_c) || src_target_c < 0.0f) src_target_c = 0.0f;
+    if (src_target_c > PB_HEATER_ABS_MAX_TARGET_C) src_target_c = PB_HEATER_ABS_MAX_TARGET_C;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s.bed_c = isfinite(bed_c) ? bed_c : 0.0f;
     s.bed_target_c = isfinite(bed_target_c) ? bed_target_c : 0.0f;
-    s.mk_connected = moonraker_connected;
+    s.mk_connected = source_connected;
+    s.src_target_c = src_target_c;
     xSemaphoreGive(s_lock);
 }
 
@@ -653,7 +661,7 @@ pb_policy_result_t pb_policy_heartbeat(const pb_policy_lease_t *lease)
 }
 
 pb_policy_result_t pb_policy_clear_fault(
-    pb_source_t source,
+    db_source_t source,
     uint32_t expected_revision)
 {
     if (!s_lock) return PB_POLICY_INHIBITED;
@@ -679,7 +687,7 @@ pb_policy_result_t pb_policy_clear_fault(
     return PB_POLICY_OK;
 }
 
-void pb_policy_request_panic_off(pb_source_t source, const char *reason)
+void pb_policy_request_panic_off(db_source_t source, const char *reason)
 {
     if (!s_lock) return;
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -724,7 +732,7 @@ static const char *button_str(pb_button_id_t id)
 static pb_policy_result_t button_toggle_mode(pb_mode_t target_mode)
 {
     if (pb_policy_get_mode() == target_mode) {
-        pb_policy_set_mode_off(PB_SOURCE_BUTTON);
+        pb_policy_set_mode_off(DB_SOURCE_BUTTON);
         return PB_POLICY_OK;
     }
     pb_policy_params_t p;
@@ -732,16 +740,16 @@ static pb_policy_result_t button_toggle_mode(pb_mode_t target_mode)
     switch (target_mode) {
         case PB_MODE_POWER_ON:
             return pb_policy_set_power_on(
-                p.manual_target_c, PB_SOURCE_BUTTON,
+                p.manual_target_c, DB_SOURCE_BUTTON,
                 "button", PB_POLICY_REVISION_ANY, NULL);
         case PB_MODE_AUTO:
             return pb_policy_set_auto(
                 p.auto_target_c, p.auto_bed_threshold_c,
-                PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
+                DB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
         case PB_MODE_DRYING:
             return pb_policy_start_drying(
                 p.dry_target_c, p.dry_hours,
-                PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
+                DB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
         default:
             return PB_POLICY_INVALID;
     }
@@ -757,15 +765,15 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
         if (id == PB_BUTTON_POWER && pb_heater_is_faulted()) {
             // A physical actor always wins, so revision-any is correct here.
             pb_policy_result_t r =
-                pb_policy_clear_fault(PB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
-            pb_evlog_add("btn: power long -> clear fault (%s)",
+                pb_policy_clear_fault(DB_SOURCE_BUTTON, PB_POLICY_REVISION_ANY);
+            dc_evlog_add("btn: power long -> clear fault (%s)",
                          pb_policy_result_str(r));
             return;
         }
-        pb_policy_request_panic_off(PB_SOURCE_BUTTON, "button panic-off");
+        pb_policy_request_panic_off(DB_SOURCE_BUTTON, "button panic-off");
         // The event log can wait on its diagnostic mutex, so record only after
         // the heater is latched off and the control task has been notified.
-        pb_evlog_add("btn: %s long -> panic-off", button_str(id));
+        dc_evlog_add("btn: %s long -> panic-off", button_str(id));
         return;
     }
 
@@ -775,30 +783,30 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
         case PB_BUTTON_ON:
             r = button_toggle_mode(PB_MODE_POWER_ON);
             if (r == PB_POLICY_OK) {
-                pb_evlog_add("btn: on -> %s",
+                dc_evlog_add("btn: on -> %s",
                              pb_policy_mode_str(pb_policy_get_mode()));
             } else {
-                pb_evlog_add("btn: on rejected (%s)",
+                dc_evlog_add("btn: on rejected (%s)",
                              pb_policy_result_str(r));
             }
             break;
         case PB_BUTTON_AUTO:
             r = button_toggle_mode(PB_MODE_AUTO);
             if (r == PB_POLICY_OK) {
-                pb_evlog_add("btn: auto -> %s",
+                dc_evlog_add("btn: auto -> %s",
                              pb_policy_mode_str(pb_policy_get_mode()));
             } else {
-                pb_evlog_add("btn: auto rejected (%s)",
+                dc_evlog_add("btn: auto rejected (%s)",
                              pb_policy_result_str(r));
             }
             break;
         case PB_BUTTON_DRY:
             r = button_toggle_mode(PB_MODE_DRYING);
             if (r == PB_POLICY_OK) {
-                pb_evlog_add("btn: dry -> %s",
+                dc_evlog_add("btn: dry -> %s",
                              pb_policy_mode_str(pb_policy_get_mode()));
             } else {
-                pb_evlog_add("btn: dry rejected (%s)",
+                dc_evlog_add("btn: dry rejected (%s)",
                              pb_policy_result_str(r));
             }
             break;
@@ -806,10 +814,10 @@ void pb_policy_on_button(pb_button_id_t id, pb_button_event_t ev)
             // Master OFF. Already-off is a deliberate no-op: log it but do not
             // bump the revision, so an idle tap does not churn observers.
             if (pb_policy_get_mode() == PB_MODE_OFF) {
-                pb_evlog_add("btn: power (already off)");
+                dc_evlog_add("btn: power (already off)");
             } else {
-                pb_policy_set_mode_off(PB_SOURCE_BUTTON);
-                pb_evlog_add("btn: power -> off");
+                pb_policy_set_mode_off(DB_SOURCE_BUTTON);
+                dc_evlog_add("btn: power -> off");
             }
             break;
         default:
@@ -864,7 +872,7 @@ void pb_policy_tick(void)
             } else if (!s.lease_active && s.local_power_deadline_us > 0
                        && now >= s.local_power_deadline_us) {
                 local_limit_expired = true;
-                set_off_locked(PB_SOURCE_WATCHDOG);
+                set_off_locked(DB_SOURCE_WATCHDOG);
             } else {
                 target = s.requested_target_c;
                 autonomous = !s.lease_active;
@@ -881,6 +889,13 @@ void pb_policy_tick(void)
             bool was_engaged = s.auto_engaged;
             if (!s.mk_connected) {
                 s.auto_engaged = false;
+            } else if (s.src_target_c > 0.0f) {
+                // Source-requested chamber target (e.g. a Bambu filament zone while a
+                // print is active): engage heat directly, bypassing the bed-setpoint
+                // threshold ("zone wins"). Clears when the source drops it to 0 (print
+                // end / no zone), falling back to the bed-threshold logic below and
+                // then to disengage — i.e. revert to idle/AUTO.
+                s.auto_engaged = true;
             } else if (!s.auto_engaged && s.bed_target_c >= s.auto_bed_threshold_c) {
                 s.auto_engaged = true;
             } else if (s.auto_engaged
@@ -893,7 +908,9 @@ void pb_policy_tick(void)
             if (s.auto_engaged != was_engaged)
                 revision_advance_locked(s.source);
             if (s.auto_engaged) {
-                target = s.requested_target_c;
+                // The source-requested zone target overrides the configured AUTO
+                // target when present; otherwise the normal AUTO target applies.
+                target = (s.src_target_c > 0.0f) ? s.src_target_c : s.requested_target_c;
                 autonomous = true;
             }
             break;
@@ -901,7 +918,7 @@ void pb_policy_tick(void)
 
         case PB_MODE_DRYING:
             if (now >= s.drying_deadline_us) {
-                set_off_locked(PB_SOURCE_WATCHDOG);
+                set_off_locked(DB_SOURCE_WATCHDOG);
             } else {
                 target = s.requested_target_c;
                 autonomous = true;
@@ -921,7 +938,7 @@ void pb_policy_tick(void)
         s.auto_engaged = false;
         s.drying_deadline_us = 0;
         s.local_power_deadline_us = 0;
-        revision_advance_locked(PB_SOURCE_WATCHDOG);
+        revision_advance_locked(DB_SOURCE_WATCHDOG);
     }
 
     // Keep the computed transition and its actuator application under the same
@@ -961,7 +978,7 @@ void pb_policy_tick(void)
         s.local_power_deadline_us = 0;
         lease_invalidate_locked();
         // Preserve WATCHDOG attribution for a policy-triggered expiry.
-        if (!watchdog_trip) revision_advance_locked(PB_SOURCE_SAFETY);
+        if (!watchdog_trip) revision_advance_locked(DB_SOURCE_SAFETY);
     }
     s.last_faulted = faulted;
 
@@ -1093,15 +1110,15 @@ const char *pb_policy_mode_str(pb_mode_t mode)
     }
 }
 
-const char *pb_policy_source_str(pb_source_t source)
+const char *pb_policy_source_str(db_source_t source)
 {
     switch (source) {
-        case PB_SOURCE_WEB:     return "web";
-        case PB_SOURCE_KLIPPER: return "klipper";
-        case PB_SOURCE_BUTTON:  return "button";
-        case PB_SOURCE_SAFETY:  return "safety";
-        case PB_SOURCE_WATCHDOG:return "watchdog";
-        case PB_SOURCE_BOOT:
+        case DB_SOURCE_WEB:     return "web";
+        case DB_SOURCE_KLIPPER: return "klipper";
+        case DB_SOURCE_BUTTON:  return "button";
+        case DB_SOURCE_SAFETY:  return "safety";
+        case DB_SOURCE_WATCHDOG:return "watchdog";
+        case DB_SOURCE_BOOT:
         default:                return "boot";
     }
 }
