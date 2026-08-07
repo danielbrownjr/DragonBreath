@@ -1,110 +1,100 @@
 # RFC: MQTT-only Klipper integration mode
 
-Status: **Proposed.** This adds a portable integration alongside
-[`dragonbreath-klipper`](https://github.com/plastikman/dragonbreath-klipper), not a
-replacement for it. The existing helper remains the preferred integration whenever
-the user can install Klipper extras; this mode serves managed or locked systems where
-the user can edit Moonraker and macro configuration but cannot install an extra.
+Status: **Accepted specification.** The grounded implementation design and firmware
+work are tracked in [#67](https://github.com/plastikman/DragonBreath/pull/67). This
+revision incorporates the Moonraker/Klipper documentation findings recorded there and
+the dragon-core extraction landed in #68.
 
-## Goal
+## Goal and positioning
 
-Provide bidirectional DragonBreath control and telemetry using only an MQTT broker,
-`moonraker.conf`, and `printer.cfg` macros. It must provide dashboard telemetry,
-setpoint/mode control, macro-visible device state, and a Mainsail/Fluidd power toggle
-without placing any files in `klippy/extras/`.
+Provide bidirectional DragonBreath control and telemetry using a central MQTT broker,
+`moonraker.conf`, and `printer.cfg` macros, without installing anything in
+`klippy/extras/`.
 
-This mode is deliberately not a native Klipper heater. It does not provide
-`verify_heater`, a native temperature object, or blocking `M191` semantics.
+This is a compatibility path for managed or locked Klipper systems. The native
+[`dragonbreath-klipper`](https://github.com/plastikman/dragonbreath-klipper) extra
+remains preferred wherever it can be installed because it provides native Klipper
+heater semantics. MQTT mode deliberately does not provide `verify_heater`, a native
+Klipper temperature object, or a truly blocking `M191`.
 
-## Architecture
-
-```
-DragonBreath <---- MQTT ----> central broker <---- MQTT ----> Moonraker <----> Klipper
-```
-
-The integration has four separate data paths:
-
-| Path | Transport | Consumer |
-|---|---|---|
-| Desired state | macro variables -> Moonraker `status_objects` -> MQTT | DragonBreath firmware |
-| Telemetry | DragonBreath MQTT payload -> Moonraker `[sensor] type: mqtt` | Mainsail/Fluidd dashboard |
-| Macro telemetry | DragonBreath MQTT JSON-RPC -> `printer.gcode.script` -> `SET_GCODE_VARIABLE` | Klipper macros |
-| Master enable | Moonraker `[power] type: mqtt` | Mainsail/Fluidd and macros |
-
-The dashboard sensor and the macro variable bridge intentionally carry the same
-measurement twice. Moonraker's sensor state is not a Klipper `printer[...]` object,
-so a macro cannot read it directly. The two paths can briefly disagree; macro logic
-must never assume they are simultaneous.
-
-## Central broker is required
-
-A shared Mosquitto-compatible broker is a hard requirement. Moonraker supports one
-`[mqtt]` section, so pointing it at an individual device's embedded broker does not
-scale beyond one device. If DragonBreath ever exposes an embedded broker, it is for
-setup or diagnostics only and must not be documented as this integration's broker.
-
-## Moonraker configuration
-
-```ini
-[mqtt]
-address: mosquitto.lan
-enable_moonraker_api: True
-instance_name: myprinter
-publish_split_status: True
-status_objects:
-  gcode_macro DRAGONBREATH
-  gcode_macro DB_LINK
-
-[sensor dragonbreath]
-type: mqtt
-name: DragonBreath
-state_topic: dragonbreath/telemetry
-state_response_template:
-  {% set state = payload|fromjson %}
-  {set_result("chamber_temperature", state["chamber_temperature"]|float)}
-  {set_result("element_temperature", state["element_temperature"]|float)}
-  {set_result("humidity", state["humidity"]|float)}
-parameter_chamber_temperature:
-  units=C
-parameter_element_temperature:
-  units=C
-parameter_humidity:
-  units=%
-
-[power dragonbreath]
-type: mqtt
-command_topic: dragonbreath/power/set
-command_payload:
-  {command}
-state_topic: dragonbreath/power/state
-state_response_template:
-  {payload}
-retain_command_state: False
-query_after_command: False
+```text
+DragonBreath <-> MQTT <-> central broker <-> Moonraker <-> Klipper
 ```
 
-With `publish_split_status: True`, Moonraker publishes each field separately under:
+## Control-source and repository boundary
 
-```
-{instance}/klipper/state/{objectname}/{statename}
+MQTT-Klipper is one value in the existing exactly-one-source selector. It is mutually
+exclusive with Moonraker bed-follow, Bambu, Home Assistant, and unbound/manual mode.
+
+After #68, the persisted selector is owned by dragon-core. The follow-on core change
+must append:
+
+```c
+DC_SRC_KLIPPER_MQTT = 4
 ```
 
-DragonBreath subscribes to:
+`DC_SRC_NONE` remains numeric value `3` for NVS compatibility, and an exclusive
+`DC_SRC_MAX` bounds validation. Existing NVS namespace `app_nvs` and key `ctl_src`
+remain unchanged.
 
-```
-myprinter/klipper/state/gcode_macro DRAGONBREATH/#
-myprinter/klipper/state/gcode_macro DB_LINK/#
-```
+The controller integration is DragonBreath product code and follows the `db_*`
+convention (`db_klipper_mqtt`). Reusable MQTT parsing or transport may move to a
+`dc_*` component later only if another product validates the boundary. Existing
+product-local `pb_*` names are transitional, not the convention for new code.
 
-It caches the individual fields locally. This is intentionally not described as an
-atomic snapshot.
+## Verified Moonraker contract
+
+The implementation depends on these researched wire facts:
+
+- Moonraker availability is the retained `{instance}/moonraker/status` topic, also
+  used for its last will, with `{"server":"online"}` or `{"server":"offline"}`.
+- `publish_split_status: True` is required. Split status topics are retained and their
+  payload is JSON shaped like `{"eventtime": ..., "value": ...}`, not a raw scalar.
+- The combined `{instance}/klipper/status` topic is non-retained and is not the desired
+  state transport.
+- Object names retain their literal spaces in topic paths, for example
+  `gcode_macro DRAGONBREATH`.
+- Moonraker's MQTT API uses globally unique JSON-RPC IDs on a shared response topic.
+  `printer.gcode.script` requests include `mqtt_timestamp` (or use QoS 0/2) to avoid
+  duplicate execution.
+- MQTT keepalive is fixed at 60 seconds and is not the heat-safety clock. The explicit
+  five-second macro heartbeat and firmware dead-man timeout provide that safety.
+- Moonraker `[sensor type: mqtt]` values appear in the web dashboard but are invisible
+  to Klipper macros. Dashboard telemetry and optional macro writeback are separate
+  paths.
+- `SET_GCODE_VARIABLE` is in-memory only. Firmware restart/reconnect logic must
+  republish desired state and reassert sequence rather than treating macro variables
+  as durable storage.
+
+## Topic map
+
+`INST` is the required Moonraker `instance_name`. `DB` is the device topic base,
+defaulting to `dragonbreath` and advanced-editable.
+
+Device subscriptions:
+
+| Topic | Purpose |
+|---|---|
+| `INST/klipper/state/gcode_macro DRAGONBREATH/#` | Retained desired-state fields |
+| `INST/klipper/state/gcode_macro DB_LINK/#` | Retained heartbeat counter |
+| `INST/moonraker/status` | Moonraker online/offline state |
+| `INST/moonraker/api/response` | Correlated JSON-RPC responses |
+| `DB/power/set` | Moonraker power-device master enable |
+
+Device publications:
+
+| Topic | Retained | Purpose |
+|---|---:|---|
+| `DB/telemetry` | No | Versioned temperatures, mode, target, fault, and `seq_ack` |
+| `DB/power/state` | Yes | `on` / `off` state used to initialize Moonraker power UI |
+| `DB/status` | Yes/LWT | Device `online` / `offline` availability |
+| `INST/moonraker/api/request` | No | Optional macro-variable writeback |
+
+No retained device publication is an arming input.
 
 ## Desired-state contract
 
-All persistent commands live on one macro object. A sequence value is written last;
-the device applies its cached desired state only after observing a new sequence.
-This avoids temporarily applying a new `mode` with the preceding `target` while
-Moonraker publishes individual fields.
+Klipper exposes two macro objects through split status:
 
 ```ini
 [gcode_macro DRAGONBREATH]
@@ -114,144 +104,134 @@ variable_mode: "off"
 variable_fan: 0
 variable_armed: 0
 variable_purge_nonce: 0
-# Device-written telemetry for macro logic:
 variable_temperature: -1.0
 variable_humidity: -1.0
 variable_fault: ""
 gcode:
-```
 
-A macro changing desired state writes all relevant values first, then increments
-`seq`. A one-shot action such as purge increments `purge_nonce`, rather than using a
-boolean that cannot express a repeated request. `publish_mqtt_topic` may be used as
-an optional, non-retained event channel on Moonraker versions that support it, but
-it is not required for this mode's control plane.
-
-## Heartbeat and arming
-
-Moonraker publishes status only on change; a static target is not proof that Klippy
-is still running. A second object provides an explicit liveness signal:
-
-```ini
 [gcode_macro DB_LINK]
 variable_heartbeat: 0
 gcode:
-
-[delayed_gcode DB_HEARTBEAT]
-initial_duration: 5
-gcode:
-  {% set hb = printer["gcode_macro DB_LINK"].heartbeat|int %}
-  SET_GCODE_VARIABLE MACRO=DB_LINK VARIABLE=heartbeat VALUE={hb + 1}
-  UPDATE_DELAYED_GCODE ID=DB_HEARTBEAT DURATION=5
 ```
 
-The device uses broker MQTT keepalive for transport/broker loss and the incrementing
-heartbeat for the Klippy/Moonraker desired-state path. The proposed cadence is 5 s;
-three missed increments (15 s) force heat off and latch `comms_lost`.
+A command writes all desired fields first and increments `seq` last. Firmware applies
+only a new sequence, preventing a partially published target/mode combination.
+Repeatable one-shot operations increment a nonce rather than toggling a boolean.
 
-Safety invariant:
+A self-rescheduling delayed G-code increments `heartbeat` every five seconds. Three
+missed increments (15 seconds) force heat off and latch `comms_lost`.
 
-> DragonBreath never energizes heat merely because it received desired state. It
-> requires an explicit arm observed after a fresh heartbeat.
+## Retained-aware arming invariant
 
-Boot, reconnect, retained delivery, and heartbeat recovery all begin disarmed.
-Firmware must require an explicit new arm transition after recovery. Retained
-messages may update a local display but must never arm heat; DragonBreath-published
-application messages are always non-retained.
+> DragonBreath never energizes heat merely because desired state was delivered. Heat
+> requires a coherent new sequence, a live post-connect arm edge, and a fresh
+> heartbeat.
 
-Thermal cutoffs, the hardware watchdog, maximum temperature, fail-safe airflow, and
-all fail-off behavior remain inside DragonBreath firmware. This integration does not
-weaken the existing device safety model.
+Each MQTT connection begins disarmed:
 
-## Device-to-macro writeback
+1. The first retained value for each desired-state and heartbeat field is recorded as
+   the connection snapshot. Snapshot `armed=1` and snapshot heartbeat never prove
+   liveness or permission to heat.
+2. Liveness becomes true only after the heartbeat value changes post-connect and
+   remains true while the last change is less than 15 seconds old.
+3. Heat can arm only when `seq` advances after the coherent fields are present,
+   `mode == "heat"`, a live `0 -> 1` arm edge was observed, and liveness is current.
+4. While armed, each fresh heartbeat renews the DragonBreath policy lease and the
+   hardware communications watchdog.
+5. Disarm, mode-off, heartbeat timeout, MQTT disconnect, Moonraker offline, or master
+   power-off immediately requests policy OFF. Recovery requires another live arm edge;
+   retained `armed=1` never re-arms automatically.
 
-For macro logic that needs live temperature or fault state, DragonBreath sends an
-MQTT JSON-RPC request to Moonraker's API topic:
+Thermal cutoffs, maximum-temperature limits, sensor fail-closed behavior, airflow, and
+hardware watchdogs remain authoritative inside DragonBreath firmware.
+
+## Telemetry and macro writeback
+
+`DB/telemetry` is non-retained, versioned JSON published on change or at a modest
+cadence. It includes chamber and element temperatures, humidity where available,
+mode, target, armed state, acknowledged sequence, and fault state. Moonraker's MQTT
+sensor consumes it for Mainsail/Fluidd display.
+
+Optional macro-visible writeback uses a correlated Moonraker JSON-RPC request:
 
 ```json
 {
   "jsonrpc": "2.0",
   "method": "printer.gcode.script",
+  "id": "globally-unique-id",
   "params": {
-    "script": "SET_GCODE_VARIABLE MACRO=DRAGONBREATH VARIABLE=temperature VALUE=42.3"
-  },
-  "id": 1
+    "script": "SET_GCODE_VARIABLE MACRO=DRAGONBREATH VARIABLE=temperature VALUE=42.3",
+    "mqtt_timestamp": 123456789
+  }
 }
 ```
 
-The request topic is `myprinter/moonraker/api/request`; responses arrive on
-`myprinter/moonraker/api/response`. Device-to-Klipper writeback is limited to a
-modest rate (proposed: every 2 s). It enters Klipper's G-code queue, so 250 ms
-telemetry updates are inappropriate during a print.
+Writeback is **off by default**, opt-in, rate-limited to roughly two seconds and
+on-change only. It enters Klipper's G-code queue and must not contend with print moves.
 
-## M141 supported; M191 deliberately unsupported
+## M141 and M191
 
-MQTT mode supports an `M141` shim that updates the desired target and sequence. It
-does **not** provide a native blocking `M191`.
+Klipper has no native `M141` or `M191` commands in this configuration.
 
-Klipper macros run to completion; they cannot yield for a future MQTT
-`SET_GCODE_VARIABLE`. `delayed_gcode` is asynchronous, `TEMPERATURE_WAIT` needs a
-real Klipper sensor, and `PAUSE`/`RESUME` collides with normal print pause/cancel
-behavior. The MQTT-mode `M191` shim must raise this clear error instead of returning
-success:
+- `M141` is provided as a non-blocking shim that updates target state and sequence.
+- A correct blocking `M191` is impossible without a real Klipper temperature sensor:
+  macros expand to completion, cannot await a future MQTT update, and
+  `TEMPERATURE_WAIT` cannot consume a Moonraker MQTT sensor.
+- The `M191` shim is therefore a **non-blocking alias plus a visible warning**.
+  This degrades gracefully instead of aborting prints whose start G-code emits M191.
+- A hard-error variant was considered and rejected; generated configuration must not
+  ship or recommend one.
 
-```
-M191 unsupported in MQTT mode — use M141 in filament start G-code
-```
+## Broker and API security
 
-## Broker security is mandatory
+A central Mosquitto-compatible broker is required. Moonraker supports one MQTT
+section, so an embedded per-device broker is not the integration architecture.
 
-Enabling Moonraker's MQTT API lets any authorized publisher to the API request topic
-invoke `printer.gcode.script`, which is arbitrary G-code execution. This is a real
-security tradeoff: the native module is strictly safer because it does not expose a
-network route to arbitrary G-code.
+Enabling Moonraker's MQTT API permits an authorized publisher to invoke
+`printer.gcode.script`. Documentation and generated configuration must provide:
 
-Documentation must ship a broker account and ACL example, not present ACLs as an
-optional hardening step:
+- a dedicated broker account and least-privilege ACL;
+- no broad `write INST/#` grant;
+- credentials, broker address, and `instance_name` validation before enabling the
+  source;
+- generated `moonraker.conf`, `printer.cfg`, and broker ACL from one saved setup;
+- no password echo in generated or diagnostic output.
 
-```
-user dragonbreath
-topic write dragonbreath/telemetry
-topic write dragonbreath/power/state
-topic write myprinter/moonraker/api/request
-topic read  myprinter/moonraker/api/response
-topic read  myprinter/klipper/state/gcode_macro DRAGONBREATH/#
-topic read  myprinter/klipper/state/gcode_macro DB_LINK/#
-```
+Optional `printer.emergency_stop` escalation is disabled by default until a narrow,
+latching trigger policy is specified and tested. Ordinary DragonBreath faults shut off
+the chamber and report telemetry without stopping the printer.
 
-In particular, do not grant `topic write myprinter/#`. ACLs do not constrain the
-JSON-RPC method inside the permitted API request topic, so DragonBreath firmware is
-a trusted printer-control actor. It must only use the small, documented set of API
-calls needed for telemetry writeback and a conservatively gated fault escalation.
+## Locked product decisions
 
-## Optional critical-fault escalation
+1. Native `dragonbreath-klipper` remains the recommended integration.
+2. `M191` is a non-blocking alias with a visible warning. Hard-error behavior is
+   explicitly rejected.
+3. Device topic base defaults to fixed `dragonbreath` and is advanced-editable.
+4. Macro writeback is off by default.
+5. Printer emergency-stop escalation is off by default.
+6. MQTT-Klipper remains mutually exclusive with every other control source.
 
-After it has shut off its own heater, DragonBreath may call `printer.emergency_stop`
-for a clearly defined, latching critical enclosure fault. This is optional and must
-be disabled by default until its trigger policy is specified and tested. Ordinary
-warnings and heater safety faults only report telemetry and leave the printer
-running.
+## Delivery and validation
 
-## Implementation phases
-
-1. Define DragonBreath MQTT topic, payload, desired-state, arming, heartbeat, and
-   fault schemas, including a version field.
-2. Implement the MQTT control source in firmware using the existing safety and
-   lease/policy boundaries; add host tests for reconnect, retained delivery,
-   out-of-order fields, heartbeat timeout, and re-arm requirements.
-3. Ship `moonraker.conf`, `printer.cfg`, and Mosquitto ACL examples plus a setup
-   validator that refuses to enable the mode without a broker and credentials.
-4. Validate on a stock/locked Klipper installation with Mainsail and Fluidd. Verify
-   dashboard readings, state updates, queue behavior while printing, loss/recovery,
-   and the proof that heat remains off until explicit re-arm.
-5. Document MQTT mode as a compatibility path and retain the native module as the
-   recommended path for native heater semantics and `M191`.
+1. **Wire/schema design — complete in #67.** The contract above is frozen for the
+   initial implementation.
+2. **Firmware and generated configuration — implemented on #67's pre-#68 branch.** Its
+   retained-aware arming core has 26 host cases and its CI build passed.
+3. **Post-extraction rebase — required before #67 merges.** Rebase onto #68, use
+   `dc_source`, add the NVS-compatible enum value in dragon-core, adopt the app-side
+   `db_klipper_mqtt` namespace, and refresh CI.
+4. **Real locked-Klipper validation — required before release.** Test Mainsail and
+   Fluidd telemetry, power control, target changes during a print, broker/Moonraker/
+   Klippy loss and recovery, retained-message replay, explicit re-arm, API correlation,
+   and queue behavior.
+5. Document MQTT mode as a compatibility path; hardware validation gates its release
+   tag, not acceptance of this RFC.
 
 ## Sources
 
 - [Moonraker MQTT configuration](https://moonraker.readthedocs.io/en/stable/configuration/#mqtt)
 - [Moonraker MQTT sensor configuration](https://moonraker.readthedocs.io/en/stable/configuration/#mqtt-sensor-configuration)
 - [Moonraker printer API](https://moonraker.readthedocs.io/en/latest/external_api/printer/)
+- [dragon-core](https://github.com/justinh-rahb/dragon-core)
 - [BTT Panda Sense Pro](https://neo.bttwiki.com/en/docs/panda-series/module/panda-sense-pro/#view-sensor-data)
 - [iHeater Link Klipper setup](https://new.docs.idryer.org/en/projects/iheater/link/integrations/klipper-setup/)
-- [OpenVent](https://github.com/justinh-rahb/OpenVent)
