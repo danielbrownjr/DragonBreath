@@ -973,9 +973,11 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
   }
   function controllerLabel(s){
     var l=(s.control||{}).lease||{};
-    /* In Home Assistant mode HA is the controller — show "Home Assistant" rather
-       than the internal transport/owner (which is Web/"ha"). */
-    if((s.environment||{}).control_source==='ha') return 'Home Assistant';
+    /* HA and Klipper-MQTT are external controllers — show the controller name rather
+       than the internal transport/owner (which is Web/"ha"/"klipper-mqtt"). */
+    var cs=(s.environment||{}).control_source;
+    if(cs==='ha') return 'Home Assistant';
+    if(cs==='klipper-mqtt') return 'Klipper (MQTT)';
     if(l.active) return sourceLabel(s.source)+(l.owner? ' ('+l.owner+')':'');
     return s.mode==='off' ? '—' : sourceLabel(s.source);
   }
@@ -1117,9 +1119,10 @@ svg.icon{ width: 20px; height: 20px; fill: none; stroke: currentColor;
       if(fila) u('db-filament', fila);
     }
     var plabel = $('db-printer-label');
-    if(src==='ha'){
+    if(src==='ha' || src==='klipper-mqtt'){
+      /* Controllers with no printer bed to follow — label the row as the source. */
       if(plabel) plabel.textContent='Source';
-      u('db-printer','Home Assistant');
+      u('db-printer', src==='ha' ? 'Home Assistant' : 'Klipper (MQTT)');
     } else {
       var plabelText = 'Printer';
       if(src==='bambu') plabelText = 'Bambu'+(s.environment.bambu_serial ? ' ('+s.environment.bambu_serial+')' : '');
