@@ -7,6 +7,7 @@
 #include "dc_moonraker.h"
 #include "dc_bambu.h"
 #include "pb_ha.h"
+#include "db_klipper_mqtt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -553,6 +554,9 @@ static esp_err_t config_page(httpd_req_t *req)
     char bb_host[64] = {0},   bb_serial[32] = {0};
     char ha_host[64] = {0};   uint16_t ha_port = 1883;
     char ha_user[32] = {0},   ha_topic[48] = {0};
+    char km_host[64] = {0};   uint16_t km_port = 1883;
+    char km_user[32] = {0},   km_inst[48] = {0},  km_topic[48] = {0};
+    uint8_t km_tls = 0,       km_wb = 0;
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         size_t sz;
@@ -564,6 +568,13 @@ static esp_err_t config_page(httpd_req_t *req)
         nvs_get_u16(h, "ha_port", &ha_port);
         sz = sizeof ha_user;   nvs_get_str(h, "ha_user", ha_user, &sz);
         sz = sizeof ha_topic;  nvs_get_str(h, "ha_topic", ha_topic, &sz);
+        sz = sizeof km_host;   nvs_get_str(h, "km_host", km_host, &sz);
+        nvs_get_u16(h, "km_port", &km_port);
+        sz = sizeof km_user;   nvs_get_str(h, "km_user", km_user, &sz);
+        sz = sizeof km_inst;   nvs_get_str(h, "km_inst", km_inst, &sz);
+        sz = sizeof km_topic;  nvs_get_str(h, "km_topic", km_topic, &sz);
+        nvs_get_u8(h, "km_tls", &km_tls);
+        nvs_get_u8(h, "km_wb", &km_wb);
         nvs_close(h);
     }
     dc_ctl_source_t src = dc_source_get();
@@ -611,14 +622,16 @@ static esp_err_t config_page(httpd_req_t *req)
     snprintf(buf, sizeof buf,
         "<select id=ctlsrc name=ctl_src onchange='srcshow()'>"
         "<option value=0%s>Klipper (Moonraker)</option>"
+        "<option value=4%s>Klipper (MQTT)</option>"
         "<option value=1%s>Bambu (LAN)</option>"
         "<option value=2%s>Home Assistant</option>"
         "<option value=3%s>None (unbound)</option></select>"
         "<button type=button class=sec onclick='unbind()' style='margin-top:8px'>Unbind current source</button>",
-        src == DC_SRC_KLIPPER ? " selected" : "",
-        src == DC_SRC_BAMBU   ? " selected" : "",
-        src == DC_SRC_HA      ? " selected" : "",
-        src == DC_SRC_NONE    ? " selected" : "");
+        src == DC_SRC_KLIPPER      ? " selected" : "",
+        src == DC_SRC_KLIPPER_MQTT ? " selected" : "",
+        src == DC_SRC_BAMBU        ? " selected" : "",
+        src == DC_SRC_HA           ? " selected" : "",
+        src == DC_SRC_NONE         ? " selected" : "");
     SEND(req, buf);
 
     // Klipper group.
@@ -690,7 +703,51 @@ static esp_err_t config_page(httpd_req_t *req)
         "Home Assistant controls the heater only while it is the selected control source above. When "
         "Klipper or Bambu is bound, HA is not connected \xE2\x80\x94 Unbind that source first to hand control to HA. "
         "<a href='https://github.com/plastikman/DragonBreath/blob/main/docs/control-source.md' target=_blank rel=noopener>Details &rarr;</a>"
-        "</small></div></div>");
+        "</small></div>");   // close HA group
+
+    // Klipper (MQTT) group — for locked/managed Klipper installs (no klippy extra).
+    // Controller over the printer's own Moonraker broker; see the generated config.
+    html_attr_escape(km_host, esc, sizeof esc);
+    snprintf(buf, sizeof buf,
+        "<div class=grp data-src=4 style='display:%s'>"
+        "<label>MQTT broker (Moonraker's)</label><input name=km_host value=\"%s\" placeholder='e.g. mosquitto.lan'>"
+        "<label>Port</label><input name=km_port value=\"%u\">",
+        src == DC_SRC_KLIPPER_MQTT ? "block" : "none", esc, (unsigned)km_port);
+    SEND(req, buf);
+    html_attr_escape(km_user, esc, sizeof esc);
+    snprintf(buf, sizeof buf,
+        "<label>Username</label><input name=km_user value=\"%s\" autocomplete=off>"
+        "<label>Password</label><input name=km_pass type=password placeholder='(unchanged)' autocomplete=off>",
+        esc);
+    SEND(req, buf);
+    html_attr_escape(km_inst, esc, sizeof esc);
+    snprintf(buf, sizeof buf,
+        "<label>Moonraker instance_name</label>"
+        "<input name=km_inst value=\"%s\" placeholder='e.g. myprinter'>"
+        "<small style='color:var(--muted);display:block;margin:-4px 0 6px'>"
+        "Must match <code>instance_name</code> in <code>[mqtt]</code> \xE2\x80\x94 it derives every topic.</small>",
+        esc);
+    SEND(req, buf);
+    snprintf(buf, sizeof buf,
+        "<label><input type=checkbox name=km_tls value=1 %s> Use TLS (mqtts)</label>"
+        "<label><input type=checkbox name=km_wb value=1 %s> Write live temp back to macros (advanced)</label>",
+        km_tls ? "checked" : "", km_wb ? "checked" : "");
+    SEND(req, buf);
+    html_attr_escape(km_topic, esc, sizeof esc);
+    snprintf(buf, sizeof buf,
+        "<details style='margin-top:6px'><summary style='cursor:pointer;color:var(--muted)'>Advanced</summary>"
+        "<label>Device topic base</label><input name=km_topic value=\"%s\" placeholder='dragonbreath'>"
+        "</details>", esc);
+    SEND(req, buf);
+    // Generated-config link + the mutual-exclusion note (static).
+    SEND(req,
+        "<small style='color:var(--muted);display:block;margin-top:8px'>"
+        "Save first, then <a href='/km-config' target=_blank rel=noopener>generate your Klipper config</a> "
+        "(moonraker.conf + printer.cfg + Mosquitto ACL) filled in from these settings. "
+        "<b>Do not also run the native <code>dragonbreath-klipper</code> extra</b> \xE2\x80\x94 pick one Klipper integration."
+        "</small></div>");   // close MQTT group
+
+    SEND(req, "</div>");   // close the control-source card
     // Reveal-only-the-selected-group script (static — kept out of the snprintf
     // above so it isn't subject to format-truncation on a long topic value).
     SEND(req,
@@ -770,7 +827,7 @@ static esp_err_t save_post(httpd_req_t *req)
 
     // Larger than the Wi-Fi-only form: now also carries the control-source
     // selector + Klipper/Bambu/HA field groups (all groups submit, even hidden).
-    char body[1536];   // fits all field groups incl. the 6 Bambu chamber-zone inputs
+    char body[2048];   // fits all field groups (Bambu zones + the Klipper-MQTT group)
     int total = 0, r;
     while ((r = httpd_req_recv(req, body + total, sizeof body - 1 - total)) > 0) {
         total += r;
@@ -797,6 +854,35 @@ static esp_err_t save_post(httpd_req_t *req)
     form_get(body, "ha_user", ha_user, sizeof ha_user);
     form_get(body, "ha_pass", ha_pass, sizeof ha_pass);
     form_get(body, "ha_topic", ha_topic, sizeof ha_topic);
+    char km_host[64] = {0}, km_port_s[8] = {0}, km_user[32] = {0}, km_pass[64] = {0};
+    char km_inst[48] = {0}, km_topic[48] = {0}, km_tls_s[4] = {0}, km_wb_s[4] = {0};
+    form_get(body, "km_host", km_host, sizeof km_host);
+    form_get(body, "km_port", km_port_s, sizeof km_port_s);
+    form_get(body, "km_user", km_user, sizeof km_user);
+    form_get(body, "km_pass", km_pass, sizeof km_pass);
+    form_get(body, "km_inst", km_inst, sizeof km_inst);
+    form_get(body, "km_topic", km_topic, sizeof km_topic);
+    form_get(body, "km_tls", km_tls_s, sizeof km_tls_s);   // checkbox: present iff checked
+    form_get(body, "km_wb", km_wb_s, sizeof km_wb_s);
+
+    // Validator: the Klipper-MQTT mode must never be enabled without a broker AND
+    // credentials — an open/anonymous broker exposing printer.gcode.script is unsafe
+    // (design §8). A password already saved (secret left blank) counts.
+    if (src_s[0] && atoi(src_s) == DC_SRC_KLIPPER_MQTT) {
+        bool pass_ok = km_pass[0] != '\0';
+        if (!pass_ok) {
+            nvs_handle_t hv; char saved[8]; size_t ss = sizeof saved;
+            if (nvs_open(NVS_NS, NVS_READONLY, &hv) == ESP_OK) {
+                pass_ok = (nvs_get_str(hv, "km_pass", saved, &ss) == ESP_OK && saved[0]);
+                nvs_close(hv);
+            }
+        }
+        if (!km_host[0] || !km_user[0] || !km_inst[0] || !pass_ok) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                "Klipper (MQTT) needs a broker host, username, password, and instance_name");
+            return ESP_FAIL;
+        }
+    }
 
     const char *chosen = ssid_manual[0] ? ssid_manual : ssid;
     // In AP/provisioning mode there are no saved creds yet, so a Wi-Fi network is
@@ -811,10 +897,12 @@ static esp_err_t save_post(httpd_req_t *req)
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        // Control source (0=klipper/1=bambu/2=ha); ignore out-of-range.
+        // Control source (0=klipper/1=bambu/2=ha/3=none/4=klipper-mqtt); ignore
+        // out-of-range. DC_SRC_MAX is an exclusive sentinel, so the range is
+        // [DC_SRC_KLIPPER, DC_SRC_MAX).
         if (src_s[0]) {
             int s = atoi(src_s);
-            if (s >= DC_SRC_KLIPPER && s <= DC_SRC_NONE) nvs_set_u8(h, "ctl_src", (uint8_t)s);
+            if (s >= DC_SRC_KLIPPER && s < DC_SRC_MAX) nvs_set_u8(h, "ctl_src", (uint8_t)s);
         }
         // Klipper.
         if (mk_host[0]) nvs_set_str(h, "mk_host", mk_host);
@@ -831,6 +919,20 @@ static esp_err_t save_post(httpd_req_t *req)
         if (ha_user[0])  nvs_set_str(h, "ha_user", ha_user);
         if (ha_pass[0])  nvs_set_str(h, "ha_pass", ha_pass);
         if (ha_topic[0]) nvs_set_str(h, "ha_topic", ha_topic);
+        // Klipper (MQTT) — secret km_pass only written when re-entered. The TLS /
+        // writeback checkboxes are persisted from their submitted state (present =
+        // checked) whenever the MQTT group carries a host, so toggling either sticks.
+        if (km_host[0])  nvs_set_str(h, "km_host", km_host);
+        int kp = atoi(km_port_s);
+        if (kp > 0 && kp < 65536) nvs_set_u16(h, "km_port", (uint16_t)kp);
+        if (km_user[0])  nvs_set_str(h, "km_user", km_user);
+        if (km_pass[0])  nvs_set_str(h, "km_pass", km_pass);
+        if (km_inst[0])  nvs_set_str(h, "km_inst", km_inst);
+        if (km_topic[0]) nvs_set_str(h, "km_topic", km_topic);
+        if (km_host[0]) {
+            nvs_set_u8(h, "km_tls", km_tls_s[0] ? 1 : 0);
+            nvs_set_u8(h, "km_wb",  km_wb_s[0]  ? 1 : 0);
+        }
         nvs_commit(h);
         nvs_close(h);
     }
@@ -882,9 +984,10 @@ static esp_err_t unbind_post(httpd_req_t *req)
     }
     dc_ctl_source_t src = dc_source_get();
     switch (src) {
-    case DC_SRC_KLIPPER: dc_moonraker_clear_config(); break;
-    case DC_SRC_BAMBU:   dc_bambu_clear_config();     break;
-    case DC_SRC_HA:      pb_ha_clear_config();        break;
+    case DC_SRC_KLIPPER:      dc_moonraker_clear_config();    break;
+    case DC_SRC_BAMBU:        dc_bambu_clear_config();        break;
+    case DC_SRC_HA:           pb_ha_clear_config();           break;
+    case DC_SRC_KLIPPER_MQTT: db_klipper_mqtt_clear_config(); break;
     default: break;   // already None — nothing to clear
     }
     dc_source_set(DC_SRC_NONE);
@@ -895,6 +998,130 @@ static esp_err_t unbind_post(httpd_req_t *req)
     vTaskDelay(pdMS_TO_TICKS(250));   // let the response flush before we reboot
     esp_restart();
     return ESP_OK;                     // unreachable
+}
+
+// GET /km-config — render the Klipper-side config (moonraker.conf + printer.cfg +
+// Mosquitto ACL) as text/plain, filled in from the saved Klipper-MQTT settings so
+// the two ends can't drift (design §8). Braces in the Jinja templates are literal
+// here — only the substituted lines go through snprintf; brace-heavy blocks are
+// static. The broker password is never echoed (placeholder only).
+static esp_err_t km_config_page(httpd_req_t *req)
+{
+    char host[64] = {0}, user[32] = {0}, inst[48] = {0}, base[48] = {0};
+    uint16_t port = 1883;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        size_t sz;
+        sz = sizeof host;  nvs_get_str(h, "km_host", host, &sz);
+        sz = sizeof user;  nvs_get_str(h, "km_user", user, &sz);
+        sz = sizeof inst;  nvs_get_str(h, "km_inst", inst, &sz);
+        sz = sizeof base;  nvs_get_str(h, "km_topic", base, &sz);
+        nvs_get_u16(h, "km_port", &port);
+        nvs_close(h);
+    }
+    if (!host[0]) strcpy(host, "mosquitto.lan");
+    if (!user[0]) strcpy(user, "dragonbreath");
+    if (!inst[0]) strcpy(inst, "myprinter");
+    if (!base[0]) strcpy(base, "dragonbreath");
+
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    char b[640];
+
+    SEND(req,
+        "# ===== DragonBreath - Klipper (MQTT) config =====\n"
+        "# Generated from your /setup values. Paste each block into the named file,\n"
+        "# restart Moonraker + Klipper, then set the control source to 'Klipper (MQTT)'.\n"
+        "# Do NOT also run the native dragonbreath-klipper extra - pick one integration.\n\n");
+
+    // ---- moonraker.conf ----
+    snprintf(b, sizeof b,
+        "########## moonraker.conf ##########\n"
+        "[mqtt]\n"
+        "address: %s\n"
+        "port: %u\n"
+        "username: %s\n"
+        "password: <your broker password>\n"
+        "instance_name: %s\n"
+        "enable_moonraker_api: True\n"
+        "publish_split_status: True\n"
+        "status_objects:\n"
+        "  gcode_macro DRAGONBREATH\n"
+        "  gcode_macro DB_LINK\n\n",
+        host, (unsigned)port, user, inst);
+    SEND(req, b);
+
+    snprintf(b, sizeof b, "[sensor %s]\ntype: mqtt\nname: DragonBreath\nstate_topic: %s/telemetry\n",
+             base, base);
+    SEND(req, b);
+    SEND(req,
+        "state_response_template:\n"
+        "  {% set s = payload|fromjson %}\n"
+        "  {set_result(\"chamber_temperature\", s[\"chamber_temperature\"]|float)}\n"
+        "  {set_result(\"element_temperature\", s[\"element_temperature\"]|float)}\n"
+        "parameter_chamber_temperature:\n  units=\xC2\xB0""C\n"
+        "parameter_element_temperature:\n  units=\xC2\xB0""C\n\n");
+
+    snprintf(b, sizeof b, "[power %s]\ntype: mqtt\ncommand_topic: %s/power/set\n", base, base);
+    SEND(req, b);
+    snprintf(b, sizeof b,
+        "command_payload:\n  {command}\nstate_topic: %s/power/state\n"
+        "state_response_template:\n  {payload}\noff_when_shutdown: True\n\n", base);
+    SEND(req, b);
+
+    // ---- printer.cfg (all static: brace-heavy, no substitution) ----
+    SEND(req,
+        "########## printer.cfg ##########\n"
+        "[gcode_macro DRAGONBREATH]\n"
+        "variable_seq: 0\nvariable_target: 0.0\nvariable_mode: \"off\"\n"
+        "variable_fan: 0\nvariable_armed: 0\nvariable_purge_nonce: 0\n"
+        "variable_temperature: -1.0\nvariable_humidity: -1.0\nvariable_fault: \"\"\ngcode:\n\n"
+        "[gcode_macro DB_LINK]\nvariable_heartbeat: 0\ngcode:\n\n"
+        "[delayed_gcode DB_HEARTBEAT]\ninitial_duration: 5\ngcode:\n"
+        "  {% set hb = printer[\"gcode_macro DB_LINK\"].heartbeat|int %}\n"
+        "  SET_GCODE_VARIABLE MACRO=DB_LINK VARIABLE=heartbeat VALUE={hb + 1}\n"
+        "  UPDATE_DELAYED_GCODE ID=DB_HEARTBEAT DURATION=5\n\n");
+    SEND(req,
+        "# Arm + set chamber target. Writes all fields, then bumps seq LAST so the\n"
+        "# device applies a coherent update. Call M141 in your filament/print START.\n"
+        "[gcode_macro M141]\ngcode:\n"
+        "  {% set s = params.S|default(0)|float %}\n"
+        "  {% set m = \"heat\" if s > 0 else \"off\" %}\n"
+        "  SET_GCODE_VARIABLE MACRO=DRAGONBREATH VARIABLE=target VALUE={s}\n"
+        "  SET_GCODE_VARIABLE MACRO=DRAGONBREATH VARIABLE=mode VALUE='\"{m}\"'\n"
+        "  SET_GCODE_VARIABLE MACRO=DRAGONBREATH VARIABLE=armed VALUE={1 if s > 0 else 0}\n"
+        "  SET_GCODE_VARIABLE MACRO=DRAGONBREATH VARIABLE=seq VALUE={printer[\"gcode_macro DRAGONBREATH\"].seq|int + 1}\n\n");
+    SEND(req,
+        "# M191 in MQTT mode sets the target but does NOT block (a true wait needs a\n"
+        "# real Klipper sensor). To refuse printing without a chamber wait, comment out\n"
+        "# this alias and uncomment the strict variant below.\n"
+        "[gcode_macro M191]\ngcode:\n"
+        "  {action_respond_info(\"M191: MQTT mode sets chamber target but does NOT wait.\")}\n"
+        "  M141 S{params.S|default(0)}\n"
+        "# [gcode_macro M191]\n# gcode:\n"
+        "#   { action_raise_error(\"M191 unsupported in MQTT mode - use M141\") }\n\n");
+
+    // ---- mosquitto ACL ----
+    snprintf(b, sizeof b,
+        "########## mosquitto ACL (least privilege) ##########\n"
+        "# Create the user + password:  mosquitto_passwd -c /etc/mosquitto/passwd %s\n"
+        "user %s\n"
+        "topic write %s/telemetry\n"
+        "topic write %s/power/state\n"
+        "topic write %s/status\n"
+        "topic read  %s/power/set\n",
+        user, user, base, base, base, base);
+    SEND(req, b);
+    snprintf(b, sizeof b,
+        "topic read  %s/moonraker/status\n"
+        "topic read  %s/klipper/state/gcode_macro DRAGONBREATH/#\n"
+        "topic read  %s/klipper/state/gcode_macro DB_LINK/#\n"
+        "# writeback (only if you enabled it):\n"
+        "topic write %s/moonraker/api/request\n"
+        "topic read  %s/moonraker/api/response\n",
+        inst, inst, inst, inst, inst);
+    SEND(req, b);
+
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 esp_err_t pb_portal_start(void)
@@ -909,6 +1136,7 @@ esp_err_t pb_portal_start(void)
     httpd_uri_t setup  = { .uri = "/setup",     .method = HTTP_GET,  .handler = config_page };
     httpd_uri_t fw     = { .uri = "/fw",        .method = HTTP_GET,  .handler = fw_page };
     httpd_uri_t diag   = { .uri = "/diag",      .method = HTTP_GET,  .handler = diag_page };
+    httpd_uri_t kmcfg  = { .uri = "/km-config", .method = HTTP_GET,  .handler = km_config_page };
     httpd_uri_t cons   = { .uri = "/console",   .method = HTTP_GET,  .handler = console_page };
     httpd_uri_t favic  = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_ico };
     httpd_uri_t root   = { .uri = "/*",          .method = HTTP_GET,  .handler = root_page };
@@ -919,6 +1147,7 @@ esp_err_t pb_portal_start(void)
     httpd_register_uri_handler(s, &setup);
     httpd_register_uri_handler(s, &fw);
     httpd_register_uri_handler(s, &diag);
+    httpd_register_uri_handler(s, &kmcfg);
     httpd_register_uri_handler(s, &cons);
     httpd_register_uri_handler(s, &favic);  // before the catch-all so /favicon.ico != SPA
     httpd_register_uri_handler(s, &root);   // catch-all LAST (captive-portal probes)

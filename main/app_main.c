@@ -37,6 +37,7 @@
 #include "dc_source.h"
 #include "dc_bambu.h"
 #include "pb_ha.h"
+#include "db_klipper_mqtt.h"
 #include <math.h>
 
 #include "pb_httpd.h"
@@ -64,6 +65,7 @@ static volatile bool s_net_up = false;
 static volatile bool s_mk_up    = false;   // Klipper (Moonraker)
 static volatile bool s_bambu_up = false;   // Bambu LAN MQTT
 static volatile bool s_ha_up    = false;   // Home Assistant MQTT
+static volatile bool s_km_up    = false;   // Klipper (MQTT)
 // The persisted control source, read once at boot. Default Klipper.
 static dc_ctl_source_t s_src = DC_SRC_KLIPPER;
 
@@ -216,6 +218,12 @@ static void control_task(void *arg)
                 // HA client (retained state publish + heat-lease heartbeat); it
                 // drives target/mode through pb_policy directly.
                 if (s_ha_up) pb_ha_tick();
+                break;
+            case DC_SRC_KLIPPER_MQTT:
+                // Klipper-over-MQTT is also a controller (not a bed source): Klipper
+                // macros publish desired-state, the client runs the retained-aware
+                // arming machine and drives target/mode through pb_policy directly.
+                if (s_km_up) db_klipper_mqtt_tick();
                 break;
             case DC_SRC_NONE:
                 break;   // unbound: no bed source, feeds zeros/not-connected
@@ -400,6 +408,12 @@ void app_main(void)
             ESP_LOGE(TAG, "pb_ha_start: %s (continuing; no HA control)", esp_err_to_name(e));
         else
             s_ha_up = true;
+        break;
+    case DC_SRC_KLIPPER_MQTT:
+        if ((e = db_klipper_mqtt_start()) != ESP_OK)
+            ESP_LOGE(TAG, "db_klipper_mqtt_start: %s (continuing; no MQTT control)", esp_err_to_name(e));
+        else
+            s_km_up = true;
         break;
     case DC_SRC_NONE:
         ESP_LOGI(TAG, "control source: none (unbound) — no external controller");
