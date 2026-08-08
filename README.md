@@ -313,8 +313,8 @@ docs/          hardware map, safety model, HIL guide, NTC RE report
 ```
 
 Managed components fetched from `dragon-core` are `dc_evlog`, `dc_source`,
-`dc_bambu`, `dc_wifi`, `dc_moonraker`, and `dc_ui`; they are not stored under this
-repository's `components/` directory.
+`dc_bambu`, `dc_wifi`, `dc_moonraker`, `dc_ui`, and `dc_mqtt`; they are not stored
+under this repository's `components/` directory.
 
 ## Credits
 Hardware + firmware reverse-engineering builds on the BTT Panda Breath work in

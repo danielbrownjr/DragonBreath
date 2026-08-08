@@ -90,7 +90,7 @@ print(json.dumps({
     "source_sha":os.environ["SOURCE_SHA"],
     "idf_version":os.environ["IDF_VERSION"],
     "target":os.environ["TARGET"],"board":os.environ["BOARD"],
-    "shared_core":{"source":"github.com/justinh-rahb/dragon-core","ref":"1c2f0ce6fc03efc568998c8bdf2b9b04e986e1ec","license":"MIT","components":["dc_evlog","dc_source","dc_bambu","dc_wifi","dc_moonraker","dc_ui"]},
+    "shared_core":{"source":"github.com/justinh-rahb/dragon-core","ref":"f283708268298af1e0e1197b923283c50079f539","license":"MIT","components":["dc_evlog","dc_source","dc_bambu","dc_wifi","dc_moonraker","dc_ui","dc_mqtt"]},
     "built_at_utc":os.environ["BUILT_AT"],
     "note":"managed component versions in dependencies.lock (bundled)",
     "artifacts":arts,
