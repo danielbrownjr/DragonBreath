@@ -22,4 +22,4 @@ dependencies:
   dc_mqtt:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_mqtt
-    version: 19ad1002c2cbe71b634092cb2ab904db34811b88
+    version: f283708268298af1e0e1197b923283c50079f539
