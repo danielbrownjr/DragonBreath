@@ -7,6 +7,17 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-09
+
+### Fixed
+- **Restored the `/diag` and `/console` pages** (regressed in 1.1.1). The portal
+  extraction moved page ownership into `dragon-core` and these two product-local
+  diagnostic pages were dropped, leaving them 404 — their data endpoints
+  (`/api/v2/state`, `/api/v2/events`, `/api/v2/console`) were unaffected. They are
+  now re-registered by the `db_portal` adapter: `/diag` is the browser-side element/
+  chamber temperature logger + live trend + CSV export over the read-only SSE stream
+  (no USB needed), and `/console` shows the auth-gated firmware log ring.
+
 ## [1.1.1] - 2026-08-09
 
 **Provisioning, recovery, and the setup surface move into `dragon-core`; DragonBreath
