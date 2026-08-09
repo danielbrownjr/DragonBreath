@@ -94,6 +94,20 @@ int main(void)
     assert(result.klipper_mqtt.port == 8883 && result.klipper_mqtt.tls);
     assert(strcmp(result.klipper_mqtt.pass, "km-secret") == 0);
 
+    // An edit to one inactive-source field must retain every untouched value
+    // supplied by that source's persisted config snapshot.
+    db_portal_product_request_t partial_bambu = {
+        .bb_host = {true, "new-bambu.lan"},
+        .bb_code = {true, ""},
+    };
+    assert(plan(&partial_bambu, &result, message, sizeof(message)) == ESP_OK);
+    assert(result.bambu_changed);
+    assert(strcmp(result.bambu.host, "new-bambu.lan") == 0);
+    assert(strcmp(result.bambu.serial, "01P00SERIAL") == 0);
+    assert(strcmp(result.bambu.code, "bambu-secret") == 0);
+    assert(!result.moonraker_changed && !result.ha_changed &&
+           !result.klipper_mqtt_changed && !result.source_changed);
+
     // Validation fails in the pure planning phase, before any setter can run.
     char too_long[80];
     memset(too_long, 'x', sizeof(too_long));
