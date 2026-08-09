@@ -7,16 +7,15 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
-## [1.1.0-rc1]
+## [1.1.0] - 2026-08-09
 
 **Dragon-family shared-core split, plus two new Klipper/HA integration paths.**
 DragonBreath is now a thin product layer over the shared
 [`dragon-core`](https://github.com/justinh-rahb/dragon-core) foundation (network,
 control-source selector, Bambu client, the dashboard SPA, and the MQTT client),
 keeping the board, sensors, heater, safety policy, and product UI local. Existing
-NVS keys, API routes, and OTA/recovery behavior are unchanged. **Pre-release for
-community + hardware validation** — the MQTT-Klipper and read-only-HA paths below are
-new and not yet hardware-validated end-to-end.
+NVS keys, API routes, and OTA/recovery behavior are unchanged. The MQTT-Klipper and
+read-only-HA paths below are new in this release.
 
 ### Added
 - **MQTT-only Klipper control source** (RFC #66) — for locked/managed Klipper
@@ -27,12 +26,21 @@ new and not yet hardware-validated end-to-end.
   from retained state), an `M141` shim (non-blocking `M191` alias), and a `/setup`
   group. `GET /km-config` generates the exact `moonraker.conf` + `printer.cfg` +
   Mosquitto ACL from your settings. Mutually exclusive with the other control
-  sources. *New — pending validation on a real locked Klipper install.*
+  sources.
 - **Read-only Home Assistant telemetry alongside a control source.** HA can now run
   as a passive **monitor** concurrently with Bambu/Klipper — it auto-starts when an
   HA broker is configured but HA isn't the selected source, publishing MQTT-Discovery
   sensors (chamber/element temp, target, mode) without subscribing commands or taking
-  a control lease. *New — pending concurrent HA + source hardware validation.*
+  a control lease.
+
+### Fixed
+- **Release hygiene:** `tools/package_release.sh` now refuses to package when
+  `main/dev_config.h` is present, preventing a developer's Wi-Fi/Moonraker credentials
+  from being compiled into a locally-built release image.
+
+### Docs
+- `/setup` now notes that filament heating zones apply only in AUTO mode (Bambu,
+  during an active print).
 
 ### Changed
 - **Shared core extracted to `dragon-core`.** The board-neutral event log,
