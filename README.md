@@ -48,7 +48,7 @@ is still sitting there to go back to.
 
 **Install (stock → DragonBreath), no USB needed:**
 1. Download `dragonbreath-<ver>.bin` from a [release](../../releases) — or build it
-   (`idf.py build` → `build/dragonbreath.bin`). Optionally verify it against the
+   (`./tools/idf-build.sh . esp32c3 build` → `build/dragonbreath.bin`). Optionally verify it against the
    release `SHA256SUMS.txt`. Each release also ships a `manifest.json` (source SHA,
    ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
 2. Open the **stock** Panda web UI and use its **Firmware Update** to upload that
@@ -124,9 +124,10 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 **Shared-core boundary:** board-agnostic infrastructure is consumed from the pinned
 [`dragon-core`](https://github.com/justinh-rahb/dragon-core) revision declared in
 [`main/idf_component.yml`](main/idf_component.yml). The editable dashboard SPA is
-supplied by dragon-core's `dc_ui`; DragonBreath keeps the board map, sensors,
-heater/fan actuation, safety policy, product-specific API handlers, setup/OTA portal,
-LEDs, and buttons.
+supplied by dragon-core's `dc_ui`, while `dc_portal` owns the shared HTTP server,
+provisioning, captive DNS, OTA upload, log and reset transport. DragonBreath keeps the
+board map, sensors, heater/fan actuation, safety and authorization policy,
+product-specific API handlers and persistence callbacks, LEDs, and buttons.
 The OpenVent-to-DragonBreath-to-dragon-core history and MIT provenance are recorded in
 [VENDORING.md](VENDORING.md).
 
@@ -200,6 +201,10 @@ others are disabled — there is exactly one controller.
   [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) helper it
   shows up as `[heater_generic dragonbreath]` (M141/M191) plus a fan-only filtration
   toggle, and AUTO mode follows the printer bed. Validated end-to-end on hardware.
+- **Klipper MQTT** — an alternative for managed Klipper installs that permit
+  `moonraker.conf`, `printer.cfg`, and broker configuration but cannot install a
+  Klippy extra. Save its broker settings on `/setup`, then open `/km-config` to
+  generate the matching Moonraker, macro, and least-privilege Mosquitto ACL blocks.
 - **Home Assistant** — *first-class.* Native MQTT Discovery: the device advertises a
   climate entity plus chamber/element sensors, takes setpoint/mode commands over MQTT,
   and publishes retained state. Validated against a live Home Assistant instance.
@@ -220,6 +225,7 @@ others are disabled — there is exactly one controller.
 | GET | `/api/v2/health` | uptime, heap, Wi-Fi signal/channel, SSE client count |
 | GET | `/api/v2/logs` · `/api/v2/calibration` | event ring; sensor-calibration offsets + live readings |
 | GET | `/api/v2/console` | **auth-gated** `text/plain` firmware `ESP_LOGx` ring snapshot (backs the `/console` page) |
+| GET | `/km-config` | generate the saved Klipper-MQTT integration blocks without exposing its password |
 | POST | `/api/v2/command` | revision-aware OFF / POWER_ON / AUTO / DRYING / **FILTER** / fault-clear command |
 | POST | `/api/v2/heartbeat` | refresh exactly the device-issued active lease |
 | POST | `/api/v2/restart` · `/factory-reset` · `/boot-inactive` | maintenance: reboot, wipe to AP provisioning, boot the inactive OTA slot (revert to stock) |
@@ -290,9 +296,14 @@ serves both boards. Details + derivation:
 Requires ESP-IDF v5.3+.
 ```bash
 git clone https://github.com/plastikman/DragonBreath
-idf.py set-target esp32c3
-idf.py build
+cd DragonBreath
+./tools/idf-build.sh . esp32c3 build
 ```
+
+The wrapper locates the installed ESP32-C3 RISC-V compiler and checks exact
+component pins before building. If `dependencies.lock` or `managed_components/`
+belongs to an older pin, it moves that dependency state under the build directory
+instead of allowing ESP Component Manager to silently reuse it.
 
 ## Layout
 ```
@@ -306,15 +317,18 @@ components/
   pb_leds/     front-panel status LEDs
   pb_buttons/  front-panel button poll/debounce + short/long-press
   pb_hil/      JSON serial HIL console + safe dev-board injection
-  pb_httpd/    HTTP control API (CSRF-gated mutations) + /console log ring
-  pb_portal/   captive-portal + control-source setup + dashboard/diag/console pages
+  pb_httpd/    DragonBreath HTTP control API (registered on the core server)
+  db_portal/   product schema, auth, OTA identity + heater-safety adapter
 main/          app_main: safety-first init + control loop
 docs/          hardware map, safety model, HIL guide, NTC RE report
 ```
 
 Managed components fetched from `dragon-core` are `dc_evlog`, `dc_source`,
-`dc_bambu`, `dc_wifi`, `dc_moonraker`, `dc_ui`, and `dc_mqtt`; they are not stored
-under this repository's `components/` directory.
+`dc_bambu`, `dc_wifi`, `dc_moonraker`, `dc_ui`, `dc_mqtt`, and `dc_portal`; they are
+not stored under this repository's `components/` directory. `dc_portal` owns the
+HTTP server, shared SPA, same-LAN/AP provisioning, captive DNS, logs, OTA and
+factory-reset transport. DragonBreath registers its product API and safety policy
+through `db_portal`.
 
 ## Credits
 Hardware + firmware reverse-engineering builds on the BTT Panda Breath work in

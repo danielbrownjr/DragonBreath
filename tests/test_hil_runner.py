@@ -76,6 +76,15 @@ class HilRunnerTest(unittest.TestCase):
             "panda-smoke.json", {path.name for path, _ in scenarios}
         )
 
+    def test_remote_scenarios_are_isolated_per_run(self):
+        first = hil.remote_scenario_dir("/tmp/dragonbreath-hil", "run-one")
+        second = hil.remote_scenario_dir("/tmp/dragonbreath-hil", "run-two")
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            first,
+            "/tmp/dragonbreath-hil/runs/run-one/tests/hil/scenarios",
+        )
+
     def test_serial_open_releases_reset_lines(self):
         class FakeSerial:
             def __init__(self, **kwargs):
@@ -118,6 +127,20 @@ class HilRunnerTest(unittest.TestCase):
         overlay, build_dir = hil.profile_paths(args)
         self.assertEqual(overlay.name, "sdkconfig.hil-devboard-uart")
         self.assertEqual(build_dir.name, "build-hil-devboard-uart")
+
+    def test_relative_build_dir_is_rooted_in_repository(self):
+        args = SimpleNamespace(
+            target="devboard", transport="native", build_dir="build-custom"
+        )
+        _, build_dir = hil.profile_paths(args)
+        self.assertEqual(build_dir, ROOT / "build-custom")
+
+    def test_local_builds_use_guarded_idf_wrapper(self):
+        args = SimpleNamespace(idf="idf.py")
+        build_dir = ROOT / "build-test"
+        command = hil.guarded_idf_command(args, build_dir)
+        self.assertEqual(command[0], str(ROOT / "tools" / "idf-build.sh"))
+        self.assertEqual(command[1:4], [str(ROOT), "esp32c3", str(build_dir)])
 
     def test_remote_flash_command_uses_generated_manifest(self):
         with tempfile.TemporaryDirectory() as temp:

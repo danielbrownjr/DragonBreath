@@ -11,13 +11,14 @@ or actuator assumptions.
 
 ## What has landed
 
-As of 2026-08-07:
+As of 2026-08-09:
 
 - [`justinh-rahb/dragon-core`](https://github.com/justinh-rahb/dragon-core) exists and
   uses the family-neutral `dc_` / `DC_` namespace.
 - DragonBreath #68 extracted `dc_evlog`, `dc_source`, `dc_bambu`, `dc_wifi`, and
-  `dc_moonraker`. The shared-SPA follow-on adds `dc_ui`; DragonBreath consumes all six
-  through ESP-IDF Component Manager manifests pinned to one dragon-core revision.
+  `dc_moonraker`. Follow-ons added `dc_mqtt`, the `dc_ui` family SPA, and the
+  `dc_portal` provisioning/recovery plane. DragonBreath consumes all eight through
+  ESP-IDF Component Manager manifests pinned to one dragon-core release.
 - The extraction preserved NVS namespaces, keys, and persisted enum values. Existing
   Wi-Fi, Moonraker, Bambu, and control-source configuration survives the upgrade.
 - DragonBreath's product-local policy command-origin enum now uses `db_source_t` and
@@ -26,17 +27,14 @@ As of 2026-08-07:
 - DragonBreath #68 passed host tests, its ESP-IDF CI build, and the complete safe
   ESP32-C3 devboard HIL suite: 3 scenarios, 66 steps, 0 failures, with Panda mains
   GPIO/ADC backends compiled out.
-- dragon-core has annotated `v0.1.0` and `v0.1.1` tags. Its CI runs the Bambu parser
-  and family-SPA checks and compiles/links every shared component together with
-  ESP-IDF 5.3 for ESP32-C3.
-- The shared-SPA follow-on adds `dc_ui`: dragon-core owns the editable HTML and
-  reproducible gzip asset, while DragonBreath keeps its HTTP, setup, OTA, and product
-  policy handlers. `/api/v2/info` now supplies an additive UI schema/product descriptor,
-  and the SPA gates optional Manual/Auto/Dry surfaces from runtime capabilities.
-
-The first extraction did **not** require HTTP or UI decoupling. That work remains the
-prerequisite for moving the HTTP/OTA/portal/shared-SPA layer into dragon-core; see
-[the follow-on decoupling RFC](decouple-httpd-device-interface.md).
+- dragon-core has annotated releases through `v0.5.4`. Its CI runs host and family-SPA
+  checks and compiles/links every shared component together with ESP-IDF 5.3 for
+  ESP32-C3.
+- dragon-core owns the editable SPA, HTTP server lifecycle, captive DNS, provisioning,
+  OTA upload, logs and reset transport. DragonBreath supplies product routes, schema,
+  persistence, authorization and safety callbacks. `/api/v2/info` supplies an additive
+  UI schema/product descriptor, and the SPA gates optional Manual/Auto/Dry surfaces
+  from runtime capabilities.
 
 ## Namespace and compatibility rules
 
@@ -78,10 +76,12 @@ The landed core owns:
 | `dc_bambu` | Bambu LAN MQTT status client |
 | `dc_wifi` | Wi-Fi, provisioning, scanning, and mDNS with product identity input |
 | `dc_moonraker` | Moonraker WebSocket client and Klipper status |
+| `dc_mqtt` | Shared ESP-MQTT session lifecycle and event callbacks |
 | `dc_ui` | Embedded family SPA asset and capability-aware browser shell |
+| `dc_portal` | HTTP server, captive provisioning, OTA, logs and recovery transport |
 
-Candidate follow-on modules include HTTP/OTA, the portal and shared SPA, discovery and
-group management, and reusable RGB LED behavior. A candidate moves to core only after
+Candidate follow-on modules include discovery and group management and reusable RGB
+LED behavior. A candidate moves to core only after
 its product hardware and policy dependencies are behind a narrow capability boundary.
 
 ### Products
@@ -133,10 +133,9 @@ every device found on the subnet.
 3. **Finish product source namespacing.** Migrate remaining DragonBreath-owned
    `pb_*`/`PB_*` identifiers to `db_*`/`DB_*` in a focused change. New app code uses
    `db_*` immediately; persisted and wire identifiers remain compatible.
-4. **Decouple and extract the web layer — in progress.** The static SPA asset and its
-   runtime product/capability selection move first as `dc_ui`; DragonBreath continues
-   to own the existing API v2, HTTP, OTA, setup, and recovery handlers. Add golden
-   response coverage and the product capability boundary before moving those handlers.
+4. **Decouple and extract the web layer — complete.** #69 moved the static family SPA
+   into `dc_ui`; #73 adds `dc_portal` and reduces DragonBreath to product API routes,
+   schema, persistence, authorization and safety callbacks.
 5. **DragonVent.** Create a fresh firmware repository on dragon-core, with `dv_*`
    board/motor/device code. Archive OpenVent with a pointer after replacement hardware
    behavior is proven.
@@ -155,7 +154,7 @@ core and products into a jointly owned organization remains an organizational op
 not a prerequisite and not a completed decision.
 
 Products should pin every selected core component to one tag or one full commit from
-the same core revision. DragonBreath currently uses a full SHA. dragon-core's own
+the same core revision. DragonBreath currently uses `v0.5.4`. dragon-core's own
 ESP-IDF compile fixture commits its dependency lock; DragonBreath currently regenerates
 and ignores its application lock, so its component manifests are the reviewed pin.
 

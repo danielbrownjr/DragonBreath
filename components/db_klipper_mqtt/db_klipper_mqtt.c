@@ -435,6 +435,10 @@ esp_err_t db_klipper_mqtt_set_config(const db_km_config_t *cfg)
         xSemaphoreTake(s_lock, portMAX_DELAY);
         s_cfg = *cfg;
         xSemaphoreGive(s_lock);
+    } else {
+        // Provisioning can configure an inactive source before this component is
+        // started. Keep the schema/readback snapshot aligned with the NVS write.
+        s_cfg = *cfg;
     }
     return ESP_OK;   // takes effect on next boot (matches pb_ha / pb_moonraker)
 }
@@ -442,6 +446,17 @@ esp_err_t db_klipper_mqtt_set_config(const db_km_config_t *cfg)
 esp_err_t db_klipper_mqtt_get_config(db_km_config_t *out)
 {
     if (out == NULL) return ESP_ERR_INVALID_ARG;
+    if (!s_lock) {
+        // An inactive source is not started, but provisioning must still describe
+        // its persisted values instead of a zeroed process-local snapshot.
+        db_km_config_t persisted;
+        if (nvs_load(&persisted) == ESP_OK) {
+            *out = persisted;
+            return ESP_OK;
+        }
+        *out = s_cfg;
+        return ESP_OK;
+    }
     if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
     *out = s_cfg;
     if (s_lock) xSemaphoreGive(s_lock);

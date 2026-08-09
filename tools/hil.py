@@ -8,6 +8,7 @@ import argparse
 import copy
 import datetime as dt
 import json
+import os
 import pathlib
 import posixpath
 import shlex
@@ -253,23 +254,33 @@ def profile_paths(args) -> tuple[pathlib.Path, pathlib.Path]:
         profile += "-uart"
     overlay = ROOT / f"sdkconfig.{profile}"
     build_dir = pathlib.Path(args.build_dir or ROOT / f"build-{profile}")
+    if not build_dir.is_absolute():
+        build_dir = ROOT / build_dir
     return overlay, build_dir
+
+
+def guarded_idf_command(args, build_dir: pathlib.Path) -> list[str]:
+    return [
+        str(ROOT / "tools" / "idf-build.sh"),
+        str(ROOT),
+        "esp32c3",
+        str(build_dir),
+    ]
 
 
 def build_profile(args) -> pathlib.Path:
     overlay, build_dir = profile_paths(args)
     sdkconfig = build_dir / "sdkconfig.profile"
     defaults = f"{ROOT / 'sdkconfig.defaults'};{overlay}"
-    command = [
-        args.idf,
-        "-B",
-        str(build_dir),
+    command = guarded_idf_command(args, build_dir) + [
         f"-DSDKCONFIG={sdkconfig}",
         f"-DSDKCONFIG_DEFAULTS={defaults}",
         "build",
     ]
     print("$ " + " ".join(command), flush=True)
-    subprocess.run(command, cwd=ROOT, check=True)
+    env = os.environ.copy()
+    env["IDF_PY"] = args.idf
+    subprocess.run(command, cwd=ROOT, check=True, env=env)
     return build_dir
 
 
@@ -279,10 +290,7 @@ def build_and_flash(args, port: str) -> None:
     overlay, build_dir = profile_paths(args)
     sdkconfig = build_dir / "sdkconfig.profile"
     defaults = f"{ROOT / 'sdkconfig.defaults'};{overlay}"
-    command = [
-        args.idf,
-        "-B",
-        str(build_dir),
+    command = guarded_idf_command(args, build_dir) + [
         f"-DSDKCONFIG={sdkconfig}",
         f"-DSDKCONFIG_DEFAULTS={defaults}",
         "-p",
@@ -291,7 +299,9 @@ def build_and_flash(args, port: str) -> None:
         "flash",
     ]
     print("$ " + " ".join(command), flush=True)
-    subprocess.run(command, cwd=ROOT, check=True)
+    env = os.environ.copy()
+    env["IDF_PY"] = args.idf
+    subprocess.run(command, cwd=ROOT, check=True, env=env)
 
 
 def remote_flash_command(
@@ -338,6 +348,12 @@ def remote_flash_command(
     return command, sources
 
 
+def remote_scenario_dir(remote_root: str, stamp: str) -> str:
+    return posixpath.join(
+        remote_root, "runs", stamp, "tests", "hil", "scenarios"
+    )
+
+
 def run_remote(args) -> int:
     if not args.port:
         raise HilError("--host requires an explicit --port on the remote machine")
@@ -352,8 +368,10 @@ def run_remote(args) -> int:
     remote_root = args.remote_dir.rstrip("/")
     if not remote_root:
         raise HilError("--remote-dir must not be empty")
-    remote_tools = posixpath.join(remote_root, "tools")
-    remote_scenarios = posixpath.join(remote_root, "tests", "hil", "scenarios")
+    remote_tools = posixpath.join(remote_root, "runs", stamp, "tools")
+    # Use a run-specific directory so deleted/renamed local scenarios cannot
+    # survive on a reusable remote host and silently join a later --suite run.
+    remote_scenarios = remote_scenario_dir(remote_root, stamp)
     remote_firmware = posixpath.join(remote_root, "firmware")
     remote_results = posixpath.join(remote_root, "results", stamp)
     mkdir_command = [

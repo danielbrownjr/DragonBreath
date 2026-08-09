@@ -152,7 +152,7 @@ def do_flash(port, bauds, build_dir):
         p = os.path.join(build_dir, rel)
         if not os.path.exists(p):
             print(f"ERROR: missing build artifact {p}")
-            print("       Build first:  idf.py set-target esp32c3 && idf.py build")
+            print("       Build first:  ./tools/idf-build.sh . esp32c3 build")
             return 1
         args += [offset, p]
     app = os.path.join(build_dir, "dragonbreath.bin")

@@ -41,7 +41,7 @@
 #include <math.h>
 
 #include "pb_httpd.h"
-#include "pb_portal.h"
+#include "db_portal.h"
 #include "esp_ota_ops.h"
 
 // Optional local dev config (gitignored): WiFi creds + Moonraker host. Without it
@@ -451,10 +451,8 @@ void app_main(void)
             }
         }
     }
-    if ((e = pb_httpd_start()) != ESP_OK)
-        ESP_LOGE(TAG, "pb_httpd_start: %s (continuing)", esp_err_to_name(e));
-    else if ((e = pb_portal_start()) != ESP_OK)   // portal needs the httpd handle
-        ESP_LOGE(TAG, "pb_portal_start: %s (continuing)", esp_err_to_name(e));
+    if ((e = db_portal_start()) != ESP_OK)
+        ESP_LOGE(TAG, "db_portal_start: %s (continuing)", esp_err_to_name(e));
 
     s_net_up = true;
     ESP_LOGI(TAG, "network bring-up done (wifi + moonraker + http api + portal, best-effort)");

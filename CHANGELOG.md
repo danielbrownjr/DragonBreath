@@ -7,6 +7,34 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Changed
+- **Provisioning and recovery moved to `dragon-core` (`dc_portal`).** The shared
+  component now owns the HTTP server, captive DNS, AP/STA setup SPA, Wi-Fi scan and
+  fallback-AP routes, logs, OTA upload, and factory-reset transport. DragonBreath's
+  local `db_portal` is only a product adapter: it registers API v2, describes the
+  printer/controller fields, preserves configured secrets on blank submissions,
+  enforces the existing heater-off maintenance guard, restricts OTA images to
+  DragonBreath or stock Panda Breath, and erases the unchanged `app_nvs` namespace.
+  `/setup`, `/fw`, `/console`, `/update`, and the API v2 routes remain compatible.
+- **Filament chamber zones are edited from the dashboard, not `/setup`.** The shared
+  setup surface describes the Bambu connection only (host, serial, access code); the
+  built-in and custom zone editors live in the dashboard's **Filament zones** and
+  **Custom profiles** cards, applying live through `GET/POST /api/v2/zones`. The
+  1.1.0 note that zones apply only in AUTO during an active Bambu print now travels
+  with those cards in `dc_ui`.
+- **Inactive source configuration remains intact in shared setup.** `dragon-core`
+  `v0.5.4` makes Bambu and Moonraker configuration readable and editable before
+  their clients start, so the shared portal preserves every saved field when a
+  different control source is active. Product-local HA and Klipper-MQTT adapters
+  provide the same cold-boot behavior.
+- **Shared setup UI reliability.** Provisioning reads now use the same control-token
+  authentication and retry flow as mutations, so Wi-Fi scan results and saved setup
+  fields load correctly. The setup surface is fully opaque, product-defined setup
+  cards carry the same spacing as the built-in ones, and maintenance identity is
+  populated before optional product/capability handling.
+- **Guarded ESP-IDF build entrypoint.** `tools/idf-build.sh` preflights the target
+  compiler and quarantines stale component-manager lock/cache state before build.
+
 ## [1.1.0] - 2026-08-09
 
 **Dragon-family shared-core split, plus two new Klipper/HA integration paths.**

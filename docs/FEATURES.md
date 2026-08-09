@@ -168,9 +168,12 @@ watchdog.
   Filtration controls and a Settings screen. Responsive and **light/dark themed**:
   full layout on desktop at any width; stacks vertically on touch devices.
 - **Setup / provisioning** (`/setup`) — Wi-Fi + the control-source selector
-  (Klipper/Bambu/HA and its per-source fields); also the AP captive-portal root when
+  (Klipper/Moonraker, Klipper MQTT, Bambu, HA and their per-source fields); also the AP captive-portal root when
   unprovisioned. **OTA** (`/fw`) streams the image with a live %, then returns to the
   dashboard once the device reboots. Both match the dashboard theme (light/dark).
+- **Klipper-MQTT config generator** (`/km-config`) — emits matching
+  `moonraker.conf`, `printer.cfg`, and least-privilege Mosquitto ACL blocks from the
+  saved setup values, while never echoing the stored broker password.
 - **`/diag`** — read-only live telemetry (chamber/PTC temps, SSR output, mode, fault,
   running element-temp peak) over SSE, with a trend chart and a client-side CSV
   download. Zero device RAM.
@@ -201,8 +204,10 @@ LAN broker).
 
 ## Platform / release
 
-- ESP32-C3-MINI-1; shares the [OpenVent](https://github.com/justinh-rahb/OpenVent)
-  core (Wi-Fi, captive portal, Moonraker client), vendored locally (see VENDORING.md).
+- ESP32-C3-MINI-1; consumes Wi-Fi, captive provisioning/recovery, UI, Moonraker,
+  MQTT transport, and logging components from a pinned
+  [`dragon-core`](https://github.com/justinh-rahb/dragon-core) revision. OpenVent
+  lineage and MIT provenance are recorded in VENDORING.md.
 - **No-USB install/revert** on the stock partition layout — installs and reverts
   through the stock firmware's own OTA updater; **dual-slot OTA with rollback** (bad
   image reverts on next boot), plus a "boot inactive slot" one-click revert to stock.

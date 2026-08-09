@@ -26,11 +26,9 @@
 
 #define PB_AUTH_HEADER "X-DragonBreath-Auth"
 
-esp_err_t pb_httpd_start(void);
-
-// The shared HTTP server handle (valid after pb_httpd_start). pb_portal
-// registers its config/captive handlers on this same server. NULL if not started.
-httpd_handle_t pb_httpd_handle(void);
+// Register DragonBreath's product API on the HTTP server owned by dc_portal.
+// Device/boot identity is initialized here before any request can be served.
+esp_err_t pb_httpd_register(httpd_handle_t server);
 
 // True if the request carries a valid PB_AUTH_HEADER. If a control token is
 // configured (NVS app_nvs/"ctl_token"), the header must equal it; otherwise any
