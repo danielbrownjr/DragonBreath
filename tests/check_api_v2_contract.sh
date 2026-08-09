@@ -95,6 +95,30 @@ grep -q 'dc_portal_start(&cfg)' "$adapter"
 grep -q 'pb_httpd_register(server)' "$adapter"
 grep -q 'snap.mode == PB_MODE_OFF && !snap.heater_output' "$adapter"
 grep -q 'panda_breath' "$adapter"
+grep -q '\.uri = "/km-config"' "$adapter" || {
+    echo "shipped Klipper-MQTT config generator route is missing" >&2
+    exit 1
+}
+grep -q '########## moonraker.conf ##########' "$adapter"
+grep -q '########## printer.cfg ##########' "$adapter"
+grep -q 'mosquitto ACL (least privilege)' "$adapter"
+grep -q 'httpd.max_uri_handlers = 48' "$adapter" || {
+    echo "DragonBreath product routes no longer have a sufficient handler budget" >&2
+    exit 1
+}
+callback_line=$(grep -n 'config->register_product_routes(s_httpd' "$core_portal" | cut -d: -f1)
+catchall_line=$(grep -n 'const httpd_uri_t catchall' "$core_portal" | cut -d: -f1)
+if [ "$callback_line" -ge "$catchall_line" ]; then
+    echo "product routes (including favicon) must register before the SPA catch-all" >&2
+    exit 1
+fi
+plan_line=$(grep -n 'db_portal_plan_product_save' "$adapter" | cut -d: -f1)
+first_setter_line=$(grep -n 'dc_moonraker_set_config' "$adapter" | cut -d: -f1)
+source_setter_line=$(grep -n 'dc_source_set(plan.source)' "$adapter" | cut -d: -f1)
+if [ "$plan_line" -ge "$first_setter_line" ] || [ "$source_setter_line" -le "$first_setter_line" ]; then
+    echo "product saves must fully plan before persistence and bind the source last" >&2
+    exit 1
+fi
 grep -q '"/api/v1/provisioning"' "$core_portal"
 grep -q '"/api/v1/system/update"' "$core_portal"
 grep -q '"/api/v1/system/reset"' "$core_portal"

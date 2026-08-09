@@ -200,6 +200,10 @@ others are disabled — there is exactly one controller.
   [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) helper it
   shows up as `[heater_generic dragonbreath]` (M141/M191) plus a fan-only filtration
   toggle, and AUTO mode follows the printer bed. Validated end-to-end on hardware.
+- **Klipper MQTT** — an alternative for managed Klipper installs that permit
+  `moonraker.conf`, `printer.cfg`, and broker configuration but cannot install a
+  Klippy extra. Save its broker settings on `/setup`, then open `/km-config` to
+  generate the matching Moonraker, macro, and least-privilege Mosquitto ACL blocks.
 - **Home Assistant** — *first-class.* Native MQTT Discovery: the device advertises a
   climate entity plus chamber/element sensors, takes setpoint/mode commands over MQTT,
   and publishes retained state. Validated against a live Home Assistant instance.
@@ -220,6 +224,7 @@ others are disabled — there is exactly one controller.
 | GET | `/api/v2/health` | uptime, heap, Wi-Fi signal/channel, SSE client count |
 | GET | `/api/v2/logs` · `/api/v2/calibration` | event ring; sensor-calibration offsets + live readings |
 | GET | `/api/v2/console` | **auth-gated** `text/plain` firmware `ESP_LOGx` ring snapshot (backs the `/console` page) |
+| GET | `/km-config` | generate the saved Klipper-MQTT integration blocks without exposing its password |
 | POST | `/api/v2/command` | revision-aware OFF / POWER_ON / AUTO / DRYING / **FILTER** / fault-clear command |
 | POST | `/api/v2/heartbeat` | refresh exactly the device-issued active lease |
 | POST | `/api/v2/restart` · `/factory-reset` · `/boot-inactive` | maintenance: reboot, wipe to AP provisioning, boot the inactive OTA slot (revert to stock) |
