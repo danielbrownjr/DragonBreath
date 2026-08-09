@@ -446,6 +446,17 @@ esp_err_t db_klipper_mqtt_set_config(const db_km_config_t *cfg)
 esp_err_t db_klipper_mqtt_get_config(db_km_config_t *out)
 {
     if (out == NULL) return ESP_ERR_INVALID_ARG;
+    if (!s_lock) {
+        // An inactive source is not started, but provisioning must still describe
+        // its persisted values instead of a zeroed process-local snapshot.
+        db_km_config_t persisted;
+        if (nvs_load(&persisted) == ESP_OK) {
+            *out = persisted;
+            return ESP_OK;
+        }
+        *out = s_cfg;
+        return ESP_OK;
+    }
     if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
     *out = s_cfg;
     if (s_lock) xSemaphoreGive(s_lock);
