@@ -124,9 +124,10 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 **Shared-core boundary:** board-agnostic infrastructure is consumed from the pinned
 [`dragon-core`](https://github.com/justinh-rahb/dragon-core) revision declared in
 [`main/idf_component.yml`](main/idf_component.yml). The editable dashboard SPA is
-supplied by dragon-core's `dc_ui`; DragonBreath keeps the board map, sensors,
-heater/fan actuation, safety policy, product-specific API handlers, setup/OTA portal,
-LEDs, and buttons.
+supplied by dragon-core's `dc_ui`, while `dc_portal` owns the shared HTTP server,
+provisioning, captive DNS, OTA upload, log and reset transport. DragonBreath keeps the
+board map, sensors, heater/fan actuation, safety and authorization policy,
+product-specific API handlers and persistence callbacks, LEDs, and buttons.
 The OpenVent-to-DragonBreath-to-dragon-core history and MIT provenance are recorded in
 [VENDORING.md](VENDORING.md).
 

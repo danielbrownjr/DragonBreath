@@ -43,25 +43,79 @@ MANIFEST="$PROJECT_DIR/main/idf_component.yml"
 LOCK="$PROJECT_DIR/dependencies.lock"
 MAPPING_TMP=$(mktemp)
 MISMATCH_TMP=$(mktemp)
-trap 'rm -f "$MAPPING_TMP" "$MISMATCH_TMP"' EXIT
-extract_exact_refs() {
+RESOLVED_TMP=$(mktemp)
+trap 'rm -f "$MAPPING_TMP" "$MISMATCH_TMP" "$RESOLVED_TMP"' EXIT
+extract_manifest_git_refs() {
   awk '
-    /^  [A-Za-z0-9_.-]+:$/ { name=$1; sub(/:$/, "", name); next }
+    function emit() {
+      if (name != "" && repo != "" && value != "") print name, repo, value
+    }
+    /^  [A-Za-z0-9_.\/-]+:$/ {
+      emit()
+      name=$1; sub(/:$/, "", name)
+      repo=""; value=""
+      next
+    }
+    name != "" && /^    git:/ {
+      repo=$2; gsub(/["'\'' ]/, "", repo)
+      next
+    }
     name != "" && /^    version:/ {
       value=$2; gsub(/["'\'' ]/, "", value)
-      if (length(value) == 40 && value !~ /[^0-9a-f]/) print name, value
-      name=""
     }
+    END { emit() }
   ' "$1"
+}
+extract_lock_git_refs() {
+  awk '
+    function emit() {
+      if (name != "" && is_git && value != "") print name, value
+    }
+    /^  [A-Za-z0-9_.\/-]+:$/ {
+      emit()
+      name=$1; sub(/:$/, "", name)
+      is_git=0; value=""
+      next
+    }
+    name != "" && /^[[:space:]]+git:/ { is_git=1; next }
+    name != "" && /^    version:/ {
+      value=$2; gsub(/["'\'' ]/, "", value)
+    }
+    END { emit() }
+  ' "$1"
+}
+resolve_git_ref() {
+  repo=$1
+  ref=$2
+  if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "$ref"
+    return 0
+  fi
+  cached=$(awk -v repo="$repo" -v ref="$ref" '$1 == repo && $2 == ref { print $3; exit }' "$RESOLVED_TMP")
+  if [[ -n "$cached" ]]; then
+    printf '%s\n' "$cached"
+    return 0
+  fi
+  resolved=$(git ls-remote "$repo" "refs/tags/$ref" "refs/heads/$ref" | awk -v ref="$ref" '
+    $2 == "refs/tags/" ref { print $1; exit }
+    $2 == "refs/heads/" ref { print $1; exit }
+  ')
+  [[ -n "$resolved" ]] || return 1
+  printf '%s %s %s\n' "$repo" "$ref" "$resolved" >> "$RESOLVED_TMP"
+  printf '%s\n' "$resolved"
 }
 check_lock() {
   : > "$MISMATCH_TMP"
   [[ -f "$MANIFEST" && -f "$LOCK" ]] || return 0
-  extract_exact_refs "$LOCK" > "$MAPPING_TMP"
-  while read -r component expected; do
+  extract_lock_git_refs "$LOCK" > "$MAPPING_TMP"
+  while read -r component repo requested; do
+    if ! expected=$(resolve_git_ref "$repo" "$requested"); then
+      printf '%s could not resolve %s at %s\n' "$component" "$requested" "$repo" >> "$MISMATCH_TMP"
+      continue
+    fi
     actual=$(awk -v name="$component" '$1 == name { print $2; exit }' "$MAPPING_TMP")
-    [[ "$actual" == "$expected" ]] || printf '%s expected %s, lock has %s\n' "$component" "$expected" "${actual:-missing}" >> "$MISMATCH_TMP"
-  done < <(extract_exact_refs "$MANIFEST")
+    [[ "$actual" == "$expected" ]] || printf '%s expected %s (%s), lock has %s\n' "$component" "$requested" "$expected" "${actual:-missing}" >> "$MISMATCH_TMP"
+  done < <(extract_manifest_git_refs "$MANIFEST")
   [[ ! -s "$MISMATCH_TMP" ]]
 }
 
@@ -82,5 +136,5 @@ if [[ "${IDF_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
 idf.py -C "$PROJECT_DIR" -B "$BUILD_DIR" -D "IDF_TARGET=$TARGET" build
-check_lock || { echo "error: dependency lock differs from exact manifest refs" >&2; cat "$MISMATCH_TMP" >&2; exit 1; }
-echo "Dependency lock matches every exact manifest ref."
+check_lock || { echo "error: dependency lock differs from manifest git refs" >&2; cat "$MISMATCH_TMP" >&2; exit 1; }
+echo "Dependency lock matches every manifest git ref."
