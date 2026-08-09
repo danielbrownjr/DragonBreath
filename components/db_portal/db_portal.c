@@ -104,7 +104,7 @@ static cJSON *describe_product(void *ctx)
 
     pb_ha_config_t ha = {0};
     pb_ha_get_config(&ha);
-    snprintf(port, sizeof port, "%u", ha.port ? ha.port : 1883);
+    snprintf(port, sizeof port, "%u", (unsigned)(ha.port ? ha.port : 1883));
     s = section(root, "Home Assistant MQTT");
     add_field(s, field("ha_host", "Broker host", "text", ha.host, false));
     add_field(s, field("ha_port", "Port", "number", port, false));
@@ -114,7 +114,7 @@ static cJSON *describe_product(void *ctx)
 
     db_km_config_t km = {0};
     db_klipper_mqtt_get_config(&km);
-    snprintf(port, sizeof port, "%u", km.port ? km.port : (km.tls ? 8883 : 1883));
+    snprintf(port, sizeof port, "%u", (unsigned)(km.port ? km.port : (km.tls ? 8883 : 1883)));
     s = section(root, "Klipper MQTT");
     add_field(s, field("km_host", "Broker host", "text", km.host, false));
     add_field(s, field("km_port", "Port", "number", port, false));
@@ -263,10 +263,12 @@ static esp_err_t factory_reset(void *ctx)
 
 static esp_err_t favicon_get(httpd_req_t *req)
 {
+    // These linker labels bound one target_add_binary_data blob.
+    // cppcheck-suppress comparePointers
+    const size_t length = (size_t)(favicon_png_end - favicon_png_start);
     httpd_resp_set_type(req, "image/png");
     httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=86400");
-    return httpd_resp_send(req, (const char *)favicon_png_start,
-                           favicon_png_end - favicon_png_start);
+    return httpd_resp_send(req, (const char *)favicon_png_start, length);
 }
 
 static esp_err_t register_product_routes(httpd_handle_t server, void *ctx)
