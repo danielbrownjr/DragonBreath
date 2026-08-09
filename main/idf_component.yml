@@ -2,32 +2,32 @@ dependencies:
   dc_evlog:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_evlog
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
   dc_source:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_source
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
   dc_bambu:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_bambu
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
   dc_wifi:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_wifi
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
   dc_moonraker:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_moonraker
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
   dc_ui:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_ui
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
   dc_mqtt:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_mqtt
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
   dc_portal:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_portal
-    version: 747ff3f589fe73fd03186b611866dbf9547fde14
+    version: 203164a0faf4e459cc4534357ec9a125d7d12aa1
