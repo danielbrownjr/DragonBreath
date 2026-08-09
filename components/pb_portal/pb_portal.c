@@ -650,8 +650,9 @@ static esp_err_t config_page(httpd_req_t *req)
     SEND(req,
         "<label style='margin-top:10px'>Chamber zones \xC2\xB7 \xC2\xB0""C (0 = off)</label>"
         "<small style='color:var(--muted);display:block;margin:-4px 0 6px'>"
-        "When a Bambu print runs, the chamber follows the active filament's target "
-        "here (overrides bed-follow).</small>");
+        "While the heater is in <b>AUTO</b> mode and a Bambu print is running, the "
+        "chamber follows the active filament's target here (overrides bed-follow). "
+        "Zones do nothing in Manual/Off.</small>");
     {
         dc_bambu_zone_t zones[DC_BAMBU_ZONE_COUNT];
         int nz = dc_bambu_zone_get_all(zones, DC_BAMBU_ZONE_COUNT);
