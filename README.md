@@ -48,7 +48,7 @@ is still sitting there to go back to.
 
 **Install (stock → DragonBreath), no USB needed:**
 1. Download `dragonbreath-<ver>.bin` from a [release](../../releases) — or build it
-   (`idf.py build` → `build/dragonbreath.bin`). Optionally verify it against the
+   (`./tools/idf-build.sh . esp32c3 build` → `build/dragonbreath.bin`). Optionally verify it against the
    release `SHA256SUMS.txt`. Each release also ships a `manifest.json` (source SHA,
    ESP-IDF version, vendored-core provenance + per-artifact SHA-256).
 2. Open the **stock** Panda web UI and use its **Firmware Update** to upload that
@@ -290,9 +290,14 @@ serves both boards. Details + derivation:
 Requires ESP-IDF v5.3+.
 ```bash
 git clone https://github.com/plastikman/DragonBreath
-idf.py set-target esp32c3
-idf.py build
+cd DragonBreath
+./tools/idf-build.sh . esp32c3 build
 ```
+
+The wrapper locates the installed ESP32-C3 RISC-V compiler and checks exact
+component pins before building. If `dependencies.lock` or `managed_components/`
+belongs to an older pin, it moves that dependency state under the build directory
+instead of allowing ESP Component Manager to silently reuse it.
 
 ## Layout
 ```
@@ -306,15 +311,18 @@ components/
   pb_leds/     front-panel status LEDs
   pb_buttons/  front-panel button poll/debounce + short/long-press
   pb_hil/      JSON serial HIL console + safe dev-board injection
-  pb_httpd/    HTTP control API (CSRF-gated mutations) + /console log ring
-  pb_portal/   captive-portal + control-source setup + dashboard/diag/console pages
+  pb_httpd/    DragonBreath HTTP control API (registered on the core server)
+  db_portal/   product schema, auth, OTA identity + heater-safety adapter
 main/          app_main: safety-first init + control loop
 docs/          hardware map, safety model, HIL guide, NTC RE report
 ```
 
 Managed components fetched from `dragon-core` are `dc_evlog`, `dc_source`,
-`dc_bambu`, `dc_wifi`, `dc_moonraker`, `dc_ui`, and `dc_mqtt`; they are not stored
-under this repository's `components/` directory.
+`dc_bambu`, `dc_wifi`, `dc_moonraker`, `dc_ui`, `dc_mqtt`, and `dc_portal`; they are
+not stored under this repository's `components/` directory. `dc_portal` owns the
+HTTP server, shared SPA, same-LAN/AP provisioning, captive DNS, logs, OTA and
+factory-reset transport. DragonBreath registers its product API and safety policy
+through `db_portal`.
 
 ## Credits
 Hardware + firmware reverse-engineering builds on the BTT Panda Breath work in

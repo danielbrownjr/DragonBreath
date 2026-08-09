@@ -12,7 +12,7 @@
 #   SHA256SUMS.txt                      — checksums of the published assets
 #
 # Requires: python3, zip, git, sha256sum, and esptool (esptool.py or `python3 -m
-# esptool`). Run from the repo root after `idf.py build`.
+# esptool`). Run from the repo root after `./tools/idf-build.sh . esp32c3 build`.
 #
 #   VERSION=v0.2.0 ./tools/package_release.sh
 set -euo pipefail
@@ -42,7 +42,7 @@ if [ -f main/dev_config.h ]; then
 fi
 
 for f in dragonbreath.bin bootloader/bootloader.bin partition_table/partition-table.bin ota_data_initial.bin flash_args; do
-    [ -f "$BUILD_DIR/$f" ] || { echo "missing $BUILD_DIR/$f — run idf.py build first" >&2; exit 1; }
+    [ -f "$BUILD_DIR/$f" ] || { echo "missing $BUILD_DIR/$f — run ./tools/idf-build.sh . esp32c3 $BUILD_DIR first" >&2; exit 1; }
 done
 
 rm -rf "$OUT" bundle-stage
@@ -87,7 +87,8 @@ Verify downloads first:  sha256sum -c SHA256SUMS.txt
 EOF
 
 # 4. provenance manifest (per-artifact SHA-256)
-export VERSION SOURCE_SHA IDF_VERSION TARGET BOARD BUILT_AT
+CORE_REF="${CORE_REF:-$(awk '/^  dc_portal:/{found=1} found && /^    version:/{print $2; exit}' main/idf_component.yml)}"
+export VERSION SOURCE_SHA IDF_VERSION TARGET BOARD BUILT_AT CORE_REF
 python3 - "$OUT/$APP" "$OUT/$FACTORY" \
     "$BUILD_DIR/bootloader/bootloader.bin" \
     "$BUILD_DIR/partition_table/partition-table.bin" \
@@ -101,7 +102,7 @@ print(json.dumps({
     "source_sha":os.environ["SOURCE_SHA"],
     "idf_version":os.environ["IDF_VERSION"],
     "target":os.environ["TARGET"],"board":os.environ["BOARD"],
-    "shared_core":{"source":"github.com/justinh-rahb/dragon-core","ref":"f283708268298af1e0e1197b923283c50079f539","license":"MIT","components":["dc_evlog","dc_source","dc_bambu","dc_wifi","dc_moonraker","dc_ui","dc_mqtt"]},
+    "shared_core":{"source":"github.com/justinh-rahb/dragon-core","ref":os.environ["CORE_REF"],"license":"MIT","components":["dc_evlog","dc_source","dc_bambu","dc_wifi","dc_moonraker","dc_ui","dc_mqtt","dc_portal"]},
     "built_at_utc":os.environ["BUILT_AT"],
     "note":"managed component versions in dependencies.lock (bundled)",
     "artifacts":arts,

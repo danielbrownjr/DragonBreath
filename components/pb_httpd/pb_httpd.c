@@ -21,7 +21,6 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "mbedtls/sha256.h"
 #include "lwip/sockets.h"   // recv(), MSG_DONTWAIT/MSG_PEEK for SSE FIN detection
 #include <errno.h>
 #include <stdio.h>
@@ -970,116 +969,10 @@ static esp_err_t zones_post(httpd_req_t *req)
     return zones_send(req);
 }
 
-// POST /update — stream a new DragonBreath .bin into the inactive OTA slot, verify,
-// set it as boot, and reboot. Auth-gated. SAFETY: refused while the heater is
-// armed/on — a reboot mid-heat leaves the SSR state undefined until re-init, so
-// the operator must turn the heater off first. Rollback (PENDING_VERIFY) means a
-// bad image that crashes before app_main marks itself healthy reverts on reboot.
-static bool device_armed(void);   // defined below; shared armed-mode guard
-
-static esp_err_t ota_fail(httpd_req_t *req, const char *status, esp_ota_handle_t h, const char *msg)
-{
-    if (h) esp_ota_abort(h);
-    httpd_resp_set_status(req, status);
-    httpd_resp_set_type(req, "application/json");
-    char b[128];
-    snprintf(b, sizeof b, "{\"error\":\"%s\"}", msg);
-    httpd_resp_sendstr(req, b);
-    return ESP_FAIL;
-}
-
 static void ota_reboot_task(void *arg)
 {
     vTaskDelay(pdMS_TO_TICKS(1200));   // give the HTTP response time to flush
     esp_restart();
-}
-
-static esp_err_t update_post(httpd_req_t *req)
-{
-    if (auth_reject(req)) return ESP_OK;
-
-    // Block for ANY armed mode (chosen safety policy). Uses the same armed-mode
-    // condition as restart/factory-reset so an armed AUTO waiting below the bed
-    // threshold (target held at 0) is refused too, not just active output.
-    if (device_armed())
-        return ota_fail(req, "409 Conflict", 0, "turn the heater off before updating");
-
-    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
-    if (!part) return ota_fail(req, "500 Internal Server Error", 0, "no OTA partition");
-
-    esp_ota_handle_t h = 0;
-    if (esp_ota_begin(part, OTA_SIZE_UNKNOWN, &h) != ESP_OK)
-        return ota_fail(req, "500 Internal Server Error", 0, "esp_ota_begin failed");
-    ESP_LOGW(TAG, "OTA: receiving new image into %s", part->label);
-
-    // Hash the received bytes so the operator can confirm what was flashed.
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    mbedtls_sha256_starts(&sha, 0);   // 0 = SHA-256
-
-    char buf[1024];
-    int total = 0, r;
-    while ((r = httpd_req_recv(req, buf, sizeof buf)) > 0) {
-        if (esp_ota_write(h, buf, r) != ESP_OK) {
-            mbedtls_sha256_free(&sha);
-            return ota_fail(req, "500 Internal Server Error", h, "flash write failed");
-        }
-        mbedtls_sha256_update(&sha, (const unsigned char *)buf, r);
-        total += r;
-    }
-    if (r < 0) {    // recv error / timeout (r == 0 is a clean end of body)
-        mbedtls_sha256_free(&sha);
-        return ota_fail(req, "400 Bad Request", h, "upload interrupted");
-    }
-    if (total == 0) {
-        mbedtls_sha256_free(&sha);
-        return ota_fail(req, "400 Bad Request", h, "empty upload");
-    }
-
-    unsigned char digest[32];
-    mbedtls_sha256_finish(&sha, digest);
-    mbedtls_sha256_free(&sha);
-    char sha_hex[65];
-    for (int i = 0; i < 32; i++) snprintf(sha_hex + i * 2, 3, "%02x", digest[i]);
-
-    esp_err_t err = esp_ota_end(h);   // validates the image (magic/size/checksum)
-    if (err != ESP_OK)
-        return ota_fail(req, "400 Bad Request", 0, "invalid firmware image");
-
-    // Identity check: accept either a DragonBreath image OR a stock Panda Breath
-    // image ("panda_breath", any version). The latter lets a user revert to stock
-    // over WiFi by uploading their own stock backup's app image — no USB needed.
-    // Everything else (any other valid ESP32-C3 app) is still rejected. The app
-    // descriptor's project_name comes from CMake project(<name>).
-    esp_app_desc_t desc;
-    if (esp_ota_get_partition_description(part, &desc) != ESP_OK)
-        return ota_fail(req, "400 Bad Request", 0, "cannot read image descriptor");
-    bool is_dragonbreath = strcmp(desc.project_name, "dragonbreath") == 0;
-    bool is_panda_stock  = strcmp(desc.project_name, "panda_breath") == 0;
-    if (!is_dragonbreath && !is_panda_stock) {
-        ESP_LOGE(TAG, "OTA rejected: project_name='%s' (not dragonbreath or panda_breath)",
-                 desc.project_name);
-        return ota_fail(req, "400 Bad Request", 0,
-                        "not a DragonBreath or stock Panda Breath image");
-    }
-    if (is_panda_stock)
-        ESP_LOGW(TAG, "OTA: accepting stock Panda image '%s' v%s (revert to stock)",
-                 desc.project_name, desc.version);
-
-    if (esp_ota_set_boot_partition(part) != ESP_OK)
-        return ota_fail(req, "500 Internal Server Error", 0, "set boot partition failed");
-
-    ESP_LOGW(TAG, "OTA: %d bytes -> %s, sha256=%s, ver=%s; rebooting shortly",
-             total, part->label, sha_hex, desc.version);
-    httpd_resp_set_type(req, "application/json");
-    char b[160];
-    snprintf(b, sizeof b, "{\"ok\":true,\"bytes\":%d,\"sha256\":\"%s\"}", total, sha_hex);
-    httpd_resp_sendstr(req, b);
-    // Reboot from a separate task so this handler can RETURN first: httpd then
-    // closes the connection cleanly and the client reliably receives the full
-    // JSON (incl. the SHA) before esp_restart() tears the socket down.
-    xTaskCreate(ota_reboot_task, "ob_ota_reboot", 2048, NULL, 5, NULL);
-    return ESP_OK;
 }
 
 // True whenever the device is in ANY armed mode (or the SSR is on). Armed AUTO
@@ -1296,31 +1189,10 @@ static esp_err_t token_post(httpd_req_t *req)
     return send_json(req, o);
 }
 
-esp_err_t pb_httpd_start(void)
+esp_err_t pb_httpd_register(httpd_handle_t server)
 {
-    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.lru_purge_enable = true;
-    cfg.uri_match_fn = httpd_uri_match_wildcard;   // lets pb_portal add a "/*" captive catch-all
-    cfg.max_uri_handlers = 31;                     // + /diag, /console, /api/v2/console, /api/v2/boot-inactive, /unbind, /api/v2/zones (GET+POST)
-    // The OTA handler hashes the image (mbedtls) with a 1 KB read buffer + the
-    // app descriptor on-stack, which overflows the 4 KB default httpd task stack
-    // (stack-protection panic). Give it headroom.
-    cfg.stack_size = 8192;
-    // TCP keepalive on every accepted socket. The SSE stream (GET /api/v2/events,
-    // capped at SSE_MAX_CLIENTS) only frees its client slot when a send fails; a
-    // peer that vanishes without a clean FIN/RST (tab killed, Wi-Fi blip, or a
-    // Moonraker-link flap churning the network) otherwise holds its slot for
-    // MINUTES while writes succeed into the TCP buffer, so after a couple of leaks
-    // every SSE gets 503 and the live UI silently stops updating. Keepalive tracks
-    // time since the last *received* segment, so a dead peer (no ACKs) is detected
-    // even while we keep streaming telemetry: ~idle + interval*count ≈ 25 s, after
-    // which the socket errors, the send fails, and the slot is reclaimed.
-    cfg.keep_alive_enable   = true;
-    cfg.keep_alive_idle     = 10;   // s idle (no rx) before the first probe
-    cfg.keep_alive_interval = 5;    // s between probes
-    cfg.keep_alive_count    = 3;    // probes before the socket is declared dead
-    esp_err_t err = httpd_start(&s_server, &cfg);
-    if (err != ESP_OK) return err;
+    if (!server) return ESP_ERR_INVALID_ARG;
+    s_server = server;
 
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
@@ -1336,7 +1208,6 @@ esp_err_t pb_httpd_start(void)
     httpd_uri_t hb     = { .uri = "/api/v2/heartbeat", .method = HTTP_POST, .handler = heartbeat_post };
     httpd_uri_t events = { .uri = "/api/v2/events",    .method = HTTP_GET,  .handler = events_get };
     httpd_uri_t health = { .uri = "/api/v2/health",    .method = HTTP_GET,  .handler = health_get };
-    httpd_uri_t upd    = { .uri = "/update",           .method = HTTP_POST, .handler = update_post };
     httpd_uri_t setg   = { .uri = "/settings",         .method = HTTP_GET,  .handler = settings_get };
     httpd_uri_t setp   = { .uri = "/settings",         .method = HTTP_POST, .handler = settings_post };
     httpd_uri_t logs   = { .uri = "/api/v2/logs",      .method = HTTP_GET,  .handler = logs_get };
@@ -1355,7 +1226,6 @@ esp_err_t pb_httpd_start(void)
     httpd_register_uri_handler(s_server, &hb);
     httpd_register_uri_handler(s_server, &events);
     httpd_register_uri_handler(s_server, &health);
-    httpd_register_uri_handler(s_server, &upd);
     httpd_register_uri_handler(s_server, &setg);
     httpd_register_uri_handler(s_server, &setp);
     httpd_register_uri_handler(s_server, &logs);
@@ -1368,8 +1238,6 @@ esp_err_t pb_httpd_start(void)
     httpd_register_uri_handler(s_server, &calp);
     httpd_register_uri_handler(s_server, &zong);
     httpd_register_uri_handler(s_server, &zonp);
-    ESP_LOGI(TAG, "HTTP API v2 up :80 (info/state/events/health/logs; command/heartbeat/restart/factory-reset/token/calibration; settings; OTA /update)");
+    ESP_LOGI(TAG, "HTTP API v2 registered (shared portal owns HTTP, provisioning and OTA)");
     return ESP_OK;
 }
-
-httpd_handle_t pb_httpd_handle(void) { return s_server; }

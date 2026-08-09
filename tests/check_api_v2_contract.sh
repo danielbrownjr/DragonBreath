@@ -3,7 +3,8 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 httpd="$root/components/pb_httpd/pb_httpd.c"
-portal_c="$root/components/pb_portal/pb_portal.c"
+adapter="$root/components/db_portal/db_portal.c"
+core_portal="$root/managed_components/dc_portal/dc_portal.c"
 # The dashboard/control UI is supplied by the pinned dragon-core dc_ui component.
 portal="${DC_UI_HTML:-}"
 if [ -z "$portal" ]; then
@@ -88,15 +89,15 @@ grep -q 's->params.manual_target_c' "$httpd" || {
 }
 grep -q 'expected->valuedouble < UINT32_MAX' "$httpd"
 
-# Never tell users to recreate an existing password file; `-c` overwrites it.
-if grep -Fq 'mosquitto_passwd -c /etc/mosquitto/passwd' "$portal_c"; then
-    echo "generated broker instructions can overwrite an existing password file" >&2
-    exit 1
-fi
-grep -Fq 'char mrk_user[48]' "$portal_c"
-grep -Fq 'topic write %s/klipper/state/gcode_macro DRAGONBREATH/#' "$portal_c"
-grep -Fq 'topic read  %s/telemetry' "$portal_c"
-grep -Fq 'topic read  %s/moonraker/api/request' "$portal_c"
+# Ownership boundary: core owns HTTP/provisioning/recovery; the product adapter
+# supplies API registration, authorization, heater safety and image identity.
+grep -q 'dc_portal_start(&cfg)' "$adapter"
+grep -q 'pb_httpd_register(server)' "$adapter"
+grep -q 'snap.mode == PB_MODE_OFF && !snap.heater_output' "$adapter"
+grep -q 'panda_breath' "$adapter"
+grep -q '"/api/v1/provisioning"' "$core_portal"
+grep -q '"/api/v1/system/update"' "$core_portal"
+grep -q '"/api/v1/system/reset"' "$core_portal"
 
 if grep -q 'cJSON_AddStringToObject(lease, "id"' "$httpd"; then
     echo "unauthenticated state exposes raw lease id" >&2

@@ -12,6 +12,7 @@ on:
       - 'sdkconfig.defaults'
       - 'sdkconfig.hil-*'
       - 'tools/hil.py'
+      - 'tools/idf-build.sh'
       - '.github/workflows/firmware-build.yml'
   pull_request:
     paths:
@@ -23,6 +24,7 @@ on:
       - 'sdkconfig.defaults'
       - 'sdkconfig.hil-*'
       - 'tools/hil.py'
+      - 'tools/idf-build.sh'
   workflow_dispatch:
 
 # Least-privilege GITHUB_TOKEN: the build only needs to read code and upload

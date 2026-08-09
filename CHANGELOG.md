@@ -43,6 +43,16 @@ read-only-HA paths below are new in this release.
   during an active print).
 
 ### Changed
+- **Provisioning and recovery moved to `dragon-core` (`dc_portal`).** The shared
+  component now owns the HTTP server, captive DNS, AP/STA setup SPA, Wi-Fi scan and
+  fallback-AP routes, logs, OTA upload, and factory-reset transport. DragonBreath's
+  local `db_portal` is only a product adapter: it registers API v2, describes the
+  printer/controller fields, preserves configured secrets on blank submissions,
+  enforces the existing heater-off maintenance guard, restricts OTA images to
+  DragonBreath or stock Panda Breath, and erases the unchanged `app_nvs` namespace.
+  `/setup`, `/fw`, `/console`, `/update`, and the API v2 routes remain compatible.
+- **Guarded ESP-IDF build entrypoint.** `tools/idf-build.sh` preflights the target
+  compiler and quarantines stale component-manager lock/cache state before build.
 - **Shared core extracted to `dragon-core`.** The board-neutral event log,
   control-source selector, Bambu client, Wi-Fi/provisioning service, and Moonraker
   client now come from the pinned `dragon-core` dependency under the product-neutral
@@ -50,9 +60,8 @@ read-only-HA paths below are new in this release.
 - **Dashboard UI extracted to `dragon-core` (`dc_ui`).** The STA-mode single-page
   dashboard now comes from the pinned `dc_ui` component — a capability-aware, shared
   Dragon-family SPA served as a reproducible embedded gzip — instead of a local
-  `pb_portal/www/app.html` gzipped at build time. The portal owns only the HTTP
-  response and routes; `/setup`, `/fw`, OTA/recovery, auth, and favicon stay
-  product-local. Adds an additive **`GET /api/v2/info` → `ui` descriptor**
+  `pb_portal/www/app.html` gzipped at build time. Adds an additive
+  **`GET /api/v2/info` → `ui` descriptor**
   (`schema` / `product` / `display_name`) so the shared SPA adapts per product;
   older firmware without it is handled by the SPA's compatibility fallback.
 - **MQTT clients unified on a shared, hardened `dc_mqtt`.** The Bambu, Home
