@@ -82,7 +82,7 @@ class HilRunnerTest(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(
             first,
-            "/tmp/dragonbreath-hil/tests/hil/scenarios/run-one",
+            "/tmp/dragonbreath-hil/runs/run-one/tests/hil/scenarios",
         )
 
     def test_serial_open_releases_reset_lines(self):

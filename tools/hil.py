@@ -349,7 +349,9 @@ def remote_flash_command(
 
 
 def remote_scenario_dir(remote_root: str, stamp: str) -> str:
-    return posixpath.join(remote_root, "tests", "hil", "scenarios", stamp)
+    return posixpath.join(
+        remote_root, "runs", stamp, "tests", "hil", "scenarios"
+    )
 
 
 def run_remote(args) -> int:
@@ -366,7 +368,7 @@ def run_remote(args) -> int:
     remote_root = args.remote_dir.rstrip("/")
     if not remote_root:
         raise HilError("--remote-dir must not be empty")
-    remote_tools = posixpath.join(remote_root, "tools")
+    remote_tools = posixpath.join(remote_root, "runs", stamp, "tools")
     # Use a run-specific directory so deleted/renamed local scenarios cannot
     # survive on a reusable remote host and silently join a later --suite run.
     remote_scenarios = remote_scenario_dir(remote_root, stamp)
