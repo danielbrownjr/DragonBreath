@@ -7,6 +7,12 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-09
+
+**Provisioning, recovery, and the setup surface move into `dragon-core`; DragonBreath
+keeps a thin product adapter.** No changes to NVS keys, API v2 routes, or OTA/recovery
+behavior — an in-place OTA from 1.1.0.
+
 ### Changed
 - **Provisioning and recovery moved to `dragon-core` (`dc_portal`).** The shared
   component now owns the HTTP server, captive DNS, AP/STA setup SPA, Wi-Fi scan and
