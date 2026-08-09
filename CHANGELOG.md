@@ -7,13 +7,38 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.0-rc1]
+
+**Dragon-family shared-core split, plus two new Klipper/HA integration paths.**
+DragonBreath is now a thin product layer over the shared
+[`dragon-core`](https://github.com/justinh-rahb/dragon-core) foundation (network,
+control-source selector, Bambu client, the dashboard SPA, and the MQTT client),
+keeping the board, sensors, heater, safety policy, and product UI local. Existing
+NVS keys, API routes, and OTA/recovery behavior are unchanged. **Pre-release for
+community + hardware validation** — the MQTT-Klipper and read-only-HA paths below are
+new and not yet hardware-validated end-to-end.
+
+### Added
+- **MQTT-only Klipper control source** (RFC #66) — for locked/managed Klipper
+  installs that can't add the `dragonbreath-klipper` extra. The device is commanded
+  by `printer.cfg` macros over the printer's own Moonraker MQTT: a **retained-aware
+  arming** contract (heat engages only on a fresh coherent `seq` **and** a live
+  heartbeat; 3×5 s missed heartbeats force heat off + latch `comms_lost`; never arms
+  from retained state), an `M141` shim (non-blocking `M191` alias), and a `/setup`
+  group. `GET /km-config` generates the exact `moonraker.conf` + `printer.cfg` +
+  Mosquitto ACL from your settings. Mutually exclusive with the other control
+  sources. *New — pending validation on a real locked Klipper install.*
+- **Read-only Home Assistant telemetry alongside a control source.** HA can now run
+  as a passive **monitor** concurrently with Bambu/Klipper — it auto-starts when an
+  HA broker is configured but HA isn't the selected source, publishing MQTT-Discovery
+  sensors (chamber/element temp, target, mode) without subscribing commands or taking
+  a control lease. *New — pending concurrent HA + source hardware validation.*
+
 ### Changed
 - **Shared core extracted to `dragon-core`.** The board-neutral event log,
   control-source selector, Bambu client, Wi-Fi/provisioning service, and Moonraker
-  client now come from the pinned
-  [`justinh-rahb/dragon-core`](https://github.com/justinh-rahb/dragon-core)
-  dependency under the product-neutral `dc_*` namespace. Existing NVS namespaces
-  and keys are preserved across the move.
+  client now come from the pinned `dragon-core` dependency under the product-neutral
+  `dc_*` namespace. Existing NVS namespaces and keys are preserved across the move.
 - **Dashboard UI extracted to `dragon-core` (`dc_ui`).** The STA-mode single-page
   dashboard now comes from the pinned `dc_ui` component — a capability-aware, shared
   Dragon-family SPA served as a reproducible embedded gzip — instead of a local
@@ -21,8 +46,10 @@ below into the GitHub Release notes.
   response and routes; `/setup`, `/fw`, OTA/recovery, auth, and favicon stay
   product-local. Adds an additive **`GET /api/v2/info` → `ui` descriptor**
   (`schema` / `product` / `display_name`) so the shared SPA adapts per product;
-  older firmware without it is handled by the SPA's compatibility fallback. No
-  change to existing API routes/fields, NVS, or OTA/recovery behavior.
+  older firmware without it is handled by the SPA's compatibility fallback.
+- **MQTT clients unified on a shared, hardened `dc_mqtt`.** The Bambu, Home
+  Assistant, and Klipper-MQTT clients now share one dragon-core MQTT client with
+  consistent locking and reconnect, replacing per-component esp-mqtt usage.
 
 ## [1.0.4] - 2026-08-06
 
