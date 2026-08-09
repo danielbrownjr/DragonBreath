@@ -30,6 +30,17 @@ BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 esptool() { if command -v esptool.py >/dev/null; then esptool.py "$@"; else python3 -m esptool "$@"; fi; }
 
+# Release-hygiene guard: main/dev_config.h is a gitignored dev-only file that seeds a
+# developer's WiFi/Moonraker creds via seed_dev_config(). If it's present, this tree's
+# build has those creds compiled into the image — NEVER package/publish that. (v1.0.4
+# shipped a dev SSID+password this way when built locally during a CI outage.) CI is
+# clean because the file is gitignored; this guard catches local release builds.
+if [ -f main/dev_config.h ]; then
+    echo "REFUSING to package: main/dev_config.h present — its creds would be baked into the release." >&2
+    echo "Remove it and rebuild clean (or let CI build the release)." >&2
+    exit 1
+fi
+
 for f in dragonbreath.bin bootloader/bootloader.bin partition_table/partition-table.bin ota_data_initial.bin flash_args; do
     [ -f "$BUILD_DIR/$f" ] || { echo "missing $BUILD_DIR/$f — run idf.py build first" >&2; exit 1; }
 done
