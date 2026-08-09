@@ -44,10 +44,14 @@ read-only-HA paths below are new in this release.
 
 ### Changed
 - **Inactive source configuration remains intact in shared setup.** `dragon-core`
-  `v0.5.1` makes Bambu and Moonraker configuration readable and editable before
+  `v0.5.2` makes Bambu and Moonraker configuration readable and editable before
   their clients start, so the shared portal preserves every saved field when a
   different control source is active. Product-local HA and Klipper-MQTT adapters
   provide the same cold-boot behavior.
+- **Shared setup UI reliability.** Provisioning reads now use the same control-token
+  authentication and retry flow as mutations, so Wi-Fi scan results and saved setup
+  fields load correctly. The setup surface is fully opaque, and maintenance identity
+  is populated before optional product/capability handling.
 - **Provisioning and recovery moved to `dragon-core` (`dc_portal`).** The shared
   component now owns the HTTP server, captive DNS, AP/STA setup SPA, Wi-Fi scan and
   fallback-AP routes, logs, OTA upload, and factory-reset transport. DragonBreath's

@@ -27,7 +27,7 @@ As of 2026-08-09:
 - DragonBreath #68 passed host tests, its ESP-IDF CI build, and the complete safe
   ESP32-C3 devboard HIL suite: 3 scenarios, 66 steps, 0 failures, with Panda mains
   GPIO/ADC backends compiled out.
-- dragon-core has annotated releases through `v0.5.1`. Its CI runs host and family-SPA
+- dragon-core has annotated releases through `v0.5.2`. Its CI runs host and family-SPA
   checks and compiles/links every shared component together with ESP-IDF 5.3 for
   ESP32-C3.
 - dragon-core owns the editable SPA, HTTP server lifecycle, captive DNS, provisioning,
@@ -154,7 +154,7 @@ core and products into a jointly owned organization remains an organizational op
 not a prerequisite and not a completed decision.
 
 Products should pin every selected core component to one tag or one full commit from
-the same core revision. DragonBreath currently uses `v0.5.1`. dragon-core's own
+the same core revision. DragonBreath currently uses `v0.5.2`. dragon-core's own
 ESP-IDF compile fixture commits its dependency lock; DragonBreath currently regenerates
 and ignores its application lock, so its component manifests are the reviewed pin.
 
