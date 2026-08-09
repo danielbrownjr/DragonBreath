@@ -4,6 +4,12 @@ set -euo pipefail
 PROJECT_DIR=${1:-.}
 TARGET=${2:-esp32c3}
 BUILD_DIR=${3:-build}
+if (( $# > 3 )); then
+  IDF_ARGS=("${@:4}")
+else
+  IDF_ARGS=(build)
+fi
+IDF_PY=${IDF_PY:-idf.py}
 PROJECT_DIR=$(cd "$PROJECT_DIR" && pwd)
 [[ "$BUILD_DIR" = /* ]] || BUILD_DIR="$PROJECT_DIR/$BUILD_DIR"
 
@@ -135,6 +141,6 @@ if [[ "${IDF_PREFLIGHT_ONLY:-0}" == "1" ]]; then
   echo "Toolchain and dependency-cache preflight passed."
   exit 0
 fi
-idf.py -C "$PROJECT_DIR" -B "$BUILD_DIR" -D "IDF_TARGET=$TARGET" build
+"$IDF_PY" -C "$PROJECT_DIR" -B "$BUILD_DIR" -D "IDF_TARGET=$TARGET" "${IDF_ARGS[@]}"
 check_lock || { echo "error: dependency lock differs from manifest git refs" >&2; cat "$MISMATCH_TMP" >&2; exit 1; }
 echo "Dependency lock matches every manifest git ref."
