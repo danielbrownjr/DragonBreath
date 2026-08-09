@@ -435,6 +435,10 @@ esp_err_t db_klipper_mqtt_set_config(const db_km_config_t *cfg)
         xSemaphoreTake(s_lock, portMAX_DELAY);
         s_cfg = *cfg;
         xSemaphoreGive(s_lock);
+    } else {
+        // Provisioning can configure an inactive source before this component is
+        // started. Keep the schema/readback snapshot aligned with the NVS write.
+        s_cfg = *cfg;
     }
     return ESP_OK;   // takes effect on next boot (matches pb_ha / pb_moonraker)
 }

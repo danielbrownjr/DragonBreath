@@ -407,6 +407,10 @@ esp_err_t pb_ha_set_config(const pb_ha_config_t *cfg)
         xSemaphoreTake(s_lock, portMAX_DELAY);
         s_cfg = *cfg;
         xSemaphoreGive(s_lock);
+    } else {
+        // Provisioning can configure an inactive source before this component is
+        // started. Keep the schema/readback snapshot aligned with the NVS write.
+        s_cfg = *cfg;
     }
     return ESP_OK;   // takes effect on next boot (matches dc_moonraker semantics)
 }

@@ -76,6 +76,15 @@ class HilRunnerTest(unittest.TestCase):
             "panda-smoke.json", {path.name for path, _ in scenarios}
         )
 
+    def test_remote_scenarios_are_isolated_per_run(self):
+        first = hil.remote_scenario_dir("/tmp/dragonbreath-hil", "run-one")
+        second = hil.remote_scenario_dir("/tmp/dragonbreath-hil", "run-two")
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            first,
+            "/tmp/dragonbreath-hil/tests/hil/scenarios/run-one",
+        )
+
     def test_serial_open_releases_reset_lines(self):
         class FakeSerial:
             def __init__(self, **kwargs):

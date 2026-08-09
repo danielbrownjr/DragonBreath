@@ -348,6 +348,10 @@ def remote_flash_command(
     return command, sources
 
 
+def remote_scenario_dir(remote_root: str, stamp: str) -> str:
+    return posixpath.join(remote_root, "tests", "hil", "scenarios", stamp)
+
+
 def run_remote(args) -> int:
     if not args.port:
         raise HilError("--host requires an explicit --port on the remote machine")
@@ -363,7 +367,9 @@ def run_remote(args) -> int:
     if not remote_root:
         raise HilError("--remote-dir must not be empty")
     remote_tools = posixpath.join(remote_root, "tools")
-    remote_scenarios = posixpath.join(remote_root, "tests", "hil", "scenarios")
+    # Use a run-specific directory so deleted/renamed local scenarios cannot
+    # survive on a reusable remote host and silently join a later --suite run.
+    remote_scenarios = remote_scenario_dir(remote_root, stamp)
     remote_firmware = posixpath.join(remote_root, "firmware")
     remote_results = posixpath.join(remote_root, "results", stamp)
     mkdir_command = [
