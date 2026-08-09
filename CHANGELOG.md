@@ -23,7 +23,7 @@ below into the GitHub Release notes.
   1.1.0 note that zones apply only in AUTO during an active Bambu print now travels
   with those cards in `dc_ui`.
 - **Inactive source configuration remains intact in shared setup.** `dragon-core`
-  `v0.5.3` makes Bambu and Moonraker configuration readable and editable before
+  `v0.5.4` makes Bambu and Moonraker configuration readable and editable before
   their clients start, so the shared portal preserves every saved field when a
   different control source is active. Product-local HA and Klipper-MQTT adapters
   provide the same cold-boot behavior.
