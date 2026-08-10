@@ -7,6 +7,8 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-08-10
+
 ### Added
 - **Restore AUTO after a one-off manual override (#72).** When the heater is in
   **AUTO** and you do a one-off **manual** run, the device now returns to AUTO
