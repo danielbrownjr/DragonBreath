@@ -7,6 +7,25 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-08-10
+
+**Shared-UI polish for the /setup and /console pages, from `dragon-core` v0.6.1.**
+
+### Changed
+- **`/setup` shows only the selected control source.** Instead of listing every source
+  (Klipper/Moonraker, Bambu, HA, Klipper-MQTT) at once, the setup surface now reveals
+  only the section for the configured `ctl_src` — changing the selector reveals the
+  chosen source live. **Home Assistant stays always-visible**, since it carries over as
+  read-only telemetry alongside any control source. (Product sections tagged with
+  `visible_when`; `dc_ui` honors it — dragon-core #13.)
+- **Re-pinned `dragon-core` v0.6.0 → v0.6.1.**
+
+### Fixed
+- **`/console` no longer prompts for a control token on presence-only devices.** The
+  page now sends a non-empty auth header by default, so a device with no control token
+  configured loads the log without a spurious prompt; only a real 403 prompts. (Core
+  `dc_portal`, dragon-core #13.)
+
 ## [1.1.2] - 2026-08-10
 
 **Restores the `/diag` and `/console` pages dropped in 1.1.1, now split by where they

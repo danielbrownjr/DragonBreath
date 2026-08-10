@@ -218,6 +218,16 @@ static void add_field(cJSON *s, cJSON *f)
     cJSON_AddItemToArray(cJSON_GetObjectItem(s, "fields"), f);
 }
 
+// Reveal a section only when the control-source selector equals this value. Sections
+// without it always render; HA is intentionally left always-on since it carries over
+// as read-only telemetry alongside any selected control source.
+static void visible_when(cJSON *s, const char *field_key, const char *value)
+{
+    cJSON *vw = cJSON_AddObjectToObject(s, "visible_when");
+    cJSON_AddStringToObject(vw, "field", field_key);
+    cJSON_AddStringToObject(vw, "value", value);
+}
+
 static cJSON *describe_product(void *ctx)
 {
     (void)ctx;
@@ -244,6 +254,7 @@ static cJSON *describe_product(void *ctx)
     dc_moonraker_get_config(&mr);
     char port[8]; snprintf(port, sizeof port, "%u", mr.port ? mr.port : 7125);
     s = section(root, "Klipper / Moonraker");
+    visible_when(s, "ctl_src", "0");
     add_field(s, field("mr_host", "Host", "text", mr.host, false));
     add_field(s, field("mr_port", "Port", "number", port, false));
     add_field(s, field("mr_key", "API key (leave blank to keep)", "password", "", true));
@@ -251,6 +262,7 @@ static cJSON *describe_product(void *ctx)
     dc_bambu_config_t bb = {0};
     dc_bambu_get_config(&bb);
     s = section(root, "Bambu LAN");
+    visible_when(s, "ctl_src", "1");
     add_field(s, field("bb_host", "Printer host", "text", bb.host, false));
     add_field(s, field("bb_serial", "Serial", "text", bb.serial, false));
     add_field(s, field("bb_code", "Access code (leave blank to keep)", "password", "", true));
@@ -269,6 +281,7 @@ static cJSON *describe_product(void *ctx)
     db_klipper_mqtt_get_config(&km);
     snprintf(port, sizeof port, "%u", (unsigned)(km.port ? km.port : (km.tls ? 8883 : 1883)));
     s = section(root, "Klipper MQTT");
+    visible_when(s, "ctl_src", "4");
     cJSON_AddStringToObject(s, "description",
         "After saving, open /km-config to generate moonraker.conf, printer.cfg, and the Mosquitto ACL.");
     add_field(s, field("km_host", "Broker host", "text", km.host, false));
