@@ -7,16 +7,26 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
-## [1.1.2] - 2026-08-09
+## [1.1.2] - 2026-08-10
+
+**Restores the `/diag` and `/console` pages dropped in 1.1.1, now split by where they
+belong.** Diagnostics are device-specific, so `/diag` is product-local; the firmware
+console is generic, so it moves to shared core.
 
 ### Fixed
-- **Restored the `/diag` and `/console` pages** (regressed in 1.1.1). The portal
-  extraction moved page ownership into `dragon-core` and these two product-local
-  diagnostic pages were dropped, leaving them 404 — their data endpoints
-  (`/api/v2/state`, `/api/v2/events`, `/api/v2/console`) were unaffected. They are
-  now re-registered by the `db_portal` adapter: `/diag` is the browser-side element/
-  chamber temperature logger + live trend + CSV export over the read-only SSE stream
-  (no USB needed), and `/console` shows the auth-gated firmware log ring.
+- **Restored the device-specific `/diag` page** (regressed in 1.1.1). The portal
+  extraction dropped it; it's re-registered by the `db_portal` adapter — a browser-side
+  chamber/element(PTC)/SSR/fault logger with a live trend and CSV export over the
+  read-only SSE stream (`/api/v2/events`), no USB needed.
+- **Restored `/console` via shared core.** The generic firmware-log page now comes from
+  `dragon-core` `dc_portal` (`GET /console` + `GET /api/v1/system/console`), picked up
+  by the re-pin below, instead of a product-local copy.
+
+### Changed
+- **Re-pinned `dragon-core` v0.5.4 → v0.6.0.** Brings the core `/console` page, plus
+  `dc_ui` setup-note fixes: the Custom profiles card states profiles apply only in AUTO
+  during a Bambu print, and the advanced max-temp "experts only" note points to the
+  built-in `/diag` page instead of the USB `tools/diag.py`.
 
 ## [1.1.1] - 2026-08-09
 

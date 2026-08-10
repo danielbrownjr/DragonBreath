@@ -31,19 +31,12 @@ static const char *TAG = "db_portal";
 extern const unsigned char favicon_png_start[] asm("_binary_favicon_png_start");
 extern const unsigned char favicon_png_end[] asm("_binary_favicon_png_end");
 
-// ---- product-local diagnostic pages (/diag, /console) ------------------------
-// The shared dc_ui SPA owns the dashboard; these two read-only pages are product-
-// local (they render DragonBreath's own /api/v2 telemetry + firmware log). They
-// reproduce a compact copy of the portal chrome since dc_portal owns the shared
-// head. Restored after the pb_portal->db_portal extraction dropped them.
-
-// Auth bootstrap for the gated console fetch (same contract as the SPA/km-config).
-#define DB_AUTH_JS \
-    "function tok(){if(window.DB_TOK)return window.DB_TOK;" \
-    "var t=localStorage.getItem('db_tok');" \
-    "if(!t){t=prompt('DragonBreath control token')||'';if(t)localStorage.setItem('db_tok',t);}" \
-    "return t;}" \
-    "function hdr(){return {'X-DragonBreath-Auth':tok()};}"
+// ---- product-local diagnostics page (/diag) ---------------------------------
+// The shared dc_ui SPA owns the dashboard and dc_portal owns the generic /console;
+// /diag is device-specific (chamber/element/PTC/SSR/fault chain) so it stays here,
+// rendering DragonBreath's own /api/v2 telemetry. Compact copy of the portal chrome
+// since dc_portal owns the shared head. Restored after the pb_portal->db_portal
+// extraction dropped it.
 
 static const char PAGE_HEAD[] =
     "<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -78,15 +71,6 @@ static const char PAGE_HEAD[] =
     "</head><body>";
 
 static const char WRAP_OPEN[] = "<div class=wrap>";
-
-static void send_auth_inject(httpd_req_t *req)
-{
-    char tok[65];
-    pb_httpd_ctl_token(tok, sizeof tok);   // 65-byte buffer: never false-negative
-    SEND(req, tok[0]
-        ? "<script>window.DB_NEEDTOK=1;</script>"
-        : "<script>window.DB_TOK=\"web\";</script>");
-}
 
 static void send_version_inject(httpd_req_t *req)
 {
@@ -188,64 +172,6 @@ static esp_err_t diag_page(httpd_req_t *req)
     SEND(req, WRAP_OPEN);
     send_version_inject(req);       // window.DB_VER for the footer
     SEND(req, DIAG_BODY);
-    return httpd_resp_send_chunk(req, NULL, 0);
-}
-
-// Firmware console page (GET /console): the raw ESP_LOGx stream captured into the
-// dc_evlog byte ring, fetched from the auth-gated GET /api/v2/console. The page
-// itself is open (a GET can't carry the auth header); the DATA fetch is gated.
-static const char CONSOLE_BODY[] =
-    "<style>"
-    ".wrap{max-width:min(96vw,900px)}"
-    "#c-log{font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre;tab-size:4;"
-    "background:var(--input);border-radius:8px;padding:10px 12px;"
-    "max-height:70vh;overflow:auto;margin:.4em 0}"
-    ".drow{display:flex;gap:8px}.drow button{flex:1;margin-top:0}"
-    "</style>"
-    "<div class=card><h2>Console</h2>"
-    "<div id=c-meta><small>firmware log\xE2\x80\xA6</small></div>"
-    "<pre id=c-log>loading\xE2\x80\xA6</pre>"
-    "<div class=drow>"
-    "<button type=button class=go id=c-dl>Download</button>"
-    "<button type=button class=sec id=c-pause>Pause</button>"
-    "</div></div>"
-    "<p style='text-align:center'><small><a href='/'>\xE2\x86\x90 Back to status</a></small></p>"
-    "<div id=ver style='text-align:center;color:var(--muted);font-size:.72rem;margin-top:2px'></div>"
-    "<script>" DB_AUTH_JS
-    "(function(){"
-    "var paused=false,last='';"
-    "function $(i){return document.getElementById(i);}"
-    "if(window.DB_VER)$('ver').textContent='DragonBreath '+window.DB_VER;"
-    "function load(){"
-    "fetch('/api/v2/console',{cache:'no-store',headers:hdr()}).then(function(r){"
-    "if(r.status==403){localStorage.removeItem('db_tok');"
-    "$('c-meta').innerHTML='<small class=warn>Auth rejected \\u2014 reload and re-enter the control token.</small>';return null;}"
-    "return r.text();"
-    "}).then(function(t){"
-    "if(t==null)return;t=t.replace(/\\x1b\\[[0-9;]*m/g,'');last=t;var pre=$('c-log');"
-    "var atEnd=pre.scrollTop+pre.clientHeight>=pre.scrollHeight-6;"
-    "pre.textContent=t||'(no log captured yet)';"
-    "if(atEnd)pre.scrollTop=pre.scrollHeight;"
-    "$('c-meta').innerHTML='<small>'+t.length+' bytes \\u00b7 '+(paused?'paused':'auto-refresh 2s')+'</small>';"
-    "}).catch(function(){});"
-    "}"
-    "$('c-dl').addEventListener('click',function(){"
-    "var b=new Blob([last||''],{type:'text/plain'});"
-    "var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='dragonbreath-console.txt';a.click();"
-    "setTimeout(function(){URL.revokeObjectURL(a.href);},1000);"
-    "});"
-    "$('c-pause').addEventListener('click',function(){paused=!paused;this.textContent=paused?'Resume':'Pause';if(!paused)load();});"
-    "load();setInterval(function(){if(!paused)load();},2000);"
-    "})();</script></body></html>";
-
-static esp_err_t console_page(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    SEND(req, PAGE_HEAD);
-    SEND(req, WRAP_OPEN);
-    send_auth_inject(req);          // DB_TOK / DB_NEEDTOK for the gated fetch
-    send_version_inject(req);
-    SEND(req, CONSOLE_BODY);
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
@@ -745,9 +671,6 @@ static esp_err_t register_product_routes(httpd_handle_t server, void *ctx)
     if (err != ESP_OK) return err;
     const httpd_uri_t diag = { .uri = "/diag", .method = HTTP_GET, .handler = diag_page };
     err = httpd_register_uri_handler(server, &diag);
-    if (err != ESP_OK) return err;
-    const httpd_uri_t console = { .uri = "/console", .method = HTTP_GET, .handler = console_page };
-    err = httpd_register_uri_handler(server, &console);
     if (err != ESP_OK) return err;
     const httpd_uri_t favicon = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get };
     return httpd_register_uri_handler(server, &favicon);
