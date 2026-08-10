@@ -304,6 +304,11 @@ static esp_err_t info_get(httpd_req_t *req)
     } else {
         cJSON_AddNullToObject(o, "inactive_slot");
     }
+    // Release repo for the shared UI's update check (dc_ui reads update.repo +
+    // update.asset_prefix, queries GitHub's latest release, and notifies if newer).
+    cJSON *upd = cJSON_AddObjectToObject(o, "update");
+    cJSON_AddStringToObject(upd, "repo", "plastikman/DragonBreath");
+    cJSON_AddStringToObject(upd, "asset_prefix", "dragonbreath-");
     cJSON *cap = cJSON_AddArrayToObject(o, "capabilities");
     cJSON_AddItemToArray(cap, cJSON_CreateString("power_on"));
     cJSON_AddItemToArray(cap, cJSON_CreateString("auto"));
