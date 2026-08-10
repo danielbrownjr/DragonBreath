@@ -7,6 +7,29 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-08-10
+
+**Firmware-update UX restored on the shared setup surface, from `dragon-core` v0.7.0.**
+
+### Added
+- **On-board firmware update, rebuilt.** Uploading a `.bin` from `/setup` now shows a live
+  **progress %** (was a static message); on success it polls the rebooting device and
+  returns to the dashboard. A dropped connection after upload reports "device rebooting,
+  verifying…" (the dashboard version is the real confirmation), and a configured control
+  token is re-prompted and retried.
+- **Update check.** DragonBreath advertises its release repo via `GET /api/v2/info`, so the
+  UI can check GitHub for a newer stable release and show the version + expected SHA-256 +
+  download link (notify-then-manual-upload; never auto-flashes). Runs one request per load
+  on installed builds only — local/dev (`-dirty`/`-g<hash>`) builds skip it.
+- **Setup password reveal.** Show/Hide toggle on every setup password field (Wi-Fi,
+  fallback AP, product secrets) to catch a mistyped Wi-Fi password.
+
+### Changed
+- **`/fw` and the Settings "Firmware update" button** open setup and scroll to the
+  firmware/maintenance card (was buried at the bottom); the button is now the prominent
+  primary action.
+- **Re-pinned `dragon-core` v0.6.1 → v0.7.0.**
+
 ## [1.1.3] - 2026-08-10
 
 **Shared-UI polish for the /setup and /console pages, from `dragon-core` v0.6.1.**
