@@ -266,6 +266,16 @@ static cJSON *describe_product(void *ctx)
     add_field(s, field("bb_host", "Printer host", "text", bb.host, false));
     add_field(s, field("bb_serial", "Serial", "text", bb.serial, false));
     add_field(s, field("bb_code", "Access code (leave blank to keep)", "password", "", true));
+    // LAN discovery: the shared SPA renders a Search picker from this block and
+    // fills bb_host + bb_serial, so the user only enters the access code.
+    cJSON *disc = cJSON_AddObjectToObject(s, "discovery");
+    cJSON_AddStringToObject(disc, "scan", "/api/v2/bambu/scan");
+    cJSON_AddStringToObject(disc, "endpoint", "/api/v2/bambu/discovered");
+    cJSON_AddStringToObject(disc, "list", "printers");
+    cJSON_AddStringToObject(disc, "label", "Search for printers on the network");
+    cJSON *bb_fill = cJSON_AddObjectToObject(disc, "fill");   // discovered key -> field key
+    cJSON_AddStringToObject(bb_fill, "host", "bb_host");
+    cJSON_AddStringToObject(bb_fill, "serial", "bb_serial");
 
     pb_ha_config_t ha = {0};
     pb_ha_get_config(&ha);
@@ -674,10 +684,58 @@ static esp_err_t favicon_get(httpd_req_t *req)
     return httpd_resp_send(req, (const char *)favicon_png_start, length);
 }
 
+static esp_err_t send_json_obj(httpd_req_t *req, cJSON *root)
+{
+    char *s = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_send(req, s, HTTPD_RESP_USE_STRLEN);
+    free(s);
+    return err;
+}
+
+// POST /api/v2/bambu/scan — start a one-shot LAN scan (user-initiated only). The
+// setup UI calls this when the operator opens/clicks Bambu setup, then polls GET.
+static esp_err_t bambu_scan_post(httpd_req_t *req)
+{
+    dc_bambu_scan_start();
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "scanning", dc_bambu_scanning());
+    return send_json_obj(req, root);
+}
+
+// GET /api/v2/bambu/discovered — printers found by the most recent scan, plus
+// whether a scan is still running, for the setup picker to fill host + serial.
+static esp_err_t bambu_discovered_get(httpd_req_t *req)
+{
+    dc_bambu_found_t found[DC_BAMBU_DISCOVER_MAX];
+    int n = dc_bambu_discover_get(found, DC_BAMBU_DISCOVER_MAX);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "scanning", dc_bambu_scanning());
+    cJSON *arr = cJSON_AddArrayToObject(root, "printers");
+    for (int i = 0; i < n; ++i) {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddStringToObject(p, "host", found[i].host);
+        cJSON_AddStringToObject(p, "serial", found[i].serial);
+        cJSON_AddStringToObject(p, "model", found[i].model);
+        cJSON_AddStringToObject(p, "name", found[i].name);
+        cJSON_AddNumberToObject(p, "age_s", found[i].age_s);
+        cJSON_AddItemToArray(arr, p);
+    }
+    return send_json_obj(req, root);
+}
+
 static esp_err_t register_product_routes(httpd_handle_t server, void *ctx)
 {
     (void)ctx;
     esp_err_t err = pb_httpd_register(server);
+    if (err != ESP_OK) return err;
+    const httpd_uri_t bambu_scan = { .uri = "/api/v2/bambu/scan", .method = HTTP_POST, .handler = bambu_scan_post };
+    err = httpd_register_uri_handler(server, &bambu_scan);
+    if (err != ESP_OK) return err;
+    const httpd_uri_t bambu_disc = { .uri = "/api/v2/bambu/discovered", .method = HTTP_GET, .handler = bambu_discovered_get };
+    err = httpd_register_uri_handler(server, &bambu_disc);
     if (err != ESP_OK) return err;
     const httpd_uri_t km_config = { .uri = "/km-config", .method = HTTP_GET, .handler = km_config_get };
     err = httpd_register_uri_handler(server, &km_config);
