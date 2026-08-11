@@ -7,6 +7,19 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-08-11
+
+### Added
+- **Bambu LAN discovery in setup.** When configuring a Bambu printer, a
+  **Search for printers on the network** button now finds Bambu printers over
+  SSDP and fills in the host + serial for you — you only enter the LAN access
+  code. Discovery is user-initiated only (it runs when you open/click Bambu
+  setup, never in the background) and holds no socket open between scans.
+
+### Changed
+- Bumped **dragon-core** to **v0.13.0** (brings the shared on-demand Bambu
+  discovery plus the intervening core work).
+
 ## [1.1.5] - 2026-08-10
 
 ### Added
