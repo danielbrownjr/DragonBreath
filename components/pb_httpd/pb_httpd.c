@@ -6,6 +6,7 @@
 #include "pb_policy.h"
 #include "dc_source.h"
 #include "dc_bambu.h"
+#include "dc_moonraker.h"
 #include "dc_evlog.h"
 
 #include "esp_http_server.h"
@@ -172,6 +173,14 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
             if (bs.printing && bs.filament[0])
                 cJSON_AddStringToObject(environment, "bambu_filament", bs.filament);
         }
+    } else if (ctl_src == DC_SRC_KLIPPER) {
+        // Klipper now follows filament zones too: surface Moonraker's active-print
+        // material so the dashboard shows "Filament: ABS" and which zone AUTO follows.
+        // Show it whenever Moonraker has resolved it (it's only set during a print),
+        // not gated on the strict PRINTING sub-state.
+        dc_moonraker_status_t ms;
+        if (dc_moonraker_get_status(&ms) == ESP_OK && ms.material[0])
+            cJSON_AddStringToObject(environment, "material", ms.material);
     }
     cJSON_AddBoolToObject(environment, "moonraker_connected", s->moonraker_connected);
     add_num1(environment, "bed_temperature_c", s->bed_c);
