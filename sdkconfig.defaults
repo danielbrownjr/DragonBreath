@@ -39,3 +39,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # TLS peer we DO give a CA (e.g. HA MQTT over TLS) is still verified normally.
 CONFIG_ESP_TLS_INSECURE=y
 CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y
+
+# The default LWIP pool (10 sockets) is shared by the single-worker httpd, the
+# Moonraker/Bambu WebSocket-MQTT client, and mDNS. Under a live print the printer
+# client's traffic plus the dashboard's polling exhaust the pool and the web UI
+# stops accepting connections (pings fine, HTTP dead) — recovering only when the
+# print stops. 16 gives httpd real concurrency headroom during a print.
+CONFIG_LWIP_MAX_SOCKETS=16
