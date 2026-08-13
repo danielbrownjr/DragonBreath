@@ -939,36 +939,19 @@ void pb_policy_tick(void)
 
         case PB_MODE_AUTO:
         {
-            // Trigger on the bed SETPOINT (commanded), not the measured bed temp
-            // (stock parity): heat engages as soon as the print commands a bed
-            // >= threshold, so the chamber warms alongside the bed instead of
-            // waiting for the bed to physically reach the threshold. Setpoint drops
-            // to 0 when the print ends, which disengages.
+            // AUTO follows the active print's FILAMENT PROFILE (src_target_c — the
+            // filament zone, from the Bambu report or Moonraker's material). There is
+            // no bed-threshold heating any more: with no print, or a filament that has
+            // no zone set (src_target_c == 0), the chamber stays idle in AUTO. Heat
+            // engages only while the source is connected and reporting a zone target,
+            // and always to that target. Safety cutoffs are evaluated elsewhere and
+            // are unaffected; this only ever narrows when AUTO heats.
             bool was_engaged = s.auto_engaged;
-            if (!s.mk_connected) {
-                s.auto_engaged = false;
-            } else if (s.src_target_c > 0.0f) {
-                // Source-requested chamber target (e.g. a Bambu filament zone while a
-                // print is active): engage heat directly, bypassing the bed-setpoint
-                // threshold ("zone wins"). Clears when the source drops it to 0 (print
-                // end / no zone), falling back to the bed-threshold logic below and
-                // then to disengage — i.e. revert to idle/AUTO.
-                s.auto_engaged = true;
-            } else if (!s.auto_engaged && s.bed_target_c >= s.auto_bed_threshold_c) {
-                s.auto_engaged = true;
-            } else if (s.auto_engaged
-                       && s.bed_target_c < s.auto_bed_threshold_c
-                                      - PB_AUTO_BED_HYSTERESIS_C) {
-                s.auto_engaged = false;
-            }
-            // The fan-only filtration band is evaluated below, independent of mode
-            // (stock parity) — heat engage stays AUTO-only, here.
+            s.auto_engaged = (s.mk_connected && s.src_target_c > 0.0f);
             if (s.auto_engaged != was_engaged)
                 revision_advance_locked(s.source);
             if (s.auto_engaged) {
-                // The source-requested zone target overrides the configured AUTO
-                // target when present; otherwise the normal AUTO target applies.
-                target = (s.src_target_c > 0.0f) ? s.src_target_c : s.requested_target_c;
+                target = s.src_target_c;
                 autonomous = true;
             }
             break;
