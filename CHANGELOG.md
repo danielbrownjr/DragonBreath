@@ -7,6 +7,28 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-08-13
+
+### Added
+- **AUTO follows the filament profile.** In **AUTO**, the chamber now heats to the
+  active print's *filament zone* — for **Klipper** (from Moonraker's active-tool
+  material) as well as Bambu — instead of arming a fixed target on a bed threshold.
+  Set per-filament targets in **Filament Zones** (now on the Settings page). With no
+  print, or a filament that has no zone set, AUTO holds the chamber idle.
+- **Customizable quick-control presets.** The four one-tap dashboard temperatures
+  are now editable and persisted (Settings → Quick-control presets).
+
+### Changed
+- Dashboard/Settings overhaul: one-row quick controls (Filter + presets), Filament
+  Zones/Custom Profiles moved to Settings, a more compact Status card, and a
+  responsive layout that scrolls small desktop windows without cramming.
+- Bumped **dragon-core** to **v0.17.0** (combined ABS/ASA + PA filament zones,
+  source-agnostic zone matching, dashboard/filament-follow UI).
+
+### Fixed
+- The web UI no longer stalls during a print: the LWIP socket pool is raised so
+  httpd keeps accepting connections under the printer client's load.
+
 ## [1.1.6] - 2026-08-11
 
 ### Added
