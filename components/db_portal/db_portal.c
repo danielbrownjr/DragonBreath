@@ -726,10 +726,83 @@ static esp_err_t bambu_discovered_get(httpd_req_t *req)
     return send_json_obj(req, root);
 }
 
+// ---- Dashboard quick-control temperature presets (user-customizable) ----
+// Four target temps shown as one-tap buttons on the dashboard. Persisted in NVS
+// (app_nvs blob "quick_preset"); default 50/55/60/65. Clamped to the heater range.
+#define QP_COUNT 4
+static const uint8_t QP_DEFAULT[QP_COUNT] = { 50, 55, 60, 65 };
+
+static void qp_load(uint8_t out[QP_COUNT])
+{
+    memcpy(out, QP_DEFAULT, QP_COUNT);
+    nvs_handle_t h;
+    if (nvs_open("app_nvs", NVS_READONLY, &h) == ESP_OK) {
+        size_t len = QP_COUNT;
+        nvs_get_blob(h, "quick_preset", out, &len);   // leaves defaults if absent
+        nvs_close(h);
+    }
+}
+
+static cJSON *qp_json(const uint8_t p[QP_COUNT])
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr = cJSON_AddArrayToObject(root, "presets");
+    for (int i = 0; i < QP_COUNT; i++) cJSON_AddItemToArray(arr, cJSON_CreateNumber(p[i]));
+    return root;
+}
+
+// GET /api/v2/presets — the four dashboard quick-control temps.
+static esp_err_t presets_get(httpd_req_t *req)
+{
+    uint8_t p[QP_COUNT];
+    qp_load(p);
+    return send_json_obj(req, qp_json(p));
+}
+
+// POST /api/v2/presets  body {"presets":[t0,t1,t2,t3]} — save + echo back (clamped).
+static esp_err_t presets_post(httpd_req_t *req)
+{
+    int len = req->content_len;
+    if (len <= 0 || len > 256) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body"); return ESP_FAIL; }
+    char buf[257];
+    int r = httpd_req_recv(req, buf, len);
+    if (r <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "recv failed"); return ESP_FAIL; }
+    buf[r] = '\0';
+    cJSON *body = cJSON_Parse(buf);
+    cJSON *arr = body ? cJSON_GetObjectItemCaseSensitive(body, "presets") : NULL;
+    if (!cJSON_IsArray(arr) || cJSON_GetArraySize(arr) != QP_COUNT) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "presets must be four numbers");
+        return ESP_FAIL;
+    }
+    uint8_t p[QP_COUNT];
+    for (int i = 0; i < QP_COUNT; i++) {
+        cJSON *e = cJSON_GetArrayItem(arr, i);
+        int v = cJSON_IsNumber(e) ? e->valueint : 0;
+        p[i] = (uint8_t)(v < 0 ? 0 : v > 70 ? 70 : v);   // heater hard ceiling is 70 C
+    }
+    cJSON_Delete(body);
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("app_nvs", NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(h, "quick_preset", p, QP_COUNT);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    if (err != ESP_OK) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "save failed"); return ESP_FAIL; }
+    return send_json_obj(req, qp_json(p));
+}
+
 static esp_err_t register_product_routes(httpd_handle_t server, void *ctx)
 {
     (void)ctx;
     esp_err_t err = pb_httpd_register(server);
+    if (err != ESP_OK) return err;
+    const httpd_uri_t presets_g = { .uri = "/api/v2/presets", .method = HTTP_GET, .handler = presets_get };
+    err = httpd_register_uri_handler(server, &presets_g);
+    if (err != ESP_OK) return err;
+    const httpd_uri_t presets_p = { .uri = "/api/v2/presets", .method = HTTP_POST, .handler = presets_post };
+    err = httpd_register_uri_handler(server, &presets_p);
     if (err != ESP_OK) return err;
     const httpd_uri_t bambu_scan = { .uri = "/api/v2/bambu/scan", .method = HTTP_POST, .handler = bambu_scan_post };
     err = httpd_register_uri_handler(server, &bambu_scan);
