@@ -111,7 +111,7 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | HTTP control API (`pb_httpd`) | ✅ API v2 (JSON command/state + SSE, CSRF-gated) — shipped in v0.3.0 |
 | Klipper-side helper (M141 / Fluidd) | ✅ [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper): `[heater_generic dragonbreath]` (M141/M191) + `[output_pin dragonbreath_filter]` (fan-only filtration toggle); API v2, deploy lockstep with the firmware |
 | Filament-dry mode | ✅ Timed dry with material presets; validated end-to-end on hardware |
-| Auto (follow-bed) mode | 🚧 Shipped in the state machine + UI; end-to-end hardware soak in progress |
+| Auto (follow-filament) mode | ✅ Chamber follows the **loaded filament's zone profile** (Klipper + Bambu); validated end-to-end on hardware |
 | Fan-only filtration | ✅ Standing fan-only band (`filter_temp`, opt-in/**off by default**) — runs on the bed setpoint independent of mode (stock-shaped) + mode-independent manual `filter` control (dashboard + API); idle-only to enable |
 | Install / revert | ✅ **No-USB**: installs over stock as an app-only OTA (stock partition layout); revert via **Boot inactive slot** or by re-uploading a stock image over web OTA |
 | Flasher (`tools/flash.py`) | ✅ Recovery/backup tool: `--backup-only` saves a verified full stock backup, `--restore` writes one back, default path unbricks over USB |
@@ -147,16 +147,16 @@ hardware limit. 60–65 °C covers ASA/ABS comfortably.
 ## Screenshots
 <p>
 <img src="docs/screenshots/dashboard.png" width="410" alt="Live status dashboard">
-<img src="docs/screenshots/auto.png" width="410" alt="Automatic (follow printer bed) mode">
+<img src="docs/screenshots/auto.png" width="410" alt="Automatic mode — chamber follows the loaded filament's profile">
 <img src="docs/screenshots/dry.png" width="410" alt="Timed filament-drying cycle">
 <img src="docs/screenshots/settings.png" width="410" alt="Settings: safety limits and sensor calibration">
 </p>
 
 The responsive, touch-first web UI, served by the device itself over plain HTTP on
 your LAN and embeddable in the Fluidd / Mainsail panel: the live **dashboard**
-(chamber / PTC temperature, trend, and quick controls incl. a **Filtration**
-fan-only toggle), **automatic** mode (arm a chamber target that follows the printer
-bed, with an optional fan-only filtration band below the heat threshold), a timed
+(chamber / PTC temperature, trend, and quick controls incl. a **Filter**
+fan-only toggle), **automatic** mode (the chamber follows the **loaded filament's
+zone profile**, with an optional fan-only Filter band), a timed
 filament-**drying** cycle with material presets, and **settings** (safety limits,
 comms watchdog, foldback cut, filtration temperature, and ±5 °C sensor
 calibration). Setup (`/setup`, Wi-Fi + control-source selector), OTA (`/fw`), a live
@@ -200,7 +200,7 @@ others are disabled — there is exactly one controller.
 - **Klipper / Moonraker** — *first-class; the primary target.* With the
   [dragonbreath-klipper](https://github.com/plastikman/dragonbreath-klipper) helper it
   shows up as `[heater_generic dragonbreath]` (M141/M191) plus a fan-only filtration
-  toggle, and AUTO mode follows the printer bed. Validated end-to-end on hardware.
+  toggle, and AUTO mode follows the loaded filament's zone profile. Validated end-to-end on hardware.
 - **Klipper MQTT** — an alternative for managed Klipper installs that permit
   `moonraker.conf`, `printer.cfg`, and broker configuration but cannot install a
   Klippy extra. Save its broker settings on `/setup`, then open `/km-config` to
