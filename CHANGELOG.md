@@ -7,6 +7,17 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-08-14
+
+### Changed
+- **Control token moved to the device setup page.** The control-token field now
+  lives on the recovery-safe **device setup** page, next to Wi-Fi and the control
+  source, instead of the in-app Settings card — so all network/security settings sit
+  on one page. The redundant **Network & printer** block on the Settings page (whose
+  only action was a redirect to setup) has been removed.
+- Bumped **dragon-core** to **v0.20.0** (control-token relocation; also carries the
+  normalized Bambu print phases + print-progress exposure from v0.18–v0.19).
+
 ## [1.1.7] - 2026-08-13
 
 ### Added
