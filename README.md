@@ -2,7 +2,7 @@
 
 Open firmware for the **BIGTREETECH Panda Breath** chamber heater (ESP32-C3),
 providing local web control and a selectable control source — **Klipper/Moonraker**
-(default), **Home Assistant** (MQTT Discovery), or **Bambu LAN** (experimental).
+(default), **Home Assistant** (MQTT Discovery), or **Bambu LAN**.
 
 Sibling to [OpenVent](https://github.com/justinh-rahb/OpenVent) — part of an
 open-firmware **family for the BTT Panda line** that shares a common core.
@@ -117,7 +117,7 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | Flasher (`tools/flash.py`) | ✅ Recovery/backup tool: `--backup-only` saves a verified full stock backup, `--restore` writes one back, default path unbricks over USB |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware — accepts a DragonBreath **or** a stock `panda_breath` image (for revert); refused while heating |
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |
-| Control source (`dc_source`/`dc_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (experimental, untested on real hardware) |
+| Control source (`dc_source`/`dc_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (validated on real hardware) |
 | On-device diagnostics pages | ✅ `/diag` (live SSE telemetry + trend + CSV) and `/console` (firmware `ESP_LOGx` viewer via auth-gated `GET /api/v2/console`) — shipped v0.8.0 |
 | Diagnostics (`tools/diag.py`) | ✅ Read-only 2 Hz logger (chamber/PTC/SSR/mode/fault + resolved Rref) → live view + CSV; run during a heat cycle to capture behavior. `python3 tools/diag.py [host] [token]` |
 
@@ -208,11 +208,10 @@ others are disabled — there is exactly one controller.
 - **Home Assistant** — *first-class.* Native MQTT Discovery: the device advertises a
   climate entity plus chamber/element sensors, takes setpoint/mode commands over MQTT,
   and publishes retained state. Validated against a live Home Assistant instance.
-- **Bambu (LAN)** — *experimental — **testers wanted.*** A LAN-MQTT client that follows
-  a Bambu printer's bed/chamber the way AUTO follows Moonraker. It is wired up and
-  builds, but has **not been tested on a real Bambu printer** (we don't have one). If
-  you can help, please [open an issue](../../issues) with logs from an actual Bambu
-  setup — that's what it needs to graduate from experimental.
+- **Bambu (LAN)** — *fully supported.* A LAN-MQTT client that follows the loaded
+  filament's zone profile in AUTO, reading the printer's state over its on-device LAN
+  broker (`bblp` + LAN access code) — no vendor cloud. Validated end-to-end on a real
+  Bambu printer by community testers.
 
 ## Control API & access
 `pb_httpd` exposes the versioned HTTP/JSON API on port 80:

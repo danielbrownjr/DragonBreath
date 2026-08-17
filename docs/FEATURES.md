@@ -28,8 +28,8 @@ accepted and never cached.
 **Control source (choose one).** The device binds to exactly one printer/controller
 at a time, selected on `/setup`: **Klipper/Moonraker** (default, hardware-validated),
 **Home Assistant** (native MQTT Discovery — climate entity + chamber/element sensors;
-validated against a live HA instance), or **Bambu LAN** (experimental, read-only
-bed-follow; not yet validated on a real printer). They are mutually exclusive; the
+validated against a live HA instance), or **Bambu LAN** (read-only, follows the
+loaded filament's zone profile; validated on a real printer). They are mutually exclusive; the
 selection drives AUTO's bed feed and is reported as `environment.control_source`
 (`klipper`/`bambu`/`ha`) in the state API. The heater safety model is identical and
 source-independent.
@@ -198,9 +198,9 @@ For AUTO mode, DragonBreath reads the bed state from whichever **control source*
 selected on `/setup` (see *Control modes* above): Moonraker (Klipper, default), Home
 Assistant over MQTT, or a Bambu printer over its LAN MQTT. This mirrors the stock
 firmware's own multi-source support (Moonraker / Bambu MQTT / Home Assistant MQTT) —
-Klipper is the default and hardware-validated path, HA is validated, and Bambu is
-experimental. None of these require a vendor cloud (Bambu uses the printer's on-device
-LAN broker).
+Klipper is the default and hardware-validated path, and HA and Bambu are both
+validated on real hardware. None of these require a vendor cloud (Bambu uses the
+printer's on-device LAN broker).
 
 ## Platform / release
 
