@@ -7,6 +7,13 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-08-18
+
+### Changed
+- **Quick-control presets save automatically.** The Settings → *Quick-control presets*
+  card no longer has a Save button — edits apply live on change (with a brief "Saved"
+  confirmation), matching the *Filament zones* card. Bumps **dragon-core** to **v0.22.0**.
+
 ## [1.1.8] - 2026-08-14
 
 ### Changed
