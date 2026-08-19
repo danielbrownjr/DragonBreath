@@ -7,6 +7,16 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.10] - 2026-08-19
+
+### Fixed
+- **Moonraker connection can no longer silently die.** A half-open WebSocket used
+  to leave the device "connected" but frozen on stale idle data forever (it stopped
+  tracking the printer right after coming online). Added WebSocket ping/pong plus a
+  staleness watchdog that force-reconnects (and re-subscribes) if no update arrives
+  for ~45 s. Bumps **dragon-core** to **v0.24.0**. Hardware-validated across a
+  printer-host reboot.
+
 ## [1.1.9] - 2026-08-18
 
 ### Changed
