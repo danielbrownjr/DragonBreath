@@ -95,6 +95,8 @@ heater is on).
 python3 tools/flash.py --backup-only                                 # save a stock backup
 python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB restore
 ```
+**On Windows, use the `py` launcher, not `python`** (`py -m pip install esptool`, then
+`py tools\flash.py …`) — see [`docs/WINDOWS_RECOVERY.md`](docs/WINDOWS_RECOVERY.md).
 
 ## Status
 | Component | State |

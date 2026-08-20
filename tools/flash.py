@@ -23,6 +23,9 @@ over the on-board CH340K USB-C UART bridge. Plug the board's USB-C into your PC;
 esptool auto-detects the port (override with --port).
 
 Requires esptool (`pip install esptool`, or the copy bundled with ESP-IDF).
+On Windows use the `py` launcher, not `python`: `py -m pip install esptool` then
+`py flash.py ...` — other apps' python.exe on PATH (Inkscape/GIMP/…) can otherwise
+shadow the Python you installed esptool into. See docs/WINDOWS_RECOVERY.md.
 Tested against a V1.0.1 board — verify your board revision first.
 """
 import argparse
@@ -87,8 +90,15 @@ def check_esptool():
                                 stderr=subprocess.STDOUT)
         return True
     except Exception:
-        print("ERROR: esptool not found. Install it with:  pip install esptool")
-        print("       (or run this from an ESP-IDF environment: . ~/esp/esp-idf/export.sh)")
+        print(f"ERROR: esptool not found for THIS Python:\n         {sys.executable}")
+        print("       Install it into this exact interpreter:")
+        print(f'         "{sys.executable}" -m pip install esptool')
+        print("       On Windows, if that path is not your real Python (e.g. it points")
+        print("       at Inkscape/GIMP/etc.), use the 'py' launcher for BOTH steps so")
+        print("       pip and this script share one interpreter:")
+        print("         py -m pip install esptool")
+        print("         py flash.py ...")
+        print("       (or run from an ESP-IDF environment: . ~/esp/esp-idf/export.sh)")
         return False
 
 
@@ -186,17 +196,18 @@ def do_restore(port, bauds, image):
     if not confirm("This OVERWRITES the entire chip. Continue?"):
         print("Aborted.")
         return 1
-    rc, baud = run_esptool(port, bauds,
-                           "--before", "default_reset", "--after", "hard_reset",
-                           "write_flash", "--flash_size", "detect", "0x0", image)
+    rc, _ = run_esptool(port, bauds,
+                        "--before", "default_reset", "--after", "hard_reset",
+                        "write_flash", "--flash_size", "detect", "0x0", image)
     if rc != 0:
         return rc
-    print("  verifying restored image against the chip (hash)...")
-    if run(esptool_cmd(port, baud, "verify_flash", "0x0", image)) != 0:
-        print("WARNING: post-restore verification FAILED — the chip may not match "
-              "the image. Re-run the restore.")
-        return 1
-    print("  restore verified OK.")
+    # write_flash already verifies the write inline ("Hash of data verified") before
+    # the reset. Do NOT run a second verify_flash here: --after hard_reset boots the
+    # restored firmware, which immediately rewrites its own NVS and PHY/RF-calibration
+    # regions, so a full-chip re-read no longer matches the file (guaranteed with an
+    # nvs-scrubbed backup) and reports a *false* "digest mismatch."
+    print("  restore complete — write hash-verified; the device is rebooting into "
+          "the restored firmware.")
     return 0
 
 
