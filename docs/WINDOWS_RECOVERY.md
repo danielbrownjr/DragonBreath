@@ -74,6 +74,22 @@ no separate post-write verify: the firmware rewrites its own NVS/calibration on 
 boot, so a re-read would falsely "mismatch" — the inline hash above is the real
 check.)
 
+## Reset the config only (keep the firmware)
+
+If the device is booting fine but you're locked out — wrong Wi-Fi, a forgotten
+control token, or a bad saved setting — you don't need a full restore. Erase just
+the config (NVS) region and the device comes back up unconfigured, serving its own
+setup AP again:
+
+```
+py flash.py --erase-nvs
+```
+
+This clears Wi-Fi credentials, the control token, saved policy, and sensor
+calibration; the firmware itself is untouched. It's the USB equivalent of the
+on-device **Power + Auto reset combo** (hold both front buttons for 5 seconds — all
+panel LEDs flash 3× to confirm, then the board reboots erased).
+
 ## Notes
 
 - **Always `py`, never `python`.** If `py` somehow isn't available, use the full path

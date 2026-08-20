@@ -111,6 +111,26 @@ static void led_task(void *arg)
     }
 }
 
+void pb_leds_flash_all(uint8_t times, uint16_t on_ms, uint16_t off_ms)
+{
+    // Take the panel away from the pattern-driven task for the duration so a
+    // concurrent pb_policy update can't stomp the flash mid-blink. We never
+    // resume it — the caller reboots right after this returns.
+    if (s_task) vTaskSuspend(s_task);
+    for (uint8_t n = 0; n < times; n++) {
+#ifndef CONFIG_PB_HIL_DEVBOARD
+        for (int i = 0; i < PB_LED_COUNT; i++)
+            if (PB_LED_DRIVEN(i)) gpio_set_level(s_gpio[i], 1);
+#endif
+        vTaskDelay(pdMS_TO_TICKS(on_ms));
+#ifndef CONFIG_PB_HIL_DEVBOARD
+        for (int i = 0; i < PB_LED_COUNT; i++)
+            if (PB_LED_DRIVEN(i)) gpio_set_level(s_gpio[i], 0);
+#endif
+        vTaskDelay(pdMS_TO_TICKS(off_ms));
+    }
+}
+
 esp_err_t pb_leds_start(void)
 {
     if (s_task) return ESP_ERR_INVALID_STATE;

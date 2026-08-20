@@ -48,6 +48,14 @@ void pb_leds_set_code(pb_led_id_t id, uint8_t pulses);
 // Current logical pattern, including when dev-board HIL compiles GPIO out.
 pb_led_pattern_t pb_leds_get(pb_led_id_t id);
 
+// Blocking, all-LEDs acknowledgement flash: suspends the driver task (so nothing
+// re-asserts patterns underneath it), then drives every physically-driven panel
+// LED on/off `times`, and returns with the driver still suspended. Ignores the
+// master-enable flag — the flash always shows. Intended as a terminal
+// confirmation right before a reboot (e.g. the Power+Auto NVS-reset combo); the
+// caller is expected to esp_restart() after, so the task is never resumed.
+void pb_leds_flash_all(uint8_t times, uint16_t on_ms, uint16_t off_ms);
+
 // --- Status-LED master enable (NVS-backed, namespace app_nvs, default ON) -----
 // When disabled the driver task leaves every panel LED physically off; pb_policy
 // still computes patterns (pb_leds just no-ops the GPIO output). The pattern
