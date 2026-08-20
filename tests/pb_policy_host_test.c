@@ -330,49 +330,44 @@ static void test_lease_expiry_latches_watchdog_fault(void)
     CHECK(pb_policy_heartbeat(&lease) == PB_POLICY_STALE_LEASE);
 }
 
-static void test_auto_requires_live_moonraker_and_uses_hysteresis(void)
+// AUTO now follows the active print's filament-profile target (src_target_c) and
+// ONLY while the source (Moonraker/Bambu) is connected — bed-threshold heating was
+// removed in "AUTO follows the filament profile" (PR #81). This pins the live-source
+// gate (fail-safe: no source, no heat); the engage/target/clamp behavior is covered
+// by test_auto_source_zone_overrides_bed_threshold.
+static void test_auto_requires_live_source(void)
 {
     reset_fixture();
     CHECK(pb_policy_set_auto(
         60.0f, 100.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
 
-    pb_policy_set_env(99.0f, 99.0f, true, 0.0f);
-    pb_policy_tick();
-    CHECK(snapshot().effective_target_c == 0.0f);
-
+    // A high bed setpoint no longer engages AUTO on its own (no zone target).
     pb_policy_set_env(100.0f, 100.0f, true, 0.0f);
     pb_policy_tick();
     pb_policy_snapshot_t snap = snapshot();
-    CHECK(snap.auto_engaged);
-    CHECK(snap.effective_target_c == 60.0f);
+    CHECK(!snap.auto_engaged);
+    CHECK(snap.effective_target_c == 0.0f);
 
-    pb_policy_set_env(98.0f, 98.0f, true, 0.0f);
-    pb_policy_tick();
-    CHECK(snapshot().auto_engaged);
-
-    pb_policy_set_env(96.9f, 96.9f, true, 0.0f);
+    // A zone target with the source DISCONNECTED must not heat (fail-safe).
+    pb_policy_set_env(20.0f, 0.0f, false, 55.0f);
     pb_policy_tick();
     snap = snapshot();
     CHECK(!snap.auto_engaged);
     CHECK(snap.effective_target_c == 0.0f);
 
-    pb_policy_set_env(105.0f, 105.0f, false, 0.0f);
+    // Source connected + zone target -> engage to the zone target.
+    pb_policy_set_env(20.0f, 0.0f, true, 55.0f);
     pb_policy_tick();
-    CHECK(!snapshot().auto_engaged);
+    snap = snapshot();
+    CHECK(snap.auto_engaged);
+    CHECK(snap.effective_target_c == 55.0f);
 
-    // Setpoint parity: AUTO triggers on the commanded bed SETPOINT, not the
-    // measured bed temperature. A cold bed with a high setpoint engages
-    // immediately; a hot bed whose setpoint has dropped disengages.
-    CHECK(pb_policy_set_auto(
-        60.0f, 100.0f, DB_SOURCE_WEB, PB_POLICY_REVISION_ANY) == PB_POLICY_OK);
-    pb_policy_set_env(20.0f /*measured cold*/, 100.0f /*setpoint*/, true, 0.0f);
+    // Losing the source mid-print disengages, even with the zone target still set.
+    pb_policy_set_env(20.0f, 0.0f, false, 55.0f);
     pb_policy_tick();
-    CHECK(snapshot().auto_engaged);
-    CHECK(snapshot().effective_target_c == 60.0f);
-    pb_policy_set_env(99.0f /*measured hot*/, 0.0f /*setpoint cleared*/, true, 0.0f);
-    pb_policy_tick();
-    CHECK(!snapshot().auto_engaged);
-    CHECK(snapshot().effective_target_c == 0.0f);
+    snap = snapshot();
+    CHECK(!snap.auto_engaged);
+    CHECK(snap.effective_target_c == 0.0f);
 }
 
 static void test_auto_filtration_band_fan_only_not_cooldown(void)
@@ -493,7 +488,8 @@ static void test_runtime_limits_drive_auto_and_remote_lease(void)
     CHECK(pb_policy_set_auto(
         65.0f, 100.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
     CHECK(snapshot().requested_target_c == 52.0f);
-    pb_policy_set_env(100.0f, 100.0f, true, 0.0f);
+    // AUTO heats to the live filament-zone target (65), clamped to the runtime max (52).
+    pb_policy_set_env(20.0f, 0.0f, true, 65.0f);
     pb_policy_tick();
     CHECK(snapshot().effective_target_c == 52.0f);
 
@@ -757,7 +753,8 @@ static void test_panel_leds_track_mode(void)
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_BLINK_SLOW);
     CHECK(led_pattern[PB_LED_ON] == PB_LED_OFF);
 
-    pb_policy_set_env(105.0f, 105.0f, true, 0.0f);
+    // Live source + a filament-zone target engages AUTO -> solid LED.
+    pb_policy_set_env(20.0f, 0.0f, true, 55.0f);
     pb_policy_tick();
     CHECK(snapshot().auto_engaged);
     CHECK(led_pattern[PB_LED_AUTO] == PB_LED_SOLID);
@@ -1204,7 +1201,7 @@ int main(void)
     test_remote_lease_and_stale_revision();
     test_new_command_supersedes_old_lease_and_off_is_unconditional();
     test_lease_expiry_latches_watchdog_fault();
-    test_auto_requires_live_moonraker_and_uses_hysteresis();
+    test_auto_requires_live_source();
     test_auto_source_zone_overrides_bed_threshold();
     test_auto_filtration_band_fan_only_not_cooldown();
     test_filtration_band_runs_outside_auto();
