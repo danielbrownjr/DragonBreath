@@ -26,19 +26,50 @@ Klipper. **It is bed-temperature only** — no filament, no other state.
 Native support folds that Pi's whole job into the ESP32: `esp_http_client` polling
 PrusaLink directly.
 
-## PrusaLink API (verified: OpenAPI spec, pyprusalink, filabridge)
+## PrusaLink API (verified against Prusa-Firmware-Buddy source — the Core One firmware)
 
-- **Plain HTTP, port 80, no TLS.** `esp_http_client` with zero cert handling.
-- **Auth: `X-Api-Key: <key>` header** on every request — works on current Buddy /
-  Core One firmware (undocumented but relied on in production by filabridge). The
-  *documented* scheme is Digest (`maker` / api-key) needing an MD5 challenge round
-  trip; keep it as a **deferred fallback**, don't build it first.
-- **`GET /api/v1/status`** → everything a bed reading needs:
-  - `printer.temp_bed` (float °C), `printer.target_bed` (float °C, `0` when off)
-  - `printer.state` — `IDLE / PRINTING / PAUSED / FINISHED / ERROR / …`
-- **Polling etiquette:** the printer's embedded HTTP server is socket-starved. Poll
-  **no faster than ~2 s (5 s comfortable)** and **reuse one keep-alive TCP socket**
-  across cycles rather than reconnecting.
+Confirmed by reading the shipping firmware, not just the OpenAPI spec / third-party clients:
+
+- **Plain HTTP, port 80, no TLS.** `esp_http_client` with zero cert handling. (`nhttp`
+  is the on-device HTTP server.)
+- **Auth: `X-Api-Key: <key>` on every `/api/*` request.** The key **is the printer's
+  PrusaLink password**; missing/wrong → **HTTP 401**
+  (`tests/integration/test_prusa_link.py`, `utils/gen-automata/http_server.py`). This is
+  real and load-bearing in the shipping firmware, not just filabridge lore. The
+  *documented* Digest scheme (`maker` / api-key, MD5 challenge) stays a **deferred
+  fallback** — don't build it first.
+- **`GET /api/v1/status`** — exact body from `lib/WUI/nhttp/status_renderer.cpp`:
+  ```json
+  { "job": { "id", "progress", "time_remaining", "time_printing" },
+    "storage": {...}, "transfer": {...},
+    "printer": {
+      "state": "IDLE|PRINTING|PAUSED|FINISHED|STOPPED|READY|BUSY|ATTENTION",
+      "temp_bed": 24.5, "target_bed": 0.0,        // floats @1dp; target_bed 0 = off
+      "temp_nozzle": 0.0, "target_nozzle": 0.0, "axis_z": 0.0,
+      "flow": 100, "speed": 100, "fan_hotend": 0, "fan_print": 0
+  } }
+  ```
+  - Bed-follow needs only `printer.target_bed` (+ `temp_bed` for telemetry, `state` to
+    optionally gate). State strings come from `printer_state::to_str`
+    (`src/state/printer_state.cpp`): `IDLE / PRINTING / PAUSED / FINISHED / STOPPED /
+    READY / BUSY / ATTENTION`.
+  - **No chamber/enclosure temperature field — even on the enclosed Core One.** PrusaLink
+    cannot report chamber temp, so DragonBreath's own chamber sensor stays the source of truth.
+  - **No filament type** (see next section) — confirmed; `job` carries no dependable material.
+- **Legacy OctoPrint API also present** (`/api/printer`, `/api/job` with `state.text`
+  "Operational"/"Printing" + flags). We target the modern **`/api/v1/status`**: one call,
+  cleaner shape, and it's what the Core One's own web UI uses.
+- **Polling etiquette:** `nhttp` is socket-starved. Poll **no faster than ~2 s (5 s
+  comfortable)** and **reuse one keep-alive TCP socket** across cycles rather than reconnecting.
+
+## Developing without a printer (mock PrusaLink)
+
+`tools/prusalink_mock.py` (this repo) stands in for a Core One exactly like Bambuddy did
+for Bambu — it serves the verified `/api/v1/status` + `/api/version` shape, enforces
+`X-Api-Key` → 401, and simulates a bed heat-soak (`temp_bed` ramps toward `target_bed`).
+State/targets are drivable at runtime (`POST /mock/set`), so `dc_prusa` can be built and
+exercised end-to-end on real ESP32 hardware against a laptop on the LAN. A Core One owner
+only does the final real-printer confidence pass.
 
 ## The filament gap (the one real design constraint)
 
@@ -119,8 +150,10 @@ of WebSocket (the **first `esp_http_client` source** in the codebase):
 
 ## Open questions
 
-- Confirm `X-Api-Key` on the exact Core One firmware a tester runs (fall back to
-  Digest only if a firmware update drops the header path).
+- ~~Confirm `X-Api-Key` on the exact Core One firmware~~ — **RESOLVED** by reading
+  Prusa-Firmware-Buddy: `X-Api-Key` gates every `/api/*` route, its value is the
+  PrusaLink password, and a mismatch returns 401. Digest remains a deferred fallback
+  only if a future firmware drops the header path.
 - Default bed threshold / chamber setpoint values — pick sane defaults with a Core One
   owner rather than guessing.
 - Whether to surface `printer.state` (PRINTING/PAUSED) to gate engagement, or engage
