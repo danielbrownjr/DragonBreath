@@ -98,6 +98,18 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 **On Windows, use the `py` launcher, not `python`** (`py -m pip install esptool`, then
 `py tools\flash.py …`) — see [`docs/WINDOWS_RECOVERY.md`](docs/WINDOWS_RECOVERY.md).
 
+### Locked out? Hard-reset from the front panel — no computer needed
+
+Wrong Wi-Fi, a forgotten control token, or a bad setting can lock you out of the web
+UI. You don't need USB or a reflash: **hold the Power + Auto buttons together for 5
+seconds.** All panel LEDs flash **3×** to confirm, then the device wipes its
+configuration (Wi-Fi credentials, control token, saved policy, sensor calibration)
+and reboots into its own setup AP for re-provisioning. The firmware is untouched, and
+the reboot cuts the heater, so it's a safe escape hatch.
+
+Prefer to do it over USB? `tools/flash.py --erase-nvs` clears the same config region
+without touching the firmware.
+
 ## Status
 | Component | State |
 |---|---|
@@ -117,6 +129,7 @@ python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin    # full USB
 | Fan-only filtration | ✅ Standing fan-only band (`filter_temp`, opt-in/**off by default**) — runs on the bed setpoint independent of mode (stock-shaped) + mode-independent manual `filter` control (dashboard + API); idle-only to enable |
 | Install / revert | ✅ **No-USB**: installs over stock as an app-only OTA (stock partition layout); revert via **Boot inactive slot** or by re-uploading a stock image over web OTA |
 | Flasher (`tools/flash.py`) | ✅ Recovery/backup tool: `--backup-only` saves a verified full stock backup, `--restore` writes one back, default path unbricks over USB |
+| Front-panel hard reset | ✅ **Hold Power + Auto 5 s** → LEDs flash 3× → wipes config (Wi-Fi/token/policy/calibration) + reboots to the setup AP. No computer needed; USB twin is `flash.py --erase-nvs` |
 | Web OTA update | ✅ Dual-OTA + rollback; upload from the UI, verified on hardware — accepts a DragonBreath **or** a stock `panda_breath` image (for revert); refused while heating |
 | HIL (`pb_hil` / `tools/hil.py`) | ✅ CH341 devboard suite and non-heating real-Panda UART build/flash/no-flash workflows qualified on hardware; native-USB runtime pending on the tested devboard |
 | Control source (`dc_source`/`dc_bambu`/`pb_ha`) | ✅ Single-select on `/setup` (mutually exclusive): Klipper/Moonraker (default, validated) · Home Assistant MQTT Discovery (validated on live HA) · Bambu LAN MQTT (validated on real hardware) |
