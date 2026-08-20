@@ -7,6 +7,24 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.11] - 2026-08-20
+
+### Added
+- **Wi-Fi AP availability modes.** The setup/recovery access point can now be set to
+  **Always on** (default), **On for 15 minutes after reboot**, or **Off** (API-only).
+  The AP runs concurrently with your normal Wi-Fi, so the setup portal stays reachable
+  even when the device is on your LAN. Bumps **dragon-core** to **v0.27.0**.
+- **On-device reset combo.** Hold **Power + Auto** together for 5 seconds to erase the
+  device configuration (Wi-Fi credentials, control token, saved policy, calibration)
+  and reboot — all panel LEDs flash 3× to confirm. A fail-safe way back in if you're
+  ever locked out (the reboot also cuts the heater).
+- **`flash.py --erase-nvs`.** The USB equivalent of the reset combo: clears only the
+  config (NVS) region, leaving the firmware intact.
+
+### Fixed
+- **The Wi-Fi setup page now opens automatically** when you connect to a fresh or
+  just-erased device's setup AP (it could previously land on the home page instead).
+
 ## [1.1.10] - 2026-08-19
 
 ### Fixed
