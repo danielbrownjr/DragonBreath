@@ -8,11 +8,19 @@
 // A short press fires on release; a long press (2 s) fires once at the threshold
 // and suppresses the trailing short. A button held at power-on (or a shorted
 // line) is ignored until it releases — see pb_buttons_sm.h.
+//
+// Recovery combo: Power + Auto held together for PB_BTN_RESET_COMBO_MS emits a
+// single PB_BUTTON_RESET event (and suppresses those two buttons' own
+// short/long events for that hold). app_main handles it by erasing NVS and
+// rebooting — the on-device twin of `flash.py --erase-nvs`.
 #pragma once
 
 #include <stdbool.h>
 
 #include "esp_err.h"
+
+// Hold time for the Power+Auto recovery combo.
+#define PB_BTN_RESET_COMBO_MS 5000
 
 typedef enum {
     PB_BUTTON_POWER = 0,   // GPIO9  (⚠ ROM download-mode strap)
@@ -25,6 +33,7 @@ typedef enum {
 typedef enum {
     PB_BUTTON_SHORT,
     PB_BUTTON_LONG,
+    PB_BUTTON_RESET,   // Power+Auto held PB_BTN_RESET_COMBO_MS: erase NVS + reboot
 } pb_button_event_t;
 
 typedef void (*pb_button_cb_t)(pb_button_id_t id, pb_button_event_t ev);

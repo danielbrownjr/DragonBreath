@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <stdbool.h>
@@ -81,9 +82,19 @@ static void control_wake(void)
     if (s_control_task) xTaskNotifyGive(s_control_task);
 }
 
-// Thin adapter: the button driver's event -> the policy handler.
+// Thin adapter: the button driver's event -> the policy handler. The Power+Auto
+// recovery combo is intercepted here (not forwarded to policy): flash all panel
+// LEDs 3x as a "config erased" acknowledgement, wipe NVS, and reboot. The reboot
+// itself cuts the heater, so this is inherently fail-safe.
 static void button_cb(pb_button_id_t id, pb_button_event_t ev)
 {
+    if (ev == PB_BUTTON_RESET) {
+        ESP_LOGW(TAG, "reset combo: erasing NVS (config) and rebooting");
+        pb_leds_flash_all(3, 200, 200);   // ~1.2 s all-LEDs acknowledgement
+        (void)nvs_flash_erase();
+        esp_restart();
+        return;   // unreachable
+    }
     pb_policy_on_button(id, ev);
 }
 

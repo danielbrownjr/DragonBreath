@@ -67,15 +67,41 @@ static void configure_pin(gpio_num_t pin)
 }
 #endif
 
+#define PB_BTN_RESET_COMBO_TICKS (PB_BTN_RESET_COMBO_MS / PB_BTN_TICK_MS)
+
 static void button_task(void *arg)
 {
     (void)arg;
+    int combo_ticks = 0;
     for (;;) {
+        // Step every button first so debounce/long-press timing is unaffected,
+        // capturing this tick's event per button.
+        pb_btn_event_t evs[PB_BUTTON_COUNT];
+        for (int i = 0; i < PB_BUTTON_COUNT; ++i)
+            evs[i] = pb_buttons_sm_step(&s_btns[i].sm, sample(&s_btns[i]));
+
+        // Recovery combo: Power + Auto both debounced-held. While it's building we
+        // swallow those two buttons' own short/long events (so the hold doesn't
+        // also fire Power's panic-off or Auto's mode toggle); at the threshold we
+        // emit exactly one PB_BUTTON_RESET. esp_restart() in the handler means the
+        // == test can never re-fire.
+        bool combo = s_btns[PB_BUTTON_POWER].sm.pressed &&
+                     s_btns[PB_BUTTON_AUTO].sm.pressed;
+        if (combo) {
+            if (++combo_ticks == PB_BTN_RESET_COMBO_TICKS) {
+                ESP_LOGW(TAG, "Power+Auto held %d ms: emitting reset combo",
+                         PB_BTN_RESET_COMBO_MS);
+                if (s_cb) s_cb(PB_BUTTON_POWER, PB_BUTTON_RESET);
+            }
+        } else {
+            combo_ticks = 0;
+        }
+
         for (int i = 0; i < PB_BUTTON_COUNT; ++i) {
-            pb_btn_event_t ev = pb_buttons_sm_step(&s_btns[i].sm, sample(&s_btns[i]));
-            if (ev == PB_BTN_EV_NONE || !s_cb) continue;
+            if (evs[i] == PB_BTN_EV_NONE || !s_cb) continue;
+            if (combo && (i == PB_BUTTON_POWER || i == PB_BUTTON_AUTO)) continue;
             s_cb(s_btns[i].id,
-                 ev == PB_BTN_EV_LONG ? PB_BUTTON_LONG : PB_BUTTON_SHORT);
+                 evs[i] == PB_BTN_EV_LONG ? PB_BUTTON_LONG : PB_BUTTON_SHORT);
         }
         vTaskDelay(pdMS_TO_TICKS(PB_BTN_TICK_MS));
     }

@@ -18,6 +18,9 @@ return to stock:
     # Restore a previous backup (e.g. go back to stock):
     python3 tools/flash.py --restore backups/stock-YYYYmmdd-HHMMSS.bin
 
+    # Reset config only (Wi-Fi/token/policy/calibration) — keep the firmware:
+    python3 tools/flash.py --erase-nvs
+
 The Panda Breath has no exposed native-USB (GPIO18 is the SSR), so flashing is
 over the on-board CH340K USB-C UART bridge. Plug the board's USB-C into your PC;
 esptool auto-detects the port (override with --port).
@@ -37,6 +40,12 @@ import sys
 
 CHIP = "esp32c3"
 FLASH_SIZE = 0x400000  # 4 MB
+# NVS (config) partition — matches partitions.csv. Erasing only this wipes Wi-Fi
+# credentials, control token, saved policy, and sensor calibration, forcing AP
+# re-provisioning on next boot — WITHOUT touching the firmware. The minimal
+# "reset my config" fix (same effect as the on-device Power+Auto reset combo).
+NVS_OFFSET = 0x9000
+NVS_SIZE   = 0x5000    # 20 KB
 # DragonBreath image layout — matches partitions.csv (stock Panda layout: otadata
 # @ 0xe000, app slot ota_0 @ 0x10000). This is the USB/recovery "factory" write.
 IMAGES = [
@@ -211,6 +220,27 @@ def do_restore(port, bauds, image):
     return 0
 
 
+def do_erase_nvs(port, bauds):
+    # Erase ONLY the NVS/config region — the firmware is untouched. This is the
+    # USB equivalent of the on-device Power+Auto reset combo: it clears Wi-Fi
+    # credentials, the control token, saved policy, and sensor calibration, so
+    # the device comes back up unconfigured (its own AP for re-provisioning).
+    print(f"\nErase config only: NVS region {hex(NVS_OFFSET)} + {hex(NVS_SIZE)} "
+          f"({NVS_SIZE // 1024} KB).")
+    print("  Clears Wi-Fi credentials, control token, saved policy, and sensor")
+    print("  calibration. The firmware is left intact; the device re-provisions")
+    print("  (its own AP) on next boot. Same effect as the Power+Auto reset combo.")
+    if not confirm("Erase the config (NVS)?"):
+        print("Aborted.")
+        return 1
+    rc, _ = run_esptool(port, bauds, "erase_region", hex(NVS_OFFSET), hex(NVS_SIZE))
+    if rc != 0:
+        print("ERROR: NVS erase failed.")
+        return rc
+    print("  config erased — power-cycle the board; it will come up unconfigured.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="DragonBreath flasher (backs up stock first).")
     ap.add_argument("--port", help="serial port (default: esptool auto-detect)")
@@ -228,6 +258,10 @@ def main():
                          "the recommended safety net before a no-USB OTA install")
     ap.add_argument("--no-backup", action="store_true",
                     help="skip the pre-flash backup (NOT recommended)")
+    ap.add_argument("--erase-nvs", action="store_true",
+                    help="erase ONLY the NVS/config region (Wi-Fi, control token, "
+                         "policy, calibration) and exit — a config reset that keeps "
+                         "the firmware; the USB twin of the Power+Auto reset combo")
     args = ap.parse_args()
 
     if not check_esptool():
@@ -238,6 +272,9 @@ def main():
 
     if args.restore:
         return do_restore(args.port, bauds, args.restore)
+
+    if args.erase_nvs:
+        return do_erase_nvs(args.port, bauds)
 
     if args.backup_only:
         path, _ = do_backup(args.port, bauds, args.backup_dir)
