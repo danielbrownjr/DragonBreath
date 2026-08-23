@@ -161,12 +161,8 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
     // Source capability: filament-aware (AUTO follows the filament zone) vs bed-follow
     // (AUTO follows the bed setpoint). The dashboard's AUTO card keys off this.
     cJSON_AddBoolToObject(environment, "source_has_filament", dc_source_has_filament(ctl_src));
-    // In Bambu mode, surface the configured serial so the dashboard can label the
-    // row "Bambu (<serial>)" — the LAN report carries no friendly printer name.
+
     if (ctl_src == DC_SRC_BAMBU) {
-        dc_bambu_config_t bc;
-        if (dc_bambu_get_config(&bc) == ESP_OK && bc.serial[0])
-            cJSON_AddStringToObject(environment, "bambu_serial", bc.serial);
         // Surface the active print's filament so the dashboard status card can show
         // "Filament: PETG" while a Bambu print runs (Bambu-only; Klipper drives the
         // chamber via macros and reports no filament here).

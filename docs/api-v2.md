@@ -71,7 +71,6 @@ The complete snapshot, not locally remembered intent, is the source of truth:
   },
   "environment": {
     "control_source": "bambu",
-    "bambu_serial": "00M00A000000000",
     "bambu_printing": true,
     "bambu_filament": "ASA",
     "printer_chamber_temperature_c": 42.3,
@@ -117,16 +116,18 @@ increment it.
 
 `environment.control_source` is the configured control binding — `klipper`,
 `bambu`, or `ha` — chosen on `/setup` (distinct from the top-level `source`, which is
-the last actor that changed state). In `bambu` mode the environment also carries
-`bambu_serial`. `environment.bed_target_c` is the **commanded** bed setpoint from that
-source; it (not the measured `bed_temperature_c`) drives the AUTO heat-engage and the
-fan-only filtration band.
+the last actor that changed state). The printer's configured Bambu serial is intentionally
+not exposed by the public state API; it remains internal to the Bambu MQTT connection.
+`environment.bed_target_c` is the **commanded** bed setpoint from the active source and
+drives the fan-only filtration band.
 
 When the active source is Bambu, `printer_chamber_temperature_c` exposes the printer's
-own chamber sensor for diagnostics. It is `null` when that sample is unavailable or has
-aged out in `dc_bambu`; `printer_chamber_age_ms` is likewise `null` when no usable sample
-exists. These fields are observational only at the API boundary: heater safety still uses
-DragonBreath's local chamber NTC and PTC sensors.
+own chamber sensor used for chamber set-point regulation. It is `null` when that sample is
+unavailable or has aged out in `dc_bambu`; `printer_chamber_age_ms` is likewise `null`
+when no usable sample exists. The API fields are read-only diagnostics. DragonBreath's
+local chamber NTC and PTC remain safety-authoritative; external-sensor regulation is also
+bounded by the local chamber thermal limiter before the independent hard over-temperature
+cutoff.
 
 `fan.reason` is one of: `off`, `heater` (airflow while heating), `thermal_purge`
 (residual-heat cooldown purge), `auto_filter` (the fan-only filtration band),

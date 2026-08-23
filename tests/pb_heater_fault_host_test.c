@@ -105,5 +105,17 @@ int main(void)
     CHECK(ec < PB_HEATER_PTC_CUTOFF_C && er < ec);
     CHECK(PB_HEATER_FB_CUT_MAX_C < PB_HEATER_PTC_CUTOFF_C);   // override ceiling < hard cutoff
     puts("pb_heater element-foldback checks: PASS");
+
+    // --- Local chamber soft limiter for remote regulation ----------------------
+    CHECK(pb_heater_local_foldback_cut(true, 71.9f, false) == false);
+    CHECK(pb_heater_local_foldback_cut(true, 72.0f, false) == true);
+    CHECK(pb_heater_local_foldback_cut(true, 80.0f, false) == true);
+    CHECK(pb_heater_local_foldback_cut(true, 72.0f, true) == true);   // hysteresis holds
+    CHECK(pb_heater_local_foldback_cut(true, 66.9f, true) == false);
+    CHECK(pb_heater_local_foldback_cut(false, 0.0f, true) == true);
+    CHECK(pb_heater_local_foldback_cut(false, 0.0f, false) == false);
+    CHECK(PB_HEATER_LOCAL_FOLDBACK_CUT_C < PB_HEATER_CHAMBER_MAX_C);
+    CHECK(PB_HEATER_LOCAL_FOLDBACK_RESUME_C < PB_HEATER_LOCAL_FOLDBACK_CUT_C);
+    puts("pb_heater local-chamber foldback checks: PASS");
     return 0;
 }

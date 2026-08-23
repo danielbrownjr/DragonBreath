@@ -21,10 +21,23 @@ below into the GitHub Release notes.
   disengages — and an incomplete/partial status response is treated as loss-of-source
   rather than heating on a stale bed target. Validated end-to-end by a Prusa user.
   Bumps **dragon-core** to **v0.28.1**.
+- **Bambu printer-chamber diagnostics.** `GET /api/v2/state` now exposes
+  `environment.printer_chamber_temperature_c` and `printer_chamber_age_ms`.
+  Stale or unavailable Bambu chamber samples are reported as `null`.
 
 ### Fixed
 - **Bambu chamber temperature no longer goes stale silently** — a chamber reading that
   stops updating over MQTT is now expired rather than held indefinitely (dragon-core #47).
+
+### Changed
+- **Bambu chamber regulation now follows the printer's chamber sensor** while keeping
+  DragonBreath's local chamber NTC and PTC safety-authoritative. External-sensor
+  regulation is bounded by a local chamber thermal limiter: heat cuts at **72 °C**
+  local and may resume below **67 °C**, while the independent hard chamber
+  over-temperature latch remains unchanged.
+- **Privacy:** `environment.bambu_serial` is no longer exposed by API v2 state
+  responses. The configured printer serial remains internal and is still used for
+  Bambu MQTT topic selection.
 
 ## [1.1.11] - 2026-08-20
 
