@@ -25,6 +25,7 @@ static SemaphoreHandle_t s_persist_lock;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static float       s_target_c;      // guarded by s_mux
+static float       s_control_chamber_c; // guarded by s_mux; optional external regulation temp
 static bool        s_latched_off;   // guarded by s_mux (set by a safety trip)
 static bool        s_inhibited;     // guarded by s_mux (PERMANENT; reboot-only)
 static int64_t     s_last_link_us;  // guarded by s_mux
@@ -111,6 +112,7 @@ esp_err_t pb_heater_init(void)
     ssr_set(false);                  // guaranteed OFF before any request
     taskENTER_CRITICAL(&s_mux);
     s_target_c = 0.0f;
+    s_control_chamber_c = NAN;
     s_latched_off = false;
     s_fault_reason = NULL;
     s_fault_code = PB_FAULT_NONE;
@@ -161,6 +163,13 @@ float pb_heater_get_target_c(void)
     float t = s_target_c;
     taskEXIT_CRITICAL(&s_mux);
     return t;
+}
+
+void pb_heater_set_control_chamber_c(float temp_c)
+{
+    taskENTER_CRITICAL(&s_mux);
+    s_control_chamber_c = isfinite(temp_c) ? temp_c : NAN;
+    taskEXIT_CRITICAL(&s_mux);
 }
 
 void pb_heater_load_config(void)
@@ -529,11 +538,13 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     }
 
     float   target;
+    float   control_chamber_c;
     bool    latched;
     int64_t last_link;
     int64_t comms_timeout_us;
     taskENTER_CRITICAL(&s_mux);
     target = s_target_c;
+    control_chamber_c = s_control_chamber_c;
     latched = s_latched_off;
     last_link = s_last_link_us;
     comms_timeout_us = s_comms_timeout_us;
@@ -570,11 +581,13 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
 
     // Here: armed && !latched && cs==OK && ps==OK.
     // Step 1 — chamber bang-bang with hysteresis decides the BASE demand (do we want
-    // heat at all). s_heat_intent holds across the hysteresis band; it is the steady
-    // "want heat" latch, distinct from the momentary SSR state s_on.
-    if (chamber_c < (target - PB_HEATER_HYSTERESIS_C)) {
+    // heat at all). If policy supplied a finite external control temperature (for
+    // example the printer-reported chamber sensor), use it ONLY for regulation.
+    // The local chamber NTC above remains authoritative for every safety trip.
+    float regulation_c = isfinite(control_chamber_c) ? control_chamber_c : chamber_c;
+    if (regulation_c < (target - PB_HEATER_HYSTERESIS_C)) {
         s_heat_intent = true;
-    } else if (chamber_c >= target) {
+    } else if (regulation_c >= target) {
         s_heat_intent = false;
     }
 

@@ -84,7 +84,8 @@ typedef struct {
                                  // zone); 0 = none. When >0 in AUTO it engages heat to
                                  // this target directly, bypassing the bed threshold.
     float chamber_src_c;         // printer-reported chamber temperature;
-                                 // NAN = unavailable, observer-only for now
+                                 // NAN = unavailable; used for regulation when
+                                 // the external source is live
 
     int64_t drying_deadline_us;
     int64_t local_power_deadline_us;
@@ -1012,6 +1013,12 @@ void pb_policy_tick(void)
             pb_heater_notify_link_alive();
     }
 
+    float control_chamber_c =
+        (s.mk_connected && isfinite(s.chamber_src_c))
+            ? s.chamber_src_c
+            : NAN;
+
+    pb_heater_set_control_chamber_c(control_chamber_c);
     pb_heater_tick();
 
     bool heat = pb_heater_heat_mode();

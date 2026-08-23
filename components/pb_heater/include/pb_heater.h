@@ -194,6 +194,12 @@ esp_err_t pb_heater_init(void);
 esp_err_t pb_heater_set_target_c(float target_c);
 float pb_heater_get_target_c(void);
 
+// Optional external chamber measurement used ONLY for set-point regulation.
+// Pass NAN to fall back to the local chamber NTC. The local chamber NTC and PTC
+// remain authoritative for over-temperature trips, sensor-fault detection, and
+// all other safety decisions regardless of this value.
+void pb_heater_set_control_chamber_c(float temp_c);
+
 // --- Runtime-configurable, persisted settings (pb_heater is the sole owner) ---
 // Load persisted settings from NVS (namespace app_nvs). MUST be called AFTER
 // nvs_init() — pb_heater_init() only sets conservative defaults (nvs isn't up
@@ -231,8 +237,10 @@ float     pb_heater_get_fb_cut_c(void);
 // pb_heater_get_comms_timeout_ms() while heating, the heater latches off.
 void pb_heater_notify_link_alive(void);
 
-// Periodic control tick (call at ~1-2 Hz). Reads chamber + PTC temps, enforces
-// all safety cutoffs, and drives the SSR with hysteresis around the set-point.
+// Periodic control tick (call at ~1-2 Hz). Reads the local chamber + PTC temps,
+// enforces all safety cutoffs from those local sensors, and drives the SSR with
+// hysteresis around the set-point using the optional external regulation
+// temperature when one is supplied.
 void pb_heater_tick(void);
 
 // Immediate, latching shutoff. Clears the target and latches off. Heat stays off

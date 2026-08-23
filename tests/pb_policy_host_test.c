@@ -13,6 +13,7 @@ static int64_t fake_now_us;
 static unsigned random_generation;
 static float heater_target;
 static bool heater_on;
+static float heater_control_chamber_c = NAN;
 static bool heater_fault;
 static bool heater_inhibited;
 static const char *heater_reason;
@@ -59,6 +60,11 @@ esp_err_t pb_heater_set_target_c(float target)
     if (target > heater_max_target_c) target = heater_max_target_c;
     heater_target = target;
     return ESP_OK;
+}
+
+void pb_heater_set_control_chamber_c(float temp_c)
+{
+    heater_control_chamber_c = isfinite(temp_c) ? temp_c : NAN;
 }
 
 float pb_heater_get_target_c(void) { return heater_target; }
@@ -218,6 +224,7 @@ static void reset_nvs(void)
 static void reset_fixture(void)
 {
     reset_nvs();
+    heater_control_chamber_c = NAN;
     fake_now_us = 1000000;
     heater_target = 0.0f;
     heater_on = false;
@@ -368,6 +375,31 @@ static void test_auto_requires_live_source(void)
     snap = snapshot();
     CHECK(!snap.auto_engaged);
     CHECK(snap.effective_target_c == 0.0f);
+}
+
+// External printer chamber temperature is forwarded to pb_heater only while
+// the source is live. A disconnect (or invalid reading) clears the external
+// control input so pb_heater falls back to its local chamber NTC.
+static void test_external_chamber_control_forwarding(void)
+{
+    reset_fixture();
+
+    // A valid chamber reading from a live source reaches the heater control seam.
+    pb_policy_set_env(20.0f, 0.0f, true, 55.0f, 42.5f);
+    pb_policy_tick();
+    CHECK(isfinite(heater_control_chamber_c));
+    CHECK(fabsf(heater_control_chamber_c - 42.5f) < 0.001f);
+
+    // Losing the source must invalidate the external control reading even if the
+    // last reported chamber value remains present in policy state.
+    pb_policy_set_env(20.0f, 0.0f, false, 55.0f, 42.5f);
+    pb_policy_tick();
+    CHECK(isnan(heater_control_chamber_c));
+
+    // A non-finite source reading also selects the local-NTC fallback.
+    pb_policy_set_env(20.0f, 0.0f, true, 55.0f, NAN);
+    pb_policy_tick();
+    CHECK(isnan(heater_control_chamber_c));
 }
 
 static void test_auto_filtration_band_fan_only_not_cooldown(void)
@@ -1203,6 +1235,7 @@ int main(void)
     test_lease_expiry_latches_watchdog_fault();
     test_auto_requires_live_source();
     test_auto_source_zone_overrides_bed_threshold();
+    test_external_chamber_control_forwarding();
     test_auto_filtration_band_fan_only_not_cooldown();
     test_filtration_band_runs_outside_auto();
     test_drying_is_bounded_and_expires_off();
