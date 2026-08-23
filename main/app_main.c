@@ -199,7 +199,11 @@ static void control_task(void *arg)
     }
 
     for (;;) {
+        // Keep source-specific snapshots alive through the status logger below.
+        // Previously only the Moonraker snapshot survived that far, so Bambu mode
+        // misleadingly rendered zero-initialized Moonraker diagnostics.
         dc_moonraker_status_t st = {0};
+        dc_bambu_status_t bs = {0};
 #ifndef CONFIG_PB_HIL_DEVBOARD
 
         // Feed the AUTO seam from whichever ONE source is bound.
@@ -218,7 +222,6 @@ static void control_task(void *arg)
 
             case DC_SRC_BAMBU:
                 if (s_bambu_up) {
-                    dc_bambu_status_t bs;
                     dc_bambu_get_status(&bs);
 
                     src_connected = (bs.state == DC_BAMBU_SUBSCRIBED);
@@ -308,29 +311,51 @@ static void control_task(void *arg)
             static char     s_dbg_last[224];
             static uint32_t s_dbg_rep;
             int wifi = net ? (int)dc_wifi_state() : -1;
-            // Displayed line: 0.1 °C precision.
+            // Displayed line: 0.1 °C precision. Keep diagnostics source-native:
+            // Bambu must never be rendered through a zeroed Moonraker struct.
             char line[224];
-            snprintf(line, sizeof line,
-                "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
-                "wifi=%d src=%s mk=%d printer=%s bed=%.1f",
-                (unsigned long)snap.state_revision,
-                pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
-                snap.effective_target_c, snap.heater_output ? "ON" : "off",
-                snap.chamber_c, snap.ptc_c,
-                wifi, dc_source_str(s_src), (int)st.state,
-                dc_printer_state_str(st.printer), st.bed_temp);
-            // Dedup key: same fields but temps rounded to whole degrees, so sub-degree
-            // sensor drift/jitter doesn't re-trigger a fresh line every 2 s.
             char key[224];
-            snprintf(key, sizeof key,
-                "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.0fC ptc=%.0fC | "
-                "wifi=%d src=%s mk=%d printer=%s bed=%.0f",
-                (unsigned long)snap.state_revision,
-                pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
-                snap.effective_target_c, snap.heater_output ? "ON" : "off",
-                snap.chamber_c, snap.ptc_c,
-                wifi, dc_source_str(s_src), (int)st.state,
-                dc_printer_state_str(st.printer), st.bed_temp);
+            if (s_src == DC_SRC_BAMBU) {
+                const char *filament = bs.filament[0] ? bs.filament : "-";
+                snprintf(line, sizeof line,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
+                    "wifi=%d src=bambu link=%d print=%s filament=%s bed=%.1f/%.1f chsrc=%.1f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, (int)bs.state, bs.printing ? "yes" : "no", filament,
+                    bs.bed_temp, bs.bed_target, bs.chamber_temp);
+                // Dedup key: same fields but temps rounded to whole degrees.
+                snprintf(key, sizeof key,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.0fC ptc=%.0fC | "
+                    "wifi=%d src=bambu link=%d print=%s filament=%s bed=%.0f/%.0f chsrc=%.0f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, (int)bs.state, bs.printing ? "yes" : "no", filament,
+                    bs.bed_temp, bs.bed_target, bs.chamber_temp);
+            } else {
+                snprintf(line, sizeof line,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
+                    "wifi=%d src=%s mk=%d printer=%s bed=%.1f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, dc_source_str(s_src), (int)st.state,
+                    dc_printer_state_str(st.printer), st.bed_temp);
+                snprintf(key, sizeof key,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.0fC ptc=%.0fC | "
+                    "wifi=%d src=%s mk=%d printer=%s bed=%.0f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, dc_source_str(s_src), (int)st.state,
+                    dc_printer_state_str(st.printer), st.bed_temp);
+            }
 
             if (strcmp(key, s_dbg_last) == 0) {
                 s_dbg_rep++;
