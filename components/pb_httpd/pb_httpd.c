@@ -172,6 +172,17 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
             cJSON_AddBoolToObject(environment, "bambu_printing", bs.printing);
             if (bs.printing && bs.filament[0])
                 cJSON_AddStringToObject(environment, "bambu_filament", bs.filament);
+
+            // Diagnostic view of the printer's own chamber sensor. dc_bambu
+            // invalidates chamber_temp when its sample is stale, so the API emits
+            // JSON null rather than letting an old value masquerade as live data.
+            // The local DragonBreath NTC/PTC remain the safety-authoritative sensors.
+            add_num1(environment, "printer_chamber_temperature_c", bs.chamber_temp);
+            if (bs.chamber_temp_age_ms == UINT32_MAX)
+                cJSON_AddNullToObject(environment, "printer_chamber_age_ms");
+            else
+                cJSON_AddNumberToObject(environment, "printer_chamber_age_ms",
+                                        bs.chamber_temp_age_ms);
         }
     } else if (ctl_src == DC_SRC_KLIPPER) {
         // Klipper now follows filament zones too: surface Moonraker's active-print
