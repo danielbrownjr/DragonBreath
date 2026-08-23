@@ -158,12 +158,7 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
     // between a save and the reboot. Lets the dashboard label the printer/source row.
     dc_ctl_source_t ctl_src = dc_source_get();
     cJSON_AddStringToObject(environment, "control_source", dc_source_str(ctl_src));
-    // In Bambu mode, surface the configured serial so the dashboard can label the
-    // row "Bambu (<serial>)" — the LAN report carries no friendly printer name.
     if (ctl_src == DC_SRC_BAMBU) {
-        dc_bambu_config_t bc;
-        if (dc_bambu_get_config(&bc) == ESP_OK && bc.serial[0])
-            cJSON_AddStringToObject(environment, "bambu_serial", bc.serial);
         // Surface the active print's filament so the dashboard status card can show
         // "Filament: PETG" while a Bambu print runs (Bambu-only; Klipper drives the
         // chamber via macros and reports no filament here).

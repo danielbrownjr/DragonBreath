@@ -41,6 +41,8 @@ static bool        s_heat_intent;   // control-task only — chamber-hysteresis 
 static bool        s_fb_cut;        // control-task only — element-foldback hysteresis latch:
                                     // true while the SSR is force-cut for element over-temp
                                     // (holds until the element cools below the resume point)
+static bool        s_local_cut;     // control-task only — local chamber soft-limit latch used
+                                    // only while a remote chamber temperature controls regulation
 static float       s_max_target_c;      // guarded by s_mux — settable set-point ceiling
 static int64_t     s_comms_timeout_us;  // guarded by s_mux — comms deadman (microseconds)
 static float       s_cool_release_c;    // guarded by s_mux — residual-heat purge "cool down to" temp
@@ -576,6 +578,7 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
         if (s_on) ssr_set(false);
         s_heat_intent = false;   // drop the chamber + foldback latches so the next arm
         s_fb_cut      = false;   // starts clean rather than mid-cycle
+        s_local_cut   = false;
         return;
     }
 
@@ -591,7 +594,18 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
         s_heat_intent = false;
     }
 
-    // Step 2 — element-temperature foldback (hysteresis hard-cut). While the PTC element
+    // Step 2 — local chamber soft foldback for REMOTE regulation. The printer sensor
+    // represents bulk chamber air, while DragonBreath's local chamber NTC can see much
+    // hotter outlet/near-heater air. When an external control temperature is active, cut
+    // heat at the local soft ceiling and hold it off until the local region cools through
+    // the resume threshold. The fixed 85 C chamber trip above remains the latching backstop.
+    bool external_regulation = isfinite(control_chamber_c);
+    if (external_regulation)
+        s_local_cut = pb_heater_local_foldback_cut(cs == PB_NTC_OK, chamber_c, s_local_cut);
+    else
+        s_local_cut = false;
+
+    // Step 3 — element-temperature foldback (hysteresis hard-cut). While the PTC element
     // is too hot we force the SSR fully OFF and hold it off until the element cools below
     // the resume point — a real cool-down cycle rather than half-power hovering near the
     // 105 C hard cutoff. Thresholds are per board Rref variant (33k boards run hotter, so
@@ -600,8 +614,8 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     pb_heater_effective_foldback(pb_heater_get_fb_cut_c(), pb_ntc_rref_kohm(), &fb_cut, &fb_resume);
     s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut, fb_cut, fb_resume);
 
-    // Step 3 — drive the SSR: heat only when the chamber wants it AND the element is not
-    // in foldback cut. (Zero-cross SSR: plain on/off, no phase-cut.)
-    bool drive = s_heat_intent && !s_fb_cut;
+    // Step 4 — drive the SSR only when regulation wants heat and neither soft limiter
+    // is holding it off. (Zero-cross SSR: plain on/off, no phase-cut.)
+    bool drive = s_heat_intent && !s_local_cut && !s_fb_cut;
     if (drive != s_on) ssr_set(drive);
 }

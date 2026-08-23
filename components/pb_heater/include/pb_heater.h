@@ -67,6 +67,26 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 #define PB_HEATER_PTC_CUTOFF_C   105.0f   // element over-temp -> force off (stock parity)
 #define PB_HEATER_CHAMBER_MAX_C  85.0f    // chamber over-temp -> force off
 #define PB_HEATER_HYSTERESIS_C   1.0f
+
+// When regulation uses a remote/printer chamber sensor, the local chamber NTC can
+// be much hotter because it sits in DragonBreath's outlet/near-heater airflow. Keep
+// that local region below a non-latching SOFT ceiling instead of relying on the 85 C
+// emergency trip as normal control. This limiter applies only while an external
+// control temperature is active; local-sensor regulation is unchanged.
+#define PB_HEATER_LOCAL_FOLDBACK_CUT_C     72.0f
+#define PB_HEATER_LOCAL_FOLDBACK_RESUME_C  67.0f
+
+// Pure hysteresis helper for the local thermal limiter. A bad local read holds the
+// previous state; the fail-closed sensor-fault path in pb_heater_eval_trip() remains
+// authoritative while armed.
+static inline bool pb_heater_local_foldback_cut(bool chamber_ok, float chamber_c,
+                                                 bool prev_cut)
+{
+    if (!chamber_ok) return prev_cut;
+    if (chamber_c >= PB_HEATER_LOCAL_FOLDBACK_CUT_C) return true;
+    if (chamber_c < PB_HEATER_LOCAL_FOLDBACK_RESUME_C) return false;
+    return prev_cut;
+}
 // Soft element-temperature FOLDBACK, a layer strictly BELOW the hard cutoff: it holds
 // the PTC element just under the 105 C trip so a marginal/hot install can reach set-point
 // instead of tripping and needing a manual clear. It never adds heat and never delays the
