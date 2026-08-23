@@ -185,9 +185,10 @@ bool  pb_policy_get_filter_auto_enable(void);
 // directly, overriding the configured AUTO target and bypassing the bed threshold
 // ("zone wins"). Pass 0 for the normal bed-threshold AUTO behaviour.
 //
-// chamber_src_c is an optional printer-reported chamber temperature used as
-// observer state. Pass NAN when unavailable. It does not affect heater control
-// until explicitly selected by policy.
+// chamber_src_c is an optional printer-reported chamber temperature. Pass NAN
+// when unavailable. While the source is live, policy supplies a finite value to
+// pb_heater for set-point regulation; the local chamber NTC and PTC remain
+// authoritative for safety.
 void pb_policy_set_env(
     float bed_c,
     float bed_target_c,

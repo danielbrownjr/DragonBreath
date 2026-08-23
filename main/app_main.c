@@ -204,8 +204,9 @@ static void control_task(void *arg)
 
         // Feed the AUTO seam from whichever ONE source is bound.
         // All paths converge on pb_policy_set_env(); the policy remains
-        // source-agnostic. Printer-reported chamber temperature is passed
-        // as observer state only and does not affect heater control yet.
+        // source-agnostic. Printer-reported chamber temperature is passed through
+        // for set-point regulation when available; DragonBreath's local sensors
+        // remain authoritative for heater safety.
         float bed_c = 0.0f;
         float bed_target_c = 0.0f;
         float src_target_c = 0.0f;
