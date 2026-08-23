@@ -201,26 +201,43 @@ static void control_task(void *arg)
     for (;;) {
         dc_moonraker_status_t st = {0};
 #ifndef CONFIG_PB_HIL_DEVBOARD
-        // Feed the AUTO seam from whichever ONE source is bound. All three paths
-        // converge on pb_policy_set_env(bed_c, bed_target_c, connected); the policy
-        // is source-agnostic and triggers AUTO on the bed SETPOINT (bed_target_c).
-        // Not-connected feeds zeros/false (identical to the pre-selector behavior
-        // when Moonraker was down).
-        float bed_c = 0.0f, bed_target_c = 0.0f, src_target_c = 0.0f;
+
+        // Feed the AUTO seam from whichever ONE source is bound.
+        // All paths converge on pb_policy_set_env(); the policy remains
+        // source-agnostic. Printer-reported chamber temperature is passed
+        // as observer state only and does not affect heater control yet.
+        float bed_c = 0.0f;
+        float bed_target_c = 0.0f;
+        float src_target_c = 0.0f;
+        float chamber_src_c = NAN;
         bool  src_connected = false;
+
         if (s_net_up) {
             switch (s_src) {
+
             case DC_SRC_BAMBU:
                 if (s_bambu_up) {
                     dc_bambu_status_t bs;
                     dc_bambu_get_status(&bs);
+
                     src_connected = (bs.state == DC_BAMBU_SUBSCRIBED);
+
                     if (src_connected) {
-                        if (isfinite(bs.bed_temp))   bed_c = bs.bed_temp;
-                        if (isfinite(bs.bed_target)) bed_target_c = bs.bed_target;
-                        // Filament chamber zone: while a print is active, request the
-                        // active filament's zone target (0 = no zone -> normal bed-AUTO).
-                        if (bs.printing) src_target_c = (float)dc_bambu_zone_target(bs.filament);
+                        if (isfinite(bs.bed_temp))
+                            bed_c = bs.bed_temp;
+
+                        if (isfinite(bs.bed_target))
+                            bed_target_c = bs.bed_target;
+
+                        if (isfinite(bs.chamber_temp))
+                            chamber_src_c = bs.chamber_temp;
+
+                        // Filament chamber zone: while a print is active,
+                        // request the active filament's zone target
+                        // (0 = no zone -> normal bed-AUTO).
+                        if (bs.printing)
+                            src_target_c =
+                                (float)dc_bambu_zone_target(bs.filament);
                     }
                 }
                 break;
@@ -255,7 +272,13 @@ static void control_task(void *arg)
                 break;
             }
         }
-        pb_policy_set_env(bed_c, bed_target_c, src_connected, src_target_c);
+        pb_policy_set_env(
+            bed_c,
+            bed_target_c,
+            src_connected,
+            src_target_c,
+            chamber_src_c
+        );
         // Home Assistant: pump the client whenever it's up — full-control when HA is
         // the selected source, or read-only when it runs alongside another source
         // (Bambu/Klipper) as a monitor. pb_ha_tick() no-ops until connected.
