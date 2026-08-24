@@ -473,13 +473,16 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
     if (err != ESP_OK) return persistence_error("Home Assistant", err, message, message_size);
     err = db_klipper_mqtt_get_config(&km);
     if (err != ESP_OK) return persistence_error("Klipper MQTT", err, message, message_size);
+    dc_prusa_config_t pr = {0};
+    err = dc_prusa_get_config(&pr);
+    if (err != ESP_OK) return persistence_error("Prusa", err, message, message_size);
 
     // Parse and stage every field before the first setter can touch runtime/NVS.
     db_portal_product_request_t request;
     err = parse_product_request(values, &request, message, message_size);
     if (err != ESP_OK) return err;
     db_portal_product_plan_t plan;
-    err = db_portal_plan_product_save(&request, dc_source_get(), &mr, &bb, &ha, &km,
+    err = db_portal_plan_product_save(&request, dc_source_get(), &mr, &bb, &ha, &km, &pr,
                                       &plan, message, message_size);
     if (err != ESP_OK) return err;
 
@@ -499,21 +502,8 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
         err = db_klipper_mqtt_set_config(&plan.klipper_mqtt);
         if (err != ESP_OK) return persistence_error("Klipper MQTT", err, message, message_size);
     }
-    // Prusa (PrusaLink) — handled inline (not in the shared planner). A blank API-key
-    // submission preserves the saved key; host/threshold/target overwrite when present.
-    dc_prusa_config_t pr = {0};
-    (void)dc_prusa_get_config(&pr);
-    bool prusa_changed = false;
-    if (request.pr_host.present) {
-        snprintf(pr.host, sizeof pr.host, "%s", request.pr_host.value ? request.pr_host.value : "");
-        prusa_changed = true;
-    }
-    if (request.pr_key.present && request.pr_key.value && request.pr_key.value[0]) {
-        snprintf(pr.api_key, sizeof pr.api_key, "%s", request.pr_key.value);
-        prusa_changed = true;
-    }
-    if (prusa_changed) {
-        err = dc_prusa_set_config(&pr);
+    if (plan.prusa_changed) {
+        err = dc_prusa_set_config(&plan.prusa);
         if (err != ESP_OK) return persistence_error("Prusa", err, message, message_size);
     }
 
@@ -525,7 +515,7 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
     }
 
     bool changed = plan.moonraker_changed || plan.bambu_changed || plan.ha_changed ||
-                   plan.klipper_mqtt_changed || plan.source_changed || prusa_changed;
+                   plan.klipper_mqtt_changed || plan.prusa_changed || plan.source_changed;
     snprintf(message, message_size, changed
              ? "Configuration saved; restart to apply source changes."
              : "Configuration already up to date.");

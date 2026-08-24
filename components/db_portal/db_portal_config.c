@@ -49,12 +49,13 @@ esp_err_t db_portal_plan_product_save(
     const dc_bambu_config_t *current_bambu,
     const pb_ha_config_t *current_ha,
     const db_km_config_t *current_klipper_mqtt,
+    const dc_prusa_config_t *current_prusa,
     db_portal_product_plan_t *plan,
     char *message,
     size_t message_size)
 {
     if (!request || !current_moonraker || !current_bambu || !current_ha ||
-        !current_klipper_mqtt || !plan || !message || !message_size)
+        !current_klipper_mqtt || !current_prusa || !plan || !message || !message_size)
         return ESP_ERR_INVALID_ARG;
     if (request->source_present &&
         (request->source < DC_SRC_KLIPPER || request->source >= DC_SRC_MAX))
@@ -70,6 +71,7 @@ esp_err_t db_portal_plan_product_save(
     plan->bambu = *current_bambu;
     plan->ha = *current_ha;
     plan->klipper_mqtt = *current_klipper_mqtt;
+    plan->prusa = *current_prusa;
 
     if (request->source_present && request->source != current_source) {
         plan->source = request->source;
@@ -108,6 +110,9 @@ esp_err_t db_portal_plan_product_save(
                &plan->klipper_mqtt_changed);
     stage_bool(&request->km_writeback, &plan->klipper_mqtt.writeback,
                &plan->klipper_mqtt_changed);
+
+    STAGE_TEXT(prusa, pr_host, host, false);
+    STAGE_TEXT(prusa, pr_key, api_key, true);
 
 #undef STAGE_TEXT
     message[0] = '\0';
