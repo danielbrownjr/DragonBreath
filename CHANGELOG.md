@@ -18,7 +18,9 @@ below into the GitHub Release notes.
   is selected (filament-aware printers still follow the filament profile). Configure it
   under **Setup → Control source → Prusa (PrusaLink)** with the printer host and its
   PrusaLink password. Read-only; if the printer stops responding the chamber safely
-  disengages. Validated end-to-end by a Prusa user. Bumps **dragon-core** to **v0.28.0**.
+  disengages — and an incomplete/partial status response is treated as loss-of-source
+  rather than heating on a stale bed target. Validated end-to-end by a Prusa user.
+  Bumps **dragon-core** to **v0.28.1**.
 
 ### Fixed
 - **Bambu chamber temperature no longer goes stale silently** — a chamber reading that
