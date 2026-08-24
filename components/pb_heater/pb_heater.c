@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "pb_heater.h"
+#include "pb_pid.h"
 #include "pb_board.h"
 #include "pb_ntc.h"
 
@@ -12,6 +13,16 @@
 #include "nvs.h"
 
 static const char *TAG = "pb_heater";
+
+// Conservative first-pass gains for the very slow printer-chamber plant. These
+// intentionally start gentle; hardware logs can tune them later without weakening
+// any of the independent local safety layers below.
+#define PB_CHAMBER_PID_KP       0.0400f
+#define PB_CHAMBER_PID_KI       0.0008f
+#define PB_CHAMBER_PID_KD       0.0200f
+#define PB_CHAMBER_PID_D_ALPHA  0.20f
+#define PB_CHAMBER_PID_DT_S     0.50f
+#define PB_CHAMBER_PID_WINDOW_US 10000000LL   // 10 s slow time-proportioning window
 
 // Serializes fault-latch NVS writes (do_latch persist, clear_fault, tick retry)
 // so a concurrent clear and a deferred-persist retry can't reorder into a stale
@@ -35,14 +46,15 @@ static bool        s_persist_pending;  // guarded by s_mux — a latch persist n
                                        // to NVS; retried from pb_heater_tick until it lands
 static int64_t     s_persist_retry_us; // guarded by s_mux — last persist-retry timestamp
 static bool        s_on;            // written only by the control task; atomic read
-static bool        s_heat_intent;   // control-task only — chamber-hysteresis latch (the
-                                    // "want heat at all" decision, distinct from the
-                                    // momentary SSR state s_on)
+static bool        s_heat_intent;   // control-task only — local-sensor bang-bang latch
 static bool        s_fb_cut;        // control-task only — element-foldback hysteresis latch:
                                     // true while the SSR is force-cut for element over-temp
                                     // (holds until the element cools below the resume point)
 static bool        s_local_cut;     // control-task only — local chamber soft-limit latch used
                                     // only while a remote chamber temperature controls regulation
+static pb_pid_state_t s_pid;        // control-task only — external chamber PID state
+static int64_t     s_pid_window_start_us; // control-task only — time-proportion window origin
+static float       s_pid_duty;      // control-task only — last normalized PID output [0,1]
 static float       s_max_target_c;      // guarded by s_mux — settable set-point ceiling
 static int64_t     s_comms_timeout_us;  // guarded by s_mux — comms deadman (microseconds)
 static float       s_cool_release_c;    // guarded by s_mux — residual-heat purge "cool down to" temp
@@ -97,6 +109,13 @@ static void ssr_set(bool on)        // control-task context only
     s_on = on;
 }
 
+static void pid_runtime_reset(void)
+{
+    pb_pid_reset(&s_pid);
+    s_pid_window_start_us = 0;
+    s_pid_duty = 0.0f;
+}
+
 esp_err_t pb_heater_init(void)
 {
     if (!s_persist_lock) s_persist_lock = xSemaphoreCreateMutex();
@@ -126,6 +145,10 @@ esp_err_t pb_heater_init(void)
     s_cool_release_c = PB_HEATER_COOL_RELEASE_C_DEFAULT;
     s_fb_cut_c = 0.0f;   // auto (per-Rref default) until a user override is loaded/set
     taskEXIT_CRITICAL(&s_mux);
+    s_heat_intent = false;
+    s_fb_cut = false;
+    s_local_cut = false;
+    pid_runtime_reset();
 #ifdef CONFIG_PB_HIL_DEVBOARD
     ESP_LOGW(TAG, "HIL dev-board backend: relay GPIO compiled out");
 #else
@@ -136,7 +159,7 @@ esp_err_t pb_heater_init(void)
 
 esp_err_t pb_heater_set_target_c(float target_c)
 {
-    if (!isfinite(target_c)) {           // reject NaN / +-Inf defensively
+    if (!isfinite(target_c)) {
         ESP_LOGW(TAG, "rejected non-finite target");
         return ESP_ERR_INVALID_ARG;
     }
@@ -144,9 +167,9 @@ esp_err_t pb_heater_set_target_c(float target_c)
 
     esp_err_t r = ESP_OK;
     taskENTER_CRITICAL(&s_mux);
-    if (target_c > s_max_target_c) target_c = s_max_target_c;   // clamp to the live ceiling
+    if (target_c > s_max_target_c) target_c = s_max_target_c;
     if ((s_latched_off || s_inhibited) && target_c > 0.0f) {
-        r = ESP_ERR_INVALID_STATE;       // never queue heat behind a fault/inhibit
+        r = ESP_ERR_INVALID_STATE;
     } else {
         s_target_c = target_c;
     }
@@ -176,11 +199,10 @@ void pb_heater_set_control_chamber_c(float temp_c)
 
 void pb_heater_load_config(void)
 {
-    // Read NVS OUTSIDE the lock (it can block), then clamp + assign under s_mux.
     float    max_c    = PB_HEATER_MAX_TARGET_C_DEFAULT;
     uint32_t comms_ms = PB_HEATER_COMMS_TIMEOUT_MS_DEFAULT;
     float    cool_c   = PB_HEATER_COOL_RELEASE_C_DEFAULT;
-    float    fb_cut   = 0.0f;   // 0 = auto (per-Rref default)
+    float    fb_cut   = 0.0f;
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         uint32_t v;
@@ -190,15 +212,12 @@ void pb_heater_load_config(void)
         if (nvs_get_u32(h, KEY_FB_CUT_C, &v) == ESP_OK)      fb_cut   = centi_to_c(v);
         nvs_close(h);
     }
-    // Clamp to the safe envelope regardless of what NVS held (defends against a
-    // corrupted/hand-edited store — the ceiling can never exceed the ABS max).
     if (max_c < PB_HEATER_MIN_TARGET_C)     max_c = PB_HEATER_MIN_TARGET_C;
     if (max_c > PB_HEATER_ABS_MAX_TARGET_C) max_c = PB_HEATER_ABS_MAX_TARGET_C;
     if (comms_ms < PB_HEATER_COMMS_TIMEOUT_MS_MIN) comms_ms = PB_HEATER_COMMS_TIMEOUT_MS_MIN;
     if (comms_ms > PB_HEATER_COMMS_TIMEOUT_MS_MAX) comms_ms = PB_HEATER_COMMS_TIMEOUT_MS_MAX;
     if (cool_c < PB_HEATER_COOL_RELEASE_MIN_C) cool_c = PB_HEATER_COOL_RELEASE_MIN_C;
     if (cool_c > PB_HEATER_COOL_RELEASE_MAX_C) cool_c = PB_HEATER_COOL_RELEASE_MAX_C;
-    // fb_cut: 0 stays "auto"; any positive value is clamped to the safe soft-foldback band.
     if (fb_cut > 0.0f) {
         if (fb_cut < PB_HEATER_FB_CUT_MIN_C) fb_cut = PB_HEATER_FB_CUT_MIN_C;
         if (fb_cut > PB_HEATER_FB_CUT_MAX_C) fb_cut = PB_HEATER_FB_CUT_MAX_C;
@@ -218,12 +237,12 @@ esp_err_t pb_heater_set_max_target_c(float max_c)
 {
     if (!isfinite(max_c)) return ESP_ERR_INVALID_ARG;
     if (max_c < PB_HEATER_MIN_TARGET_C)     max_c = PB_HEATER_MIN_TARGET_C;
-    if (max_c > PB_HEATER_ABS_MAX_TARGET_C) max_c = PB_HEATER_ABS_MAX_TARGET_C;   // never past 70
+    if (max_c > PB_HEATER_ABS_MAX_TARGET_C) max_c = PB_HEATER_ABS_MAX_TARGET_C;
     taskENTER_CRITICAL(&s_mux);
     s_max_target_c = max_c;
-    if (s_target_c > s_max_target_c) s_target_c = s_max_target_c;   // pull a live target down
+    if (s_target_c > s_max_target_c) s_target_c = s_max_target_c;
     taskEXIT_CRITICAL(&s_mux);
-    nvs_handle_t h;                                                  // persist outside the lock
+    nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_u32(h, KEY_HEAT_MAX_C, c_to_centi(max_c));
         nvs_commit(h);
@@ -244,7 +263,7 @@ float pb_heater_get_max_target_c(void)
 esp_err_t pb_heater_set_comms_timeout_ms(uint32_t ms)
 {
     if (ms < PB_HEATER_COMMS_TIMEOUT_MS_MIN) ms = PB_HEATER_COMMS_TIMEOUT_MS_MIN;
-    if (ms > PB_HEATER_COMMS_TIMEOUT_MS_MAX) ms = PB_HEATER_COMMS_TIMEOUT_MS_MAX;  // never > 5 min
+    if (ms > PB_HEATER_COMMS_TIMEOUT_MS_MAX) ms = PB_HEATER_COMMS_TIMEOUT_MS_MAX;
     taskENTER_CRITICAL(&s_mux);
     s_comms_timeout_us = (int64_t)ms * 1000;
     taskEXIT_CRITICAL(&s_mux);
@@ -274,7 +293,7 @@ esp_err_t pb_heater_set_cool_release_c(float c)
     taskENTER_CRITICAL(&s_mux);
     s_cool_release_c = c;
     taskEXIT_CRITICAL(&s_mux);
-    nvs_handle_t h;                                 // persist outside the lock
+    nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_u32(h, KEY_COOL_REL_C, c_to_centi(c));
         nvs_commit(h);
@@ -296,7 +315,7 @@ esp_err_t pb_heater_set_fb_cut_c(float c)
 {
     if (!isfinite(c)) return ESP_ERR_INVALID_ARG;
     if (c <= 0.0f) {
-        c = 0.0f;                                   // clear override -> auto (per-Rref)
+        c = 0.0f;
     } else {
         if (c < PB_HEATER_FB_CUT_MIN_C) c = PB_HEATER_FB_CUT_MIN_C;
         if (c > PB_HEATER_FB_CUT_MAX_C) c = PB_HEATER_FB_CUT_MAX_C;
@@ -304,9 +323,9 @@ esp_err_t pb_heater_set_fb_cut_c(float c)
     taskENTER_CRITICAL(&s_mux);
     s_fb_cut_c = c;
     taskEXIT_CRITICAL(&s_mux);
-    nvs_handle_t h;                                 // persist outside the lock
+    nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_u32(h, KEY_FB_CUT_C, c_to_centi(c));   // 0 = auto
+        nvs_set_u32(h, KEY_FB_CUT_C, c_to_centi(c));
         nvs_commit(h);
         nvs_close(h);
     }
@@ -331,10 +350,6 @@ void pb_heater_notify_link_alive(void)
     taskEXIT_CRITICAL(&s_mux);
 }
 
-// Persist (or clear) the safety-fault latch to NVS. NVS ops MUST run outside
-// s_mux (they can block / need interrupts). On latch this is best-effort — RAM is
-// authoritative for the session; on CLEAR the return matters so a failed persist
-// can be surfaced (HTTP 500) rather than falsely reporting the fault gone.
 static esp_err_t persist_fault(bool latched, pb_fault_reason_t code)
 {
     nvs_handle_t h;
@@ -348,32 +363,25 @@ static esp_err_t persist_fault(bool latched, pb_fault_reason_t code)
     return err;
 }
 
-// Latch the heater off with a machine-readable code + live reason string. Sets RAM
-// under the lock, then (only on the false->true transition) persists it. persist==
-// false leaves NVS untouched — used for the reboot-restore path (already in NVS)
-// and for the permanent inhibit, whose "a reboot clears it" semantics must not
-// survive a power cycle. drive_ssr is CONTROL-TASK ONLY (it writes the GPIO).
 static void do_latch(pb_fault_reason_t code, const char *reason,
                      bool inhibit, bool drive_ssr, bool persist)
 {
     if (drive_ssr) ssr_set(false);
     bool transition;
     taskENTER_CRITICAL(&s_mux);
-    transition = !s_latched_off;                 // first latch of this episode?
+    transition = !s_latched_off;
     s_target_c = 0.0f;
     s_latched_off = true;
     if (inhibit) s_inhibited = true;
     s_fault_code = code;
     s_fault_reason = reason ? reason : pb_heater_fault_str(code);
     taskEXIT_CRITICAL(&s_mux);
+    pid_runtime_reset();
     if (persist && transition) {
         if (s_persist_lock) xSemaphoreTake(s_persist_lock, portMAX_DELAY);
         esp_err_t pe = persist_fault(true, code);
         if (s_persist_lock) xSemaphoreGive(s_persist_lock);
         if (pe != ESP_OK) {
-            // The write failed (NVS busy, or a fault before nvs_init on early boot).
-            // Mark it pending so pb_heater_tick() keeps retrying until it commits —
-            // otherwise a reboot would lose a latch that only ever lived in RAM.
             taskENTER_CRITICAL(&s_mux);
             s_persist_pending = true;
             taskEXIT_CRITICAL(&s_mux);
@@ -382,36 +390,27 @@ static void do_latch(pb_fault_reason_t code, const char *reason,
     }
 }
 
-// Control-task safety trip: latch (driving the SSR down) + persist + log.
 static void trip(pb_fault_reason_t code)
 {
-    do_latch(code, NULL, /*inhibit=*/false, /*drive_ssr=*/true, /*persist=*/true);
+    do_latch(code, NULL, false, true, true);
     ESP_LOGW(TAG, "EMERGENCY OFF: %s", pb_heater_fault_str(code));
 }
 
-void pb_heater_emergency_off(const char *reason)   // control-task context
+void pb_heater_emergency_off(const char *reason)
 {
-    do_latch(PB_FAULT_EMERGENCY, reason, /*inhibit=*/false, /*drive_ssr=*/true, /*persist=*/true);
+    do_latch(PB_FAULT_EMERGENCY, reason, false, true, true);
     ESP_LOGW(TAG, "EMERGENCY OFF: %s", reason ? reason : "(unspecified)");
 }
 
-void pb_heater_request_panic_off(const char *reason)   // any task
+void pb_heater_request_panic_off(const char *reason)
 {
-    // Latch only — NO GPIO write. Unlike pb_heater_emergency_off(), this is safe
-    // to call off the control task (e.g. the button task): it preserves the
-    // single-SSR-writer invariant by leaving the actual ssr_set(false) to the
-    // next pb_heater_tick() on the control task. Callers that need the SSR down
-    // fast should wake the control task immediately after this returns.
-    // persist=false: a user panic-off is a manual stop, documented to clear on
-    // reboot (only hazard-driven trips — over-temp/sensor/comms — persist).
-    do_latch(PB_FAULT_PANIC_OFF, reason, /*inhibit=*/false, /*drive_ssr=*/false, /*persist=*/false);
+    do_latch(PB_FAULT_PANIC_OFF, reason, false, false, false);
 }
 
 esp_err_t pb_heater_clear_fault(void)
 {
     bool was;
     taskENTER_CRITICAL(&s_mux);
-    // A permanent inhibit is NOT clearable — leave everything latched.
     if (s_inhibited) {
         taskEXIT_CRITICAL(&s_mux);
         ESP_LOGW(TAG, "clear ignored: heater permanently inhibited (reboot required)");
@@ -420,10 +419,6 @@ esp_err_t pb_heater_clear_fault(void)
     was = s_latched_off;
     taskEXIT_CRITICAL(&s_mux);
 
-    // Persist-first, under the persist lock so a concurrent tick retry can't write
-    // a stale "latched" after this clears NVS. If the persist fails, leave the fault
-    // latched (fail-safe) and report it — the heater stays off rather than falsely
-    // appearing cleared but returning on the next reboot.
     if (s_persist_lock) xSemaphoreTake(s_persist_lock, portMAX_DELAY);
     esp_err_t err = persist_fault(false, PB_FAULT_NONE);
     if (err != ESP_OK) {
@@ -433,11 +428,12 @@ esp_err_t pb_heater_clear_fault(void)
     }
     taskENTER_CRITICAL(&s_mux);
     s_latched_off = false;
-    s_target_c = 0.0f;              // reset leaves the target at ZERO — a fresh
-    s_fault_reason = NULL;          // target command is required to resume heating.
+    s_target_c = 0.0f;
+    s_fault_reason = NULL;
     s_fault_code = PB_FAULT_NONE;
-    s_persist_pending = false;      // NVS now holds "not latched"; nothing to retry
+    s_persist_pending = false;
     taskEXIT_CRITICAL(&s_mux);
+    pid_runtime_reset();
     if (s_persist_lock) xSemaphoreGive(s_persist_lock);
     if (was) ESP_LOGW(TAG, "fault latch cleared; target reset to 0 (send a fresh target to resume)");
     return ESP_OK;
@@ -445,16 +441,13 @@ esp_err_t pb_heater_clear_fault(void)
 
 void pb_heater_inhibit(const char *reason)
 {
-    // Permanent (reboot-only) -> persist=false: a power cycle must lift it, so
-    // persisting could brick the device across reboots on a transient init failure.
-    // Any clearable latch already in NVS is left intact.
-    do_latch(PB_FAULT_INHIBITED, reason, /*inhibit=*/true, /*drive_ssr=*/true, /*persist=*/false);
+    do_latch(PB_FAULT_INHIBITED, reason, true, true, false);
     ESP_LOGE(TAG, "HEATER INHIBITED (reboot-only): %s", reason ? reason : "(unspecified)");
 }
 
-bool pb_heater_is_inhibited(void) { return s_inhibited; }   // atomic bool read
+bool pb_heater_is_inhibited(void) { return s_inhibited; }
 bool pb_heater_is_faulted(void) { return s_latched_off || s_inhibited; }
-bool pb_heater_is_on(void) { return s_on; }                 // atomic bool read
+bool pb_heater_is_on(void) { return s_on; }
 
 const char *pb_heater_fault_reason(void)
 {
@@ -477,28 +470,26 @@ void pb_heater_load_fault(void)
     nvs_handle_t h;
     esp_err_t oe = nvs_open(NVS_NS, NVS_READONLY, &h);
     bool ns_not_found = (oe == ESP_ERR_NVS_NOT_FOUND);
-    bool open_ok      = (oe == ESP_OK);
+    bool open_ok = (oe == ESP_OK);
     uint8_t latch_val = 0, code_val = PB_FAULT_NONE;
     bool latch_read_ok = false, latch_not_found = false;
     if (open_ok) {
         esp_err_t le = nvs_get_u8(h, KEY_FAULT_LATCH, &latch_val);
         latch_not_found = (le == ESP_ERR_NVS_NOT_FOUND);
-        latch_read_ok   = (le == ESP_OK);
-        nvs_get_u8(h, KEY_FAULT_CODE, &code_val);   // best-effort; decide() range-checks
+        latch_read_ok = (le == ESP_OK);
+        nvs_get_u8(h, KEY_FAULT_CODE, &code_val);
         nvs_close(h);
     }
     pb_fault_reason_t code;
     bool latched = pb_heater_fault_decide(open_ok, ns_not_found, latch_read_ok,
                                           latch_not_found, latch_val, code_val, &code);
     if (latched) {
-        // persist=false (already in NVS, or unreadable); drive_ssr=false (init()
-        // already forced the SSR off and the control task is not running yet).
-        do_latch(code, NULL, /*inhibit=*/false, /*drive_ssr=*/false, /*persist=*/false);
+        do_latch(code, NULL, false, false, false);
         ESP_LOGW(TAG, "boot: restored latched fault: %s", pb_heater_fault_str(code));
     }
 }
 
-bool pb_heater_heat_mode(void)     // "armed and not tripped" (independent of SSR cycling)
+bool pb_heater_heat_mode(void)
 {
     taskENTER_CRITICAL(&s_mux);
     bool m = (s_target_c > 0.0f && !s_latched_off);
@@ -506,13 +497,8 @@ bool pb_heater_heat_mode(void)     // "armed and not tripped" (independent of SS
     return m;
 }
 
-void pb_heater_tick(void)          // control-task context; sole writer of s_on
+void pb_heater_tick(void)
 {
-    // Retry a deferred fault-latch persist until it commits, so a latch that
-    // couldn't be written when it happened (NVS busy, or a fault before nvs_init)
-    // still survives a reboot. Throttled and serialized with clear_fault via the
-    // persist lock; re-reads the latch state INSIDE the lock so a clear that landed
-    // meanwhile is never overwritten with a stale "latched".
     bool pending;
     taskENTER_CRITICAL(&s_mux);
     pending = s_persist_pending;
@@ -520,7 +506,7 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     if (pending) {
         int64_t now = esp_timer_get_time();
         taskENTER_CRITICAL(&s_mux);
-        bool due = (now - s_persist_retry_us) >= 2000000;   // ~2 s: bound NVS churn/log spam
+        bool due = (now - s_persist_retry_us) >= 2000000;
         taskEXIT_CRITICAL(&s_mux);
         if (due && s_persist_lock && xSemaphoreTake(s_persist_lock, 0) == pdTRUE) {
             taskENTER_CRITICAL(&s_mux);
@@ -528,7 +514,7 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
             pb_fault_reason_t code = s_fault_code;
             s_persist_retry_us = now;
             taskEXIT_CRITICAL(&s_mux);
-            esp_err_t pr = still ? persist_fault(true, code) : ESP_OK;  // cleared -> nothing to write
+            esp_err_t pr = still ? persist_fault(true, code) : ESP_OK;
             if (pr == ESP_OK) {
                 taskENTER_CRITICAL(&s_mux);
                 s_persist_pending = false;
@@ -539,9 +525,9 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
         }
     }
 
-    float   target;
-    float   control_chamber_c;
-    bool    latched;
+    float target;
+    float control_chamber_c;
+    bool latched;
     int64_t last_link;
     int64_t comms_timeout_us;
     taskENTER_CRITICAL(&s_mux);
@@ -553,22 +539,14 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     taskEXIT_CRITICAL(&s_mux);
 
     const bool armed = (target > 0.0f);
-    // LED indication is owned by pb_leds (driven from pb_policy) — pb_heater no
-    // longer touches any LED.
-
     float ptc_c = 0.0f, chamber_c = 0.0f;
     pb_ntc_status_t ps = pb_ntc_read(PB_NTC_PTC, &ptc_c);
     pb_ntc_status_t cs = pb_ntc_read(PB_NTC_CHAMBER, &chamber_c);
 
-    // All safety trips (over-temp cutoffs, fail-closed sensor faults, comms-loss
-    // watchdog) are decided by the pure, host-tested pb_heater_eval_trip() so the
-    // load-bearing priority ordering has one authoritative definition. Over-temp is
-    // trusted only on a valid sensor; while armed, EITHER thermistor being anything
-    // other than OK — OPEN, SHORT, or a UNINIT read error — is fail-closed (a blind
-    // heater or unmonitored element must latch off), as is a comms deadman timeout.
+    int64_t now_us = esp_timer_get_time();
     pb_fault_reason_t trip_code = pb_heater_eval_trip(
         ps == PB_NTC_OK, ptc_c, cs == PB_NTC_OK, chamber_c, armed,
-        (esp_timer_get_time() - last_link) > comms_timeout_us);
+        (now_us - last_link) > comms_timeout_us);
     if (trip_code != PB_FAULT_NONE) {
         trip(trip_code);
         return;
@@ -576,46 +554,66 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
 
     if (latched || !armed) {
         if (s_on) ssr_set(false);
-        s_heat_intent = false;   // drop the chamber + foldback latches so the next arm
-        s_fb_cut      = false;   // starts clean rather than mid-cycle
-        s_local_cut   = false;
+        s_heat_intent = false;
+        s_fb_cut = false;
+        s_local_cut = false;
+        pid_runtime_reset();
         return;
     }
 
-    // Here: armed && !latched && cs==OK && ps==OK.
-    // Step 1 — chamber bang-bang with hysteresis decides the BASE demand (do we want
-    // heat at all). If policy supplied a finite external control temperature (for
-    // example the printer-reported chamber sensor), use it ONLY for regulation.
-    // The local chamber NTC above remains authoritative for every safety trip.
-    float regulation_c = isfinite(control_chamber_c) ? control_chamber_c : chamber_c;
-    if (regulation_c < (target - PB_HEATER_HYSTERESIS_C)) {
-        s_heat_intent = true;
-    } else if (regulation_c >= target) {
-        s_heat_intent = false;
-    }
+    const bool external_regulation = isfinite(control_chamber_c);
 
-    // Step 2 — local chamber soft foldback for REMOTE regulation. The printer sensor
-    // represents bulk chamber air, while DragonBreath's local chamber NTC can see much
-    // hotter outlet/near-heater air. When an external control temperature is active, cut
-    // heat at the local soft ceiling and hold it off until the local region cools through
-    // the resume threshold. The fixed 85 C chamber trip above remains the latching backstop.
-    bool external_regulation = isfinite(control_chamber_c);
+    // Local chamber soft foldback for REMOTE regulation. This remains independent
+    // of PID and wins unconditionally over its requested duty.
     if (external_regulation)
         s_local_cut = pb_heater_local_foldback_cut(cs == PB_NTC_OK, chamber_c, s_local_cut);
     else
         s_local_cut = false;
 
-    // Step 3 — element-temperature foldback (hysteresis hard-cut). While the PTC element
-    // is too hot we force the SSR fully OFF and hold it off until the element cools below
-    // the resume point — a real cool-down cycle rather than half-power hovering near the
-    // 105 C hard cutoff. Thresholds are per board Rref variant (33k boards run hotter, so
-    // they get a lower cut). Pure + host-tested; ps==OK is guaranteed here (checked above).
+    // Element foldback is likewise an independent output veto beneath the fixed
+    // 105 C latching cutoff.
     float fb_cut, fb_resume;
     pb_heater_effective_foldback(pb_heater_get_fb_cut_c(), pb_ntc_rref_kohm(), &fb_cut, &fb_resume);
     s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut, fb_cut, fb_resume);
 
-    // Step 4 — drive the SSR only when regulation wants heat and neither soft limiter
-    // is holding it off. (Zero-cross SSR: plain on/off, no phase-cut.)
-    bool drive = s_heat_intent && !s_local_cut && !s_fb_cut;
+    bool drive = false;
+    if (external_regulation) {
+        // External printer chamber telemetry gets slow time-proportioning PID rather
+        // than bang-bang. A 10 s window is intentionally glacial for a chamber and
+        // kind to a zero-cross SSR: e.g. 0.30 duty means roughly 3 s ON / 7 s OFF.
+        // If either local soft limiter intervenes, reset PID state so integral cannot
+        // accumulate behind a blocked output and launch a full-power pulse on release.
+        if (s_local_cut || s_fb_cut) {
+            pid_runtime_reset();
+            drive = false;
+        } else {
+            s_pid_duty = pb_pid_step(&s_pid, target, control_chamber_c,
+                                     PB_CHAMBER_PID_DT_S,
+                                     PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
+                                     PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
+
+            if (s_pid_window_start_us == 0 || now_us < s_pid_window_start_us)
+                s_pid_window_start_us = now_us;
+            int64_t elapsed = now_us - s_pid_window_start_us;
+            if (elapsed >= PB_CHAMBER_PID_WINDOW_US) {
+                int64_t windows = elapsed / PB_CHAMBER_PID_WINDOW_US;
+                s_pid_window_start_us += windows * PB_CHAMBER_PID_WINDOW_US;
+                elapsed = now_us - s_pid_window_start_us;
+            }
+            int64_t on_us = (int64_t)(s_pid_duty * (float)PB_CHAMBER_PID_WINDOW_US);
+            drive = (on_us > 0 && elapsed < on_us);
+            s_heat_intent = s_pid_duty > 0.0f;
+        }
+    } else {
+        // No usable external measurement: preserve the proven local-NTC bang-bang
+        // fallback exactly as before and discard any old remote-controller state.
+        pid_runtime_reset();
+        if (chamber_c < (target - PB_HEATER_HYSTERESIS_C))
+            s_heat_intent = true;
+        else if (chamber_c >= target)
+            s_heat_intent = false;
+        drive = s_heat_intent && !s_fb_cut;
+    }
+
     if (drive != s_on) ssr_set(drive);
 }
