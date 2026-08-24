@@ -7,6 +7,23 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.12] - 2026-08-24
+
+### Added
+- **Prusa (PrusaLink) chamber control.** DragonBreath can now follow a **Prusa Core One**
+  (or any PrusaLink printer) as a control source. Because PrusaLink reports no filament
+  type, this source **follows the bed**: in **Auto**, the chamber heats to your chamber
+  target once the printer's bed setpoint reaches your bed threshold — both set on the
+  dashboard's **Auto** card, which now shows bed-follow controls when a bed-only printer
+  is selected (filament-aware printers still follow the filament profile). Configure it
+  under **Setup → Control source → Prusa (PrusaLink)** with the printer host and its
+  PrusaLink password. Read-only; if the printer stops responding the chamber safely
+  disengages. Validated end-to-end by a Prusa user. Bumps **dragon-core** to **v0.28.0**.
+
+### Fixed
+- **Bambu chamber temperature no longer goes stale silently** — a chamber reading that
+  stops updating over MQTT is now expired rather than held indefinitely (dragon-core #47).
+
 ## [1.1.11] - 2026-08-20
 
 ### Added

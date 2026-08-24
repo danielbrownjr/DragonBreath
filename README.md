@@ -2,7 +2,7 @@
 
 Open firmware for the **BIGTREETECH Panda Breath** chamber heater (ESP32-C3),
 providing local web control and a selectable control source — **Klipper/Moonraker**
-(default), **Home Assistant** (MQTT Discovery), or **Bambu LAN**.
+(default), **Home Assistant** (MQTT Discovery), **Bambu LAN**, or **Prusa (PrusaLink)**.
 
 Sibling to [OpenVent](https://github.com/justinh-rahb/OpenVent) — part of an
 open-firmware **family for the BTT Panda line** that shares a common core.
