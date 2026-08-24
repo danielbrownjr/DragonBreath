@@ -24,7 +24,8 @@ re-implemented.
 [`docs/api-v2.md`](docs/api-v2.md) · safety model → [`docs/SAFETY.md`](docs/SAFETY.md) ·
 OEM parity → [`docs/OEM_PARITY.md`](docs/OEM_PARITY.md) · hardware →
 [`docs/HARDWARE.md`](docs/HARDWARE.md) · hardware-in-loop testing →
-[`docs/HIL.md`](docs/HIL.md).
+[`docs/HIL.md`](docs/HIL.md) · firmware-distribution integration →
+[`docs/KLIPPER_DISTRIBUTION_INTEGRATION.md`](docs/KLIPPER_DISTRIBUTION_INTEGRATION.md).
 
 ## Install & update
 
