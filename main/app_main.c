@@ -57,6 +57,8 @@
 static const char *TAG = "dragonbreath";
 
 #define PB_TICK_PERIOD_MS 500
+#define DB_NVS_NAMESPACE "app_nvs"
+#define DB_NVS_KEY_BAMBU_CHAMBER_CTL "bb_ch_ctl"
 
 // Set true once the network components have been started, so the control loop
 // doesn't touch pb_* state before it's initialized.
@@ -71,6 +73,10 @@ static volatile bool s_km_up    = false;   // Klipper (MQTT)
 static volatile bool s_prusa_up = false;   // PrusaLink HTTP
 // The persisted control source, read once at boot. Default Klipper.
 static dc_ctl_source_t s_src = DC_SRC_KLIPPER;
+// Opt-in only: when true, a fresh Bambu-reported chamber temperature may drive
+// set-point regulation. Local DragonBreath chamber/PTC sensors remain the
+// authoritative safety inputs regardless of this flag.
+static bool s_bambu_direct_chamber_control = false;
 
 // Control-task handle, so accepted policy commands can update outputs/LEDs
 // without waiting up to a full periodic tick. Panic-off uses the same prompt
@@ -148,6 +154,17 @@ static void nvs_init(void)
     }
 }
 
+static bool load_bambu_direct_chamber_control(void)
+{
+    uint8_t enabled = 0;   // default OFF: existing Bambu installs keep local regulation
+    nvs_handle_t h;
+    if (nvs_open(DB_NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        (void)nvs_get_u8(h, DB_NVS_KEY_BAMBU_CHAMBER_CTL, &enabled);
+        nvs_close(h);
+    }
+    return enabled != 0;
+}
+
 #if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)
 // Dev-only: seed WiFi creds + Moonraker config into the NVS layout the shared
 // components load at start (namespace app_nvs; keys ssid/password + mk_host/mk_port).
@@ -211,8 +228,8 @@ static void control_task(void *arg)
         // Feed the AUTO seam from whichever ONE source is bound.
         // All paths converge on pb_policy_set_env(); the policy remains
         // source-agnostic. Printer-reported chamber temperature is passed through
-        // for set-point regulation when available; DragonBreath's local sensors
-        // remain authoritative for heater safety.
+        // only when the Bambu direct-control opt-in is enabled. DragonBreath's
+        // local sensors remain authoritative for heater safety in either mode.
         float bed_c = 0.0f;
         float bed_target_c = 0.0f;
         float src_target_c = 0.0f;
@@ -235,7 +252,7 @@ static void control_task(void *arg)
                         if (isfinite(bs.bed_target))
                             bed_target_c = bs.bed_target;
 
-                        if (isfinite(bs.chamber_temp))
+                        if (s_bambu_direct_chamber_control && isfinite(bs.chamber_temp))
                             chamber_src_c = bs.chamber_temp;
 
                         // Filament chamber zone: while a print is active,
@@ -446,6 +463,9 @@ void app_main(void)
     // tick AND be able to persist a fault that trips during early boot — so a
     // safety trip can never be lost across a reboot for want of an initialized NVS.
     nvs_init();
+    s_bambu_direct_chamber_control = load_bambu_direct_chamber_control();
+    ESP_LOGI(TAG, "Bambu direct chamber control: %s",
+             s_bambu_direct_chamber_control ? "enabled" : "disabled");
     pb_heater_load_config();                 // persisted max-target + comms timeout
     pb_heater_load_fault();                  // restore a persisted safety-fault latch (fail-safe on NVS error)
     pb_ntc_load_calibration();               // persisted per-channel offsets (clamped ±5 °C on load)
