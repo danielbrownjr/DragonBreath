@@ -377,14 +377,15 @@ static void test_auto_requires_live_source(void)
     CHECK(snap.effective_target_c == 0.0f);
 }
 
-// External printer chamber temperature is forwarded to pb_heater only while
-// the source is live. A disconnect (or invalid reading) clears the external
-// control input so pb_heater falls back to its local chamber NTC.
+// External printer chamber temperature is an AUTO-only regulation input.
+// Disconnects, invalid telemetry, Manual, and Drying all fall back to the local NTC.
 static void test_external_chamber_control_forwarding(void)
 {
     reset_fixture();
+    CHECK(pb_policy_set_auto(
+        60.0f, 100.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
 
-    // A valid chamber reading from a live source reaches the heater control seam.
+    // AUTO + live source + finite chamber telemetry reaches the heater seam.
     pb_policy_set_env(20.0f, 0.0f, true, 55.0f, 42.5f);
     pb_policy_tick();
     CHECK(isfinite(heater_control_chamber_c));
@@ -398,6 +399,22 @@ static void test_external_chamber_control_forwarding(void)
 
     // A non-finite source reading also selects the local-NTC fallback.
     pb_policy_set_env(20.0f, 0.0f, true, 55.0f, NAN);
+    pb_policy_tick();
+    CHECK(isnan(heater_control_chamber_c));
+
+    // Manual regulation always stays on the local chamber NTC.
+    reset_fixture();
+    CHECK(pb_policy_set_power_on(
+        50.0f, DB_SOURCE_BUTTON, "panel", 1, NULL) == PB_POLICY_OK);
+    pb_policy_set_env(20.0f, 0.0f, true, 0.0f, 42.5f);
+    pb_policy_tick();
+    CHECK(isnan(heater_control_chamber_c));
+
+    // Drying likewise ignores printer chamber telemetry.
+    reset_fixture();
+    CHECK(pb_policy_start_drying(
+        60.0f, 1, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
+    pb_policy_set_env(20.0f, 0.0f, true, 0.0f, 42.5f);
     pb_policy_tick();
     CHECK(isnan(heater_control_chamber_c));
 }
