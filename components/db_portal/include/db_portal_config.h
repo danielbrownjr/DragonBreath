@@ -4,6 +4,7 @@
 #include "db_klipper_mqtt.h"
 #include "dc_bambu.h"
 #include "dc_moonraker.h"
+#include "dc_prusa.h"
 #include "dc_source.h"
 #include "pb_ha.h"
 
@@ -37,8 +38,7 @@ typedef struct {
     db_portal_text_value_t km_host, km_user, km_pass, km_inst, km_topic;
     db_portal_port_value_t km_port;
     db_portal_bool_value_t km_tls, km_writeback;
-    db_portal_text_value_t pr_host, pr_key;      // Prusa host + API key (handled inline
-                                                 // in apply_product, not the shared planner)
+    db_portal_text_value_t pr_host, pr_key;      // Prusa (PrusaLink) host + API key
 } db_portal_product_request_t;
 
 typedef struct {
@@ -47,11 +47,13 @@ typedef struct {
     dc_bambu_config_t bambu;
     pb_ha_config_t ha;
     db_km_config_t klipper_mqtt;
+    dc_prusa_config_t prusa;
     bool source_changed;
     bool moonraker_changed;
     bool bambu_changed;
     bool ha_changed;
     bool klipper_mqtt_changed;
+    bool prusa_changed;
 } db_portal_product_plan_t;
 
 // Build a complete, validated save plan without mutating runtime or NVS state.
@@ -63,6 +65,7 @@ esp_err_t db_portal_plan_product_save(
     const dc_bambu_config_t *current_bambu,
     const pb_ha_config_t *current_ha,
     const db_km_config_t *current_klipper_mqtt,
+    const dc_prusa_config_t *current_prusa,
     db_portal_product_plan_t *plan,
     char *message,
     size_t message_size);

@@ -5,8 +5,12 @@
 #include <string.h>
 
 static void current_configs(dc_moonraker_config_t *mr, dc_bambu_config_t *bb,
-                            pb_ha_config_t *ha, db_km_config_t *km)
+                            pb_ha_config_t *ha, db_km_config_t *km,
+                            dc_prusa_config_t *pr)
 {
+    snprintf(pr->host, sizeof(pr->host), "prusa.lan");
+    pr->port = 80;
+    snprintf(pr->api_key, sizeof(pr->api_key), "prusa-secret");
     snprintf(mr->host, sizeof(mr->host), "moonraker.lan");
     mr->port = 7125;
     snprintf(mr->api_key, sizeof(mr->api_key), "moon-secret");
@@ -35,9 +39,10 @@ static esp_err_t plan(const db_portal_product_request_t *request,
     dc_bambu_config_t bb = {0};
     pb_ha_config_t ha = {0};
     db_km_config_t km = {0};
-    current_configs(&mr, &bb, &ha, &km);
+    dc_prusa_config_t pr = {0};
+    current_configs(&mr, &bb, &ha, &km, &pr);
     return db_portal_plan_product_save(request, DC_SRC_KLIPPER, &mr, &bb, &ha,
-                                       &km, out, message, size);
+                                       &km, &pr, out, message, size);
 }
 
 int main(void)
@@ -73,11 +78,12 @@ int main(void)
         .km_user = {true, "km-user"}, .km_pass = {true, ""},
         .km_inst = {true, "printer"}, .km_topic = {true, "dragonbreath"},
         .km_tls = {true, false}, .km_writeback = {true, true},
+        .pr_host = {true, "prusa.lan"}, .pr_key = {true, ""},
     };
     assert(plan(&unchanged, &result, message, sizeof(message)) == ESP_OK);
     assert(!result.source_changed && !result.moonraker_changed &&
            !result.bambu_changed && !result.ha_changed &&
-           !result.klipper_mqtt_changed);
+           !result.klipper_mqtt_changed && !result.prusa_changed);
 
     // Blank secrets retain credentials while ordinary changed fields are staged.
     db_portal_product_request_t changed = {
@@ -107,6 +113,34 @@ int main(void)
     assert(strcmp(result.bambu.code, "bambu-secret") == 0);
     assert(!result.moonraker_changed && !result.ha_changed &&
            !result.klipper_mqtt_changed && !result.source_changed);
+
+    // Prusa: a changed host is staged; a blank API key retains the stored password.
+    db_portal_product_request_t prusa_change = {
+        .pr_host = {true, "prusa-new.lan"},
+        .pr_key = {true, ""},
+    };
+    assert(plan(&prusa_change, &result, message, sizeof(message)) == ESP_OK);
+    assert(result.prusa_changed);
+    assert(strcmp(result.prusa.host, "prusa-new.lan") == 0);
+    assert(strcmp(result.prusa.api_key, "prusa-secret") == 0);
+    assert(!result.moonraker_changed && !result.bambu_changed &&
+           !result.ha_changed && !result.klipper_mqtt_changed &&
+           !result.source_changed);
+
+    // Prusa: a new API key overwrites; the host is left untouched.
+    db_portal_product_request_t prusa_key = {.pr_key = {true, "new-prusa-key"}};
+    assert(plan(&prusa_key, &result, message, sizeof(message)) == ESP_OK);
+    assert(result.prusa_changed);
+    assert(strcmp(result.prusa.api_key, "new-prusa-key") == 0);
+    assert(strcmp(result.prusa.host, "prusa.lan") == 0);
+
+    // Prusa: an overlong host is rejected in the planning phase (no silent truncation).
+    char pr_too_long[80];
+    memset(pr_too_long, 'p', sizeof(pr_too_long));
+    pr_too_long[sizeof(pr_too_long) - 1] = '\0';
+    db_portal_product_request_t prusa_invalid = {.pr_host = {true, pr_too_long}};
+    assert(plan(&prusa_invalid, &result, message, sizeof(message)) == ESP_ERR_INVALID_ARG);
+    assert(strstr(message, "pr_host") != NULL);
 
     // Validation fails in the pure planning phase, before any setter can run.
     char too_long[80];
