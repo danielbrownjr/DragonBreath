@@ -14,12 +14,14 @@
 
 static const char *TAG = "pb_heater";
 
-// Conservative first-pass gains for the very slow printer-chamber plant. These
-// intentionally start gentle; hardware logs can tune them later without weakening
-// any of the independent local safety layers below.
-#define PB_CHAMBER_PID_KP       0.0400f
-#define PB_CHAMBER_PID_KI       0.0008f
-#define PB_CHAMBER_PID_KD       0.0200f
+// Hardware-tuned conservative gains for the very slow printer-chamber plant.
+// Earlier first-pass values still carried too much heat into the target approach
+// and could drive the local chamber limiter at 72 C. Back P/I off substantially
+// and add more derivative braking; the independent local safety layers below are
+// unchanged and remain authoritative.
+#define PB_CHAMBER_PID_KP       0.0250f
+#define PB_CHAMBER_PID_KI       0.0003f
+#define PB_CHAMBER_PID_KD       0.0400f
 #define PB_CHAMBER_PID_D_ALPHA  0.20f
 #define PB_CHAMBER_PID_DT_S     0.50f
 #define PB_CHAMBER_PID_WINDOW_US 10000000LL   // 10 s slow time-proportioning window
@@ -114,6 +116,19 @@ static void pid_runtime_reset(void)
     pb_pid_reset(&s_pid);
     s_pid_window_start_us = 0;
     s_pid_duty = 0.0f;
+}
+
+// The chamber has a large amount of stored heat and keeps climbing after the SSR
+// backs off. Taper maximum heater power as the printer-reported chamber approaches
+// target so PID cannot charge the thermal mass at full power right up to setpoint.
+// This is a control-shaping limit only; local NTC/PTC safety cutoffs remain separate.
+static float pid_approach_max_duty(float error_c)
+{
+    if (error_c <= 0.0f) return 0.0f;
+    if (error_c < 2.0f)  return 0.20f;
+    if (error_c < 5.0f)  return 0.40f;
+    if (error_c < 10.0f) return 0.70f;
+    return 1.0f;
 }
 
 esp_err_t pb_heater_init(void)
@@ -591,6 +606,14 @@ void pb_heater_tick(void)
                                      PB_CHAMBER_PID_DT_S,
                                      PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
                                      PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
+
+            // Approach shaping for the chamber's thermal inertia. Far from target
+            // PID may use the full heater, but progressively cap duty inside 10 C.
+            // With the 10 s SSR window these limits correspond to at most 7 s, 4 s,
+            // and 2 s ON per window as we close to setpoint.
+            float approach_limit = pid_approach_max_duty(target - control_chamber_c);
+            if (s_pid_duty > approach_limit)
+                s_pid_duty = approach_limit;
 
             if (s_pid_window_start_us == 0 || now_us < s_pid_window_start_us)
                 s_pid_window_start_us = now_us;
