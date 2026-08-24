@@ -34,7 +34,17 @@ below into the GitHub Release notes.
   DragonBreath's local chamber NTC and PTC safety-authoritative. External-sensor
   regulation is bounded by a local chamber thermal limiter: heat cuts at **72 °C**
   local and may resume below **67 °C**, while the independent hard chamber
-  over-temperature latch remains unchanged.
+  over-temperature latch remains unchanged. Direct printer-chamber regulation applies
+  only in **Auto**; **Manual** and **Drying** always regulate from DragonBreath's local
+  chamber NTC.
+- **External-regulation operating range:** hardware validation was performed at a
+  **60 °C** chamber target. Because the local soft limiter cuts at 72 °C, targets near
+  the configurable 65–70 °C ceiling may be limited before the printer's bulk chamber
+  sensor reaches setpoint, depending on heater/outlet temperature rise.
+- **Bambu model compatibility:** direct chamber regulation currently depends on the
+  legacy `chamber_temper` telemetry field. Bambu models that report chamber temperature
+  only through newer `device.ctc.info.temp` telemetry will safely fall back to local
+  NTC regulation until that source is supported by `dc_bambu`.
 - **Privacy:** `environment.bambu_serial` is no longer exposed by API v2 state
   responses. The configured printer serial remains internal and is still used for
   Bambu MQTT topic selection.
