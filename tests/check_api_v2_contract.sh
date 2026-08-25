@@ -89,6 +89,16 @@ grep -q 's->params.manual_target_c' "$httpd" || {
 }
 grep -q 'expected->valuedouble < UINT32_MAX' "$httpd"
 
+# Bambu chamber-control diagnostics: the public state must expose the printer
+# chamber sample and its age so hardware validation can distinguish live external
+# regulation from local-NTC fallback without altering heater behavior.
+for field in printer_chamber_temperature_c printer_chamber_age_ms; do
+    grep -q "\"$field\"" "$httpd" || {
+        echo "state document is missing environment.$field" >&2
+        exit 1
+    }
+done
+
 # Ownership boundary: core owns HTTP/provisioning/recovery; the product adapter
 # supplies API registration, authorization, heater safety and image identity.
 grep -q 'dc_portal_start(&cfg)' "$adapter"

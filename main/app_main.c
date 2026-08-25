@@ -57,6 +57,8 @@
 static const char *TAG = "dragonbreath";
 
 #define PB_TICK_PERIOD_MS 500
+#define DB_NVS_NAMESPACE "app_nvs"
+#define DB_NVS_KEY_BAMBU_CHAMBER_CTL "bb_ch_ctl"
 
 // Set true once the network components have been started, so the control loop
 // doesn't touch pb_* state before it's initialized.
@@ -71,6 +73,10 @@ static volatile bool s_km_up    = false;   // Klipper (MQTT)
 static volatile bool s_prusa_up = false;   // PrusaLink HTTP
 // The persisted control source, read once at boot. Default Klipper.
 static dc_ctl_source_t s_src = DC_SRC_KLIPPER;
+// Opt-in only: when true, a fresh Bambu-reported chamber temperature may drive
+// set-point regulation. Local DragonBreath chamber/PTC sensors remain the
+// authoritative safety inputs regardless of this flag.
+static bool s_bambu_direct_chamber_control = false;
 
 // Control-task handle, so accepted policy commands can update outputs/LEDs
 // without waiting up to a full periodic tick. Panic-off uses the same prompt
@@ -148,6 +154,17 @@ static void nvs_init(void)
     }
 }
 
+static bool load_bambu_direct_chamber_control(void)
+{
+    uint8_t enabled = 0;   // default OFF: existing Bambu installs keep local regulation
+    nvs_handle_t h;
+    if (nvs_open(DB_NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        (void)nvs_get_u8(h, DB_NVS_KEY_BAMBU_CHAMBER_CTL, &enabled);
+        nvs_close(h);
+    }
+    return enabled != 0;
+}
+
 #if defined(DB_WIFI_SSID) || defined(DB_MOONRAKER_HOST)
 // Dev-only: seed WiFi creds + Moonraker config into the NVS layout the shared
 // components load at start (namespace app_nvs; keys ssid/password + mk_host/mk_port).
@@ -201,28 +218,49 @@ static void control_task(void *arg)
     }
 
     for (;;) {
+        // Keep source-specific snapshots alive through the status logger below.
+        // Previously only the Moonraker snapshot survived that far, so Bambu mode
+        // misleadingly rendered zero-initialized Moonraker diagnostics.
         dc_moonraker_status_t st = {0};
+        dc_bambu_status_t bs = {0};
 #ifndef CONFIG_PB_HIL_DEVBOARD
-        // Feed the AUTO seam from whichever ONE source is bound. All three paths
-        // converge on pb_policy_set_env(bed_c, bed_target_c, connected); the policy
-        // is source-agnostic and triggers AUTO on the bed SETPOINT (bed_target_c).
-        // Not-connected feeds zeros/false (identical to the pre-selector behavior
-        // when Moonraker was down).
-        float bed_c = 0.0f, bed_target_c = 0.0f, src_target_c = 0.0f;
+
+        // Feed the AUTO seam from whichever ONE source is bound.
+        // All paths converge on pb_policy_set_env(); the policy remains
+        // source-agnostic. Printer-reported chamber temperature is passed through
+        // only when the Bambu direct-control opt-in is enabled. DragonBreath's
+        // local sensors remain authoritative for heater safety in either mode.
+        float bed_c = 0.0f;
+        float bed_target_c = 0.0f;
+        float src_target_c = 0.0f;
+        float chamber_src_c = NAN;
         bool  src_connected = false;
+
         if (s_net_up) {
             switch (s_src) {
+
             case DC_SRC_BAMBU:
                 if (s_bambu_up) {
-                    dc_bambu_status_t bs;
                     dc_bambu_get_status(&bs);
+
                     src_connected = (bs.state == DC_BAMBU_SUBSCRIBED);
+
                     if (src_connected) {
-                        if (isfinite(bs.bed_temp))   bed_c = bs.bed_temp;
-                        if (isfinite(bs.bed_target)) bed_target_c = bs.bed_target;
-                        // Filament chamber zone: while a print is active, request the
-                        // active filament's zone target (0 = no zone -> normal bed-AUTO).
-                        if (bs.printing) src_target_c = (float)dc_bambu_zone_target(bs.filament);
+                        if (isfinite(bs.bed_temp))
+                            bed_c = bs.bed_temp;
+
+                        if (isfinite(bs.bed_target))
+                            bed_target_c = bs.bed_target;
+
+                        if (s_bambu_direct_chamber_control && isfinite(bs.chamber_temp))
+                            chamber_src_c = bs.chamber_temp;
+
+                        // Filament chamber zone: while a print is active,
+                        // request the active filament's zone target
+                        // (0 = no zone -> normal bed-AUTO).
+                        if (bs.printing)
+                            src_target_c =
+                                (float)dc_bambu_zone_target(bs.filament);
                     }
                 }
                 break;
@@ -277,7 +315,13 @@ static void control_task(void *arg)
                 break;
             }
         }
-        pb_policy_set_env(bed_c, bed_target_c, src_connected, src_target_c);
+        pb_policy_set_env(
+            bed_c,
+            bed_target_c,
+            src_connected,
+            src_target_c,
+            chamber_src_c
+        );
         // Home Assistant: pump the client whenever it's up — full-control when HA is
         // the selected source, or read-only when it runs alongside another source
         // (Bambu/Klipper) as a monitor. pb_ha_tick() no-ops until connected.
@@ -306,29 +350,51 @@ static void control_task(void *arg)
             static char     s_dbg_last[224];
             static uint32_t s_dbg_rep;
             int wifi = net ? (int)dc_wifi_state() : -1;
-            // Displayed line: 0.1 °C precision.
+            // Displayed line: 0.1 °C precision. Keep diagnostics source-native:
+            // Bambu must never be rendered through a zeroed Moonraker struct.
             char line[224];
-            snprintf(line, sizeof line,
-                "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
-                "wifi=%d src=%s mk=%d printer=%s bed=%.1f",
-                (unsigned long)snap.state_revision,
-                pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
-                snap.effective_target_c, snap.heater_output ? "ON" : "off",
-                snap.chamber_c, snap.ptc_c,
-                wifi, dc_source_str(s_src), (int)st.state,
-                dc_printer_state_str(st.printer), st.bed_temp);
-            // Dedup key: same fields but temps rounded to whole degrees, so sub-degree
-            // sensor drift/jitter doesn't re-trigger a fresh line every 2 s.
             char key[224];
-            snprintf(key, sizeof key,
-                "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.0fC ptc=%.0fC | "
-                "wifi=%d src=%s mk=%d printer=%s bed=%.0f",
-                (unsigned long)snap.state_revision,
-                pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
-                snap.effective_target_c, snap.heater_output ? "ON" : "off",
-                snap.chamber_c, snap.ptc_c,
-                wifi, dc_source_str(s_src), (int)st.state,
-                dc_printer_state_str(st.printer), st.bed_temp);
+            if (s_src == DC_SRC_BAMBU) {
+                const char *filament = bs.filament[0] ? bs.filament : "-";
+                snprintf(line, sizeof line,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
+                    "wifi=%d src=bambu link=%d print=%s filament=%s bed=%.1f/%.1f chsrc=%.1f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, (int)bs.state, bs.printing ? "yes" : "no", filament,
+                    bs.bed_temp, bs.bed_target, bs.chamber_temp);
+                // Dedup key: same fields but temps rounded to whole degrees.
+                snprintf(key, sizeof key,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.0fC ptc=%.0fC | "
+                    "wifi=%d src=bambu link=%d print=%s filament=%s bed=%.0f/%.0f chsrc=%.0f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, (int)bs.state, bs.printing ? "yes" : "no", filament,
+                    bs.bed_temp, bs.bed_target, bs.chamber_temp);
+            } else {
+                snprintf(line, sizeof line,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.1fC ptc=%.1fC | "
+                    "wifi=%d src=%s mk=%d printer=%s bed=%.1f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, dc_source_str(s_src), (int)st.state,
+                    dc_printer_state_str(st.printer), st.bed_temp);
+                snprintf(key, sizeof key,
+                    "rev=%lu mode=%s source=%s target=%.0fC heater=%s | chamber=%.0fC ptc=%.0fC | "
+                    "wifi=%d src=%s mk=%d printer=%s bed=%.0f",
+                    (unsigned long)snap.state_revision,
+                    pb_policy_mode_str(snap.mode), pb_policy_source_str(snap.source),
+                    snap.effective_target_c, snap.heater_output ? "ON" : "off",
+                    snap.chamber_c, snap.ptc_c,
+                    wifi, dc_source_str(s_src), (int)st.state,
+                    dc_printer_state_str(st.printer), st.bed_temp);
+            }
 
             if (strcmp(key, s_dbg_last) == 0) {
                 s_dbg_rep++;
@@ -397,6 +463,9 @@ void app_main(void)
     // tick AND be able to persist a fault that trips during early boot — so a
     // safety trip can never be lost across a reboot for want of an initialized NVS.
     nvs_init();
+    s_bambu_direct_chamber_control = load_bambu_direct_chamber_control();
+    ESP_LOGI(TAG, "Bambu direct chamber control: %s",
+             s_bambu_direct_chamber_control ? "enabled" : "disabled");
     pb_heater_load_config();                 // persisted max-target + comms timeout
     pb_heater_load_fault();                  // restore a persisted safety-fault latch (fail-safe on NVS error)
     pb_ntc_load_calibration();               // persisted per-channel offsets (clamped ±5 °C on load)

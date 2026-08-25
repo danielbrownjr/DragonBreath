@@ -161,12 +161,8 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
     // Source capability: filament-aware (AUTO follows the filament zone) vs bed-follow
     // (AUTO follows the bed setpoint). The dashboard's AUTO card keys off this.
     cJSON_AddBoolToObject(environment, "source_has_filament", dc_source_has_filament(ctl_src));
-    // In Bambu mode, surface the configured serial so the dashboard can label the
-    // row "Bambu (<serial>)" — the LAN report carries no friendly printer name.
+
     if (ctl_src == DC_SRC_BAMBU) {
-        dc_bambu_config_t bc;
-        if (dc_bambu_get_config(&bc) == ESP_OK && bc.serial[0])
-            cJSON_AddStringToObject(environment, "bambu_serial", bc.serial);
         // Surface the active print's filament so the dashboard status card can show
         // "Filament: PETG" while a Bambu print runs (Bambu-only; Klipper drives the
         // chamber via macros and reports no filament here).
@@ -175,6 +171,17 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
             cJSON_AddBoolToObject(environment, "bambu_printing", bs.printing);
             if (bs.printing && bs.filament[0])
                 cJSON_AddStringToObject(environment, "bambu_filament", bs.filament);
+
+            // Diagnostic view of the printer's own chamber sensor. dc_bambu
+            // invalidates chamber_temp when its sample is stale, so the API emits
+            // JSON null rather than letting an old value masquerade as live data.
+            // The local DragonBreath NTC/PTC remain the safety-authoritative sensors.
+            add_num1(environment, "printer_chamber_temperature_c", bs.chamber_temp);
+            if (bs.chamber_temp_age_ms == UINT32_MAX)
+                cJSON_AddNullToObject(environment, "printer_chamber_age_ms");
+            else
+                cJSON_AddNumberToObject(environment, "printer_chamber_age_ms",
+                                        bs.chamber_temp_age_ms);
         }
     } else if (ctl_src == DC_SRC_KLIPPER) {
         // Klipper now follows filament zones too: surface Moonraker's active-print

@@ -22,6 +22,31 @@
 
 static const char *TAG = "db_portal";
 
+#define DB_NVS_NAMESPACE "app_nvs"
+#define DB_NVS_KEY_BAMBU_CHAMBER_CTL "bb_ch_ctl"
+
+static bool bambu_direct_chamber_control_get(void)
+{
+    uint8_t enabled = 0;   // opt-in: absent key means local DragonBreath regulation
+    nvs_handle_t h;
+    if (nvs_open(DB_NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        (void)nvs_get_u8(h, DB_NVS_KEY_BAMBU_CHAMBER_CTL, &enabled);
+        nvs_close(h);
+    }
+    return enabled != 0;
+}
+
+static esp_err_t bambu_direct_chamber_control_set(bool enabled)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(DB_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(h, DB_NVS_KEY_BAMBU_CHAMBER_CTL, enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
 // A zero-length chunk terminates an ESP-IDF chunked response, so skip empty text.
 #define SEND(req, text) do { \
     const char *chunk_ = (text); \
@@ -264,9 +289,13 @@ static cJSON *describe_product(void *ctx)
     dc_bambu_get_config(&bb);
     s = section(root, "Bambu LAN");
     visible_when(s, "ctl_src", "1");
+    cJSON_AddStringToObject(s, "description",
+        "Experimental: when enabled, DragonBreath regulates from the printer-reported chamber temperature. The local chamber NTC and PTC remain authoritative for thermal limits, sensor faults, and emergency shutdown.");
     add_field(s, field("bb_host", "Printer host", "text", bb.host, false));
     add_field(s, field("bb_serial", "Serial", "text", bb.serial, false));
     add_field(s, field("bb_code", "Access code (leave blank to keep)", "password", "", true));
+    add_field(s, boolean_field("bb_chamber_ctl", "Use Bambu chamber sensor for heater control",
+                               bambu_direct_chamber_control_get()));
     // LAN discovery: the shared SPA renders a Search picker from this block and
     // fills bb_host + bb_serial, so the user only enters the access code. This MUST
     // stay attached to the Bambu section's `s` — keep it before the next section().
@@ -481,6 +510,14 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
     db_portal_product_request_t request;
     err = parse_product_request(values, &request, message, message_size);
     if (err != ESP_OK) return err;
+    db_portal_bool_value_t bb_chamber_ctl = {0};
+    err = parse_bool_field(values, "bb_chamber_ctl", &bb_chamber_ctl,
+                           message, message_size);
+    if (err != ESP_OK) return err;
+    bool bb_chamber_ctl_changed =
+        bb_chamber_ctl.present &&
+        bb_chamber_ctl.value != bambu_direct_chamber_control_get();
+
     db_portal_product_plan_t plan;
     err = db_portal_plan_product_save(&request, dc_source_get(), &mr, &bb, &ha, &km, &pr,
                                       &plan, message, message_size);
@@ -506,7 +543,11 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
         err = dc_prusa_set_config(&plan.prusa);
         if (err != ESP_OK) return persistence_error("Prusa", err, message, message_size);
     }
-
+    if (bb_chamber_ctl_changed) {
+        err = bambu_direct_chamber_control_set(bb_chamber_ctl.value);
+        if (err != ESP_OK)
+            return persistence_error("Bambu chamber control", err, message, message_size);
+    }
     // Source is deliberately last: an invalid or failed config save can never bind
     // a different controller. Selecting None changes only this enum; credentials stay.
     if (plan.source_changed) {
@@ -515,9 +556,10 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
     }
 
     bool changed = plan.moonraker_changed || plan.bambu_changed || plan.ha_changed ||
-                   plan.klipper_mqtt_changed || plan.prusa_changed || plan.source_changed;
+                   plan.klipper_mqtt_changed || plan.prusa_changed ||
+                   plan.source_changed || bb_chamber_ctl_changed;
     snprintf(message, message_size, changed
-             ? "Configuration saved; restart to apply source changes."
+             ? "Configuration saved; restart to apply source/control changes."
              : "Configuration already up to date.");
     return ESP_OK;
 }

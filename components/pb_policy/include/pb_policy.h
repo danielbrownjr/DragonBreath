@@ -184,7 +184,18 @@ bool  pb_policy_get_filter_auto_enable(void);
 // zone while a print is active): when > 0 in AUTO mode it engages heat to that target
 // directly, overriding the configured AUTO target and bypassing the bed threshold
 // ("zone wins"). Pass 0 for the normal bed-threshold AUTO behaviour.
-void pb_policy_set_env(float bed_c, float bed_target_c, bool source_connected, float src_target_c);
+//
+// chamber_src_c is an optional printer-reported chamber temperature. Pass NAN
+// when unavailable. While the source is live, policy supplies a finite value to
+// pb_heater for set-point regulation; the local chamber NTC and PTC remain
+// authoritative for safety.
+void pb_policy_set_env(
+    float bed_c,
+    float bed_target_c,
+    bool source_connected,
+    float src_target_c,
+    float chamber_src_c
+);
 
 // Refresh exactly the active lease.  A stale/superseded lease cannot keep heat
 // alive.

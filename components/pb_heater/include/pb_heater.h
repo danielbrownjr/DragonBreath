@@ -67,6 +67,26 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 #define PB_HEATER_PTC_CUTOFF_C   105.0f   // element over-temp -> force off (stock parity)
 #define PB_HEATER_CHAMBER_MAX_C  85.0f    // chamber over-temp -> force off
 #define PB_HEATER_HYSTERESIS_C   1.0f
+
+// When regulation uses a remote/printer chamber sensor, the local chamber NTC can
+// be much hotter because it sits in DragonBreath's outlet/near-heater airflow. Keep
+// that local region below a non-latching SOFT ceiling instead of relying on the 85 C
+// emergency trip as normal control. This limiter applies only while an external
+// control temperature is active; local-sensor regulation is unchanged.
+#define PB_HEATER_LOCAL_FOLDBACK_CUT_C     72.0f
+#define PB_HEATER_LOCAL_FOLDBACK_RESUME_C  67.0f
+
+// Pure hysteresis helper for the local thermal limiter. A bad local read holds the
+// previous state; the fail-closed sensor-fault path in pb_heater_eval_trip() remains
+// authoritative while armed.
+static inline bool pb_heater_local_foldback_cut(bool chamber_ok, float chamber_c,
+                                                 bool prev_cut)
+{
+    if (!chamber_ok) return prev_cut;
+    if (chamber_c >= PB_HEATER_LOCAL_FOLDBACK_CUT_C) return true;
+    if (chamber_c < PB_HEATER_LOCAL_FOLDBACK_RESUME_C) return false;
+    return prev_cut;
+}
 // Soft element-temperature FOLDBACK, a layer strictly BELOW the hard cutoff: it holds
 // the PTC element just under the 105 C trip so a marginal/hot install can reach set-point
 // instead of tripping and needing a manual clear. It never adds heat and never delays the
@@ -194,6 +214,12 @@ esp_err_t pb_heater_init(void);
 esp_err_t pb_heater_set_target_c(float target_c);
 float pb_heater_get_target_c(void);
 
+// Optional external chamber measurement used ONLY for set-point regulation.
+// Pass NAN to fall back to the local chamber NTC. The local chamber NTC and PTC
+// remain authoritative for over-temperature trips, sensor-fault detection, and
+// all other safety decisions regardless of this value.
+void pb_heater_set_control_chamber_c(float temp_c);
+
 // --- Runtime-configurable, persisted settings (pb_heater is the sole owner) ---
 // Load persisted settings from NVS (namespace app_nvs). MUST be called AFTER
 // nvs_init() — pb_heater_init() only sets conservative defaults (nvs isn't up
@@ -231,8 +257,10 @@ float     pb_heater_get_fb_cut_c(void);
 // pb_heater_get_comms_timeout_ms() while heating, the heater latches off.
 void pb_heater_notify_link_alive(void);
 
-// Periodic control tick (call at ~1-2 Hz). Reads chamber + PTC temps, enforces
-// all safety cutoffs, and drives the SSR with hysteresis around the set-point.
+// Periodic control tick (call at ~1-2 Hz). Reads the local chamber + PTC temps,
+// enforces all safety cutoffs from those local sensors, and drives the SSR with
+// hysteresis around the set-point using the optional external regulation
+// temperature when one is supplied.
 void pb_heater_tick(void);
 
 // Immediate, latching shutoff. Clears the target and latches off. Heat stays off

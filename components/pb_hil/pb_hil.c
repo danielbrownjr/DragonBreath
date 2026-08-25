@@ -292,22 +292,38 @@ static void handle_request(const cJSON *request)
     } else if (strcmp(cmd->valuestring, "env") == 0) {
         const cJSON *connected =
             cJSON_GetObjectItemCaseSensitive(request, "connected");
+
         double bed_c = 0.0;
         if (!cJSON_IsBool(connected) || !json_number(request, "bed_c", &bed_c)) {
             response_error(response, "invalid_env");
             emit(response);
             return;
         }
+
         // bed_target_c is the AUTO/filter trigger (bed setpoint); optional, so a
         // harness that only injects bed_c still works (defaults to bed_c so the old
         // "measured == trigger" behavior is preserved for existing HIL scenarios).
         double bed_target_c = bed_c;
         json_number(request, "bed_target_c", &bed_target_c);
+
         // src_target_c: optional source-requested chamber target (Bambu filament zone);
         // absent -> 0 (normal bed-AUTO), so existing scenarios are unchanged.
         double src_target_c = 0.0;
         json_number(request, "src_target_c", &src_target_c);
-        pb_policy_set_env((float)bed_c, (float)bed_target_c, cJSON_IsTrue(connected), (float)src_target_c);
+
+        // chamber_src_c: optional printer-reported chamber temperature.
+        // Absent -> NAN, preserving existing HIL behaviour.
+        double chamber_src_c = NAN;
+        json_number(request, "chamber_src_c", &chamber_src_c);
+
+        pb_policy_set_env(
+            (float)bed_c,
+            (float)bed_target_c,
+            cJSON_IsTrue(connected),
+            (float)src_target_c,
+            (float)chamber_src_c
+        );
+
         cJSON_AddBoolToObject(response, "ok", true);
     } else if (strcmp(cmd->valuestring, "zero_cross") == 0) {
         double count = 1.0;

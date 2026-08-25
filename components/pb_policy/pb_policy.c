@@ -83,6 +83,9 @@ typedef struct {
     float src_target_c;          // source-requested chamber target (e.g. Bambu filament
                                  // zone); 0 = none. When >0 in AUTO it engages heat to
                                  // this target directly, bypassing the bed threshold.
+    float chamber_src_c;         // printer-reported chamber temperature;
+                                 // NAN = unavailable; used for regulation when
+                                 // the external source is live
 
     int64_t drying_deadline_us;
     int64_t local_power_deadline_us;
@@ -674,18 +677,31 @@ void pb_policy_stop_drying(db_source_t source)
     pb_policy_set_mode_off(source);
 }
 
-void pb_policy_set_env(float bed_c, float bed_target_c, bool source_connected, float src_target_c)
+void pb_policy_set_env(
+    float bed_c,
+    float bed_target_c,
+    bool source_connected,
+    float src_target_c,
+    float chamber_src_c)
 {
     if (!s_lock) return;
+
     // Clamp the source-requested target to the settable ceiling; the fixed heater
     // cutoffs (chamber/element over-temp) still protect regardless.
-    if (!isfinite(src_target_c) || src_target_c < 0.0f) src_target_c = 0.0f;
-    if (src_target_c > PB_HEATER_ABS_MAX_TARGET_C) src_target_c = PB_HEATER_ABS_MAX_TARGET_C;
+    if (!isfinite(src_target_c) || src_target_c < 0.0f)
+        src_target_c = 0.0f;
+
+    if (src_target_c > PB_HEATER_ABS_MAX_TARGET_C)
+        src_target_c = PB_HEATER_ABS_MAX_TARGET_C;
+
     xSemaphoreTake(s_lock, portMAX_DELAY);
+
     s.bed_c = isfinite(bed_c) ? bed_c : 0.0f;
     s.bed_target_c = isfinite(bed_target_c) ? bed_target_c : 0.0f;
     s.mk_connected = source_connected;
     s.src_target_c = src_target_c;
+    s.chamber_src_c = isfinite(chamber_src_c) ? chamber_src_c : NAN;
+
     xSemaphoreGive(s_lock);
 }
 
@@ -997,6 +1013,16 @@ void pb_policy_tick(void)
             pb_heater_notify_link_alive();
     }
 
+    // Printer-reported chamber temperature is an AUTO-follow input only.
+    // Manual and Drying are local device modes and must regulate from the
+    // DragonBreath chamber NTC even when Bambu telemetry is connected/fresh.
+    float control_chamber_c =
+        (s.mode == PB_MODE_AUTO &&
+         s.mk_connected && isfinite(s.chamber_src_c))
+            ? s.chamber_src_c
+            : NAN;
+
+    pb_heater_set_control_chamber_c(control_chamber_c);
     pb_heater_tick();
 
     bool heat = pb_heater_heat_mode();
