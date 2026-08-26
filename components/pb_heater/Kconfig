@@ -1,0 +1,21 @@
+choice PB_HEATER_PID_BACKEND
+    prompt "Chamber PID backend"
+    default PB_HEATER_PID_BACKEND_DC_PID
+    help
+        Select the generic PID math used by DragonBreath's chamber controller.
+        Heater-only behavior, output shaping, and every safety veto remain owned
+        by pb_heater regardless of this selection.
+
+config PB_HEATER_PID_BACKEND_DC_PID
+    bool "dragon-core dc_pid"
+    help
+        Use the shared dragon-core PID component. This is the default while
+        upstream dragon-core PR #54 is being evaluated.
+
+config PB_HEATER_PID_BACKEND_LEGACY
+    bool "DragonBreath legacy pb_pid"
+    help
+        Retain the original product-local PID implementation as a build-time
+        fallback if dc_pid is not accepted upstream or a regression is found.
+
+endchoice

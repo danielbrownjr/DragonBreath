@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "pb_heater.h"
-#include "pb_pid.h"
+#include "pb_pid_backend.h"
 #include "pb_board.h"
 #include "pb_ntc.h"
 
@@ -54,7 +54,7 @@ static bool        s_fb_cut;        // control-task only — element-foldback hy
                                     // (holds until the element cools below the resume point)
 static bool        s_local_cut;     // control-task only — local chamber soft-limit latch used
                                     // only while a remote chamber temperature controls regulation
-static pb_pid_state_t s_pid;        // control-task only — external chamber PID state
+static pb_pid_backend_state_t s_pid; // control-task only — external chamber PID state
 static int64_t     s_pid_window_start_us; // control-task only — time-proportion window origin
 static float       s_pid_duty;      // control-task only — last normalized PID output [0,1]
 static float       s_max_target_c;      // guarded by s_mux — settable set-point ceiling
@@ -113,7 +113,7 @@ static void ssr_set(bool on)        // control-task context only
 
 static void pid_runtime_reset(void)
 {
-    pb_pid_reset(&s_pid);
+    pb_pid_backend_reset(&s_pid);
     s_pid_window_start_us = 0;
     s_pid_duty = 0.0f;
 }
@@ -602,10 +602,10 @@ void pb_heater_tick(void)
             pid_runtime_reset();
             drive = false;
         } else {
-            s_pid_duty = pb_pid_step(&s_pid, target, control_chamber_c,
-                                     PB_CHAMBER_PID_DT_S,
-                                     PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
-                                     PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
+            s_pid_duty = pb_pid_backend_step(&s_pid, target, control_chamber_c,
+                                             PB_CHAMBER_PID_DT_S,
+                                             PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
+                                             PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
 
             // Approach shaping for the chamber's thermal inertia. Far from target
             // PID may use the full heater, but progressively cap duty inside 10 C.

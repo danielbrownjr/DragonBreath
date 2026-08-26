@@ -1,0 +1,3 @@
+# Optional fallback overlay. Use with sdkconfig.defaults to build DragonBreath
+# against the retained product-local pb_pid backend instead of dragon-core dc_pid.
+CONFIG_PB_HEATER_PID_BACKEND_LEGACY=y
