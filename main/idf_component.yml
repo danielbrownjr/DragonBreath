@@ -11,6 +11,11 @@ dependencies:
     git: https://github.com/danielbrownjr/dragon-core.git
     path: components/dc_bambu
     version: bfaffa4
+  # Temporary pin pending upstream dragon-core PR #54 merge and release.
+  dc_pid:
+    git: https://github.com/danielbrownjr/dragon-core.git
+    path: components/dc_pid
+    version: c8f226cb5bcdc35ac5ca529497f692f174497859
   dc_wifi:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_wifi
