@@ -28,8 +28,7 @@ static inline float pb_pid_backend_step(pb_pid_backend_state_t *state,
                                         float kp, float ki, float kd, float d_alpha)
 {
 #if defined(CONFIG_PB_HEATER_PID_BACKEND_DC_PID)
-    if (!state || !isfinite(target_c) || !isfinite(measured_c) ||
-        measured_c >= target_c) {
+    if (!state || !isfinite(target_c) || !isfinite(measured_c)) {
         dc_pid_reset(state);
         return 0.0f;
     }
@@ -47,6 +46,14 @@ static inline float pb_pid_backend_step(pb_pid_backend_state_t *state,
     dc_pid_result_t result;
     if (!dc_pid_step(state, &config, target_c, measured_c, dt_s, true, &result))
         return 0.0f;
+
+    // Heater policy still wins at/above setpoint, but do NOT throw away PID state.
+    // Keeping derivative history and allowing the integral to unwind while output is
+    // forced to zero avoids the re-entry sawtooth where every target crossing starts
+    // from a blank controller and has to rebuild holding duty from scratch.
+    if (measured_c >= target_c)
+        return 0.0f;
+
     return result.output;
 #else
     return pb_pid_step(state, target_c, measured_c, dt_s, kp, ki, kd, d_alpha);
