@@ -344,6 +344,10 @@ HTTP server, shared SPA, same-LAN/AP provisioning, captive DNS, logs, OTA and
 factory-reset transport. DragonBreath registers its product API and safety policy
 through `db_portal`.
 
+Hardware investigation notes include the documented
+[transient HTTP peak-memory finding](docs/HTTP_PEAK_MEMORY_FINDING.md) and its
+separate [dragon-core issue candidate](docs/issue-candidates/dragon-core-http-peak-memory.md).
+
 ## Credits
 Hardware + firmware reverse-engineering builds on the BTT Panda Breath work in
 this project's `klipper-esp32` history and the OpenVent architecture
