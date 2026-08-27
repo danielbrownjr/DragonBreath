@@ -11,13 +11,19 @@ below into the GitHub Release notes.
 - **Bambu printer-chamber diagnostics.** `GET /api/v2/state` now exposes
   `environment.printer_chamber_temperature_c` and `printer_chamber_age_ms`.
   Stale or unavailable Bambu chamber samples are reported as `null`.
+- **Selectable Bambu chamber PID source.** The Bambu setup section restores the
+  persisted `bb_ch_ctl` opt-in (default **Disabled**). Disabled uses DragonBreath's
+  local chamber NTC; enabled uses fresh Bambu chamber telemetry and automatically
+  falls back to the local NTC when that telemetry is unavailable or stale.
 
 ### Changed
-- **Bambu chamber regulation now follows the printer's chamber sensor** while keeping
-  DragonBreath's local chamber NTC and PTC safety-authoritative. External-sensor
-  regulation is bounded by a local chamber thermal limiter: heat cuts at **72 °C**
-  local and may resume below **67 °C**, while the independent hard chamber
-  over-temperature latch remains unchanged.
+- **All chamber regulation now shares the selectable PID backend.** Both the local
+  NTC and optional Bambu process variable feed the same `dc_pid` control path by
+  default (with the selectable legacy `pb_pid` backend retained), including approach
+  limiting and SSR time-proportioning. DragonBreath's local chamber NTC and PTC stay
+  safety-authoritative. Bambu regulation also remains bounded by the local chamber
+  limiter: heat cuts at **72 °C** local and may resume below **67 °C**, while the
+  independent hard chamber over-temperature latch is unchanged.
 - **Privacy:** `environment.bambu_serial` is no longer exposed by API v2 state
   responses. The configured printer serial remains internal and is still used for
   Bambu MQTT topic selection.

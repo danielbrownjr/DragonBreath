@@ -9,6 +9,7 @@
 // element/chamber over-temp cutoff + a comms-loss watchdog.
 #pragma once
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
@@ -66,7 +67,6 @@ static inline bool pb_heater_fault_decide(bool open_ok, bool ns_not_found,
 // Fixed hardware-safety cutoffs — NEVER user-configurable.
 #define PB_HEATER_PTC_CUTOFF_C   105.0f   // element over-temp -> force off (stock parity)
 #define PB_HEATER_CHAMBER_MAX_C  85.0f    // chamber over-temp -> force off
-#define PB_HEATER_HYSTERESIS_C   1.0f
 
 // When regulation uses a remote/printer chamber sensor, the local chamber NTC can
 // be much hotter because it sits in DragonBreath's outlet/near-heater airflow. Keep
@@ -176,7 +176,7 @@ static inline bool pb_heater_foldback_cut(bool ptc_ok, float ptc_c, bool prev_cu
 // priority ordering can be host-tested without the ADC/SSR/RTOS backend. Given the
 // freshest per-channel sensor reads (status-OK flags + instantaneous °C), whether a
 // target is armed, and whether the comms deadman has expired, returns the fault the
-// tick must latch — or PB_FAULT_NONE if it is safe to run the bang-bang loop. The
+// tick must latch — or PB_FAULT_NONE if it is safe to run the PID path. The
 // order is load-bearing and MUST stay identical to pb_heater_tick():
 //   1. PTC over-temp     — only trusted when the PTC sensor reads valid
 //   2. chamber over-temp — only trusted when the chamber sensor reads valid
@@ -199,6 +199,17 @@ static inline pb_fault_reason_t pb_heater_eval_trip(
     return PB_FAULT_NONE;
 }
 
+// Select the process variable for the one chamber PID path. A usable external
+// sample wins only after the local chamber sensor is known-good; otherwise the
+// local NTC is used. Safety evaluation remains separate and always consumes the
+// local NTC/PTC readings directly.
+static inline float pb_heater_select_process_variable(
+    bool local_chamber_ok, float local_chamber_c, float external_chamber_c)
+{
+    if (!local_chamber_ok || !isfinite(local_chamber_c)) return NAN;
+    return isfinite(external_chamber_c) ? external_chamber_c : local_chamber_c;
+}
+
 // Bring up the SSR GPIO in a guaranteed-OFF state. Call before anything can
 // request heat. Idempotent.
 esp_err_t pb_heater_init(void);
@@ -214,10 +225,10 @@ esp_err_t pb_heater_init(void);
 esp_err_t pb_heater_set_target_c(float target_c);
 float pb_heater_get_target_c(void);
 
-// Optional external chamber measurement used ONLY for set-point regulation.
-// Pass NAN to fall back to the local chamber NTC. The local chamber NTC and PTC
-// remain authoritative for over-temperature trips, sensor-fault detection, and
-// all other safety decisions regardless of this value.
+// Optional external chamber measurement used ONLY as the process variable for
+// the shared chamber PID. Pass NAN to select the local chamber NTC. The local
+// chamber NTC and PTC remain authoritative for over-temperature trips,
+// sensor-fault detection, and all other safety decisions regardless.
 void pb_heater_set_control_chamber_c(float temp_c);
 
 // --- Runtime-configurable, persisted settings (pb_heater is the sole owner) ---
@@ -259,8 +270,8 @@ void pb_heater_notify_link_alive(void);
 
 // Periodic control tick (call at ~1-2 Hz). Reads the local chamber + PTC temps,
 // enforces all safety cutoffs from those local sensors, and drives the SSR with
-// hysteresis around the set-point using the optional external regulation
-// temperature when one is supplied.
+// time-proportioning PID using either the local NTC or the optional external
+// process-variable temperature.
 void pb_heater_tick(void);
 
 // Immediate, latching shutoff. Clears the target and latches off. Heat stays off
@@ -313,9 +324,9 @@ pb_fault_reason_t pb_heater_fault_code(void);
 // Canonical, stable string for a fault code (never NULL; out-of-range -> generic).
 const char *pb_heater_fault_str(pb_fault_reason_t code);
 
-// True if the SSR is currently commanded on (momentary bang-bang state).
+// True if the SSR is currently commanded on within its PID time window.
 bool pb_heater_is_on(void);
 
 // True in "heat mode": a target is armed and no fault is latched. Steady across
-// the SSR's bang-bang cycling — use this (not pb_heater_is_on) for the fan/LED.
+// the SSR's PID time-proportioning — use this (not pb_heater_is_on) for fan/LED.
 bool pb_heater_heat_mode(void);

@@ -43,6 +43,7 @@
 
 #include "pb_httpd.h"
 #include "db_portal.h"
+#include "db_bambu_chamber_control.h"
 #include "esp_ota_ops.h"
 
 // Optional local dev config (gitignored): WiFi creds + Moonraker host. Without it
@@ -208,9 +209,10 @@ static void control_task(void *arg)
 
         // Feed the AUTO seam from whichever ONE source is bound.
         // All paths converge on pb_policy_set_env(); the policy remains
-        // source-agnostic. Printer-reported chamber temperature is passed through
-        // for set-point regulation when available; DragonBreath's local sensors
-        // remain authoritative for heater safety.
+        // source-agnostic. A fresh printer-reported chamber temperature is passed
+        // through only when the restored Bambu selector is ON. NAN selects the
+        // local chamber NTC in the same PID path. Local sensors remain authoritative
+        // for heater safety either way.
         float bed_c = 0.0f;
         float bed_target_c = 0.0f;
         float src_target_c = 0.0f;
@@ -233,8 +235,10 @@ static void control_task(void *arg)
                         if (isfinite(bs.bed_target))
                             bed_target_c = bs.bed_target;
 
-                        if (isfinite(bs.chamber_temp))
-                            chamber_src_c = bs.chamber_temp;
+                        chamber_src_c = db_bambu_chamber_control_source(
+                            db_bambu_chamber_control_get(),
+                            src_connected,
+                            bs.chamber_temp);
 
                         // Filament chamber zone: while a print is active,
                         // request the active filament's zone target
@@ -424,6 +428,9 @@ void app_main(void)
     // tick AND be able to persist a fault that trips during early boot — so a
     // safety trip can never be lost across a reboot for want of an initialized NVS.
     nvs_init();
+    db_bambu_chamber_control_load();
+    ESP_LOGI(TAG, "Bambu chamber PID source: %s",
+             db_bambu_chamber_control_get() ? "printer" : "local NTC");
     pb_heater_load_config();                 // persisted max-target + comms timeout
     pb_heater_load_fault();                  // restore a persisted safety-fault latch (fail-safe on NVS error)
     pb_ntc_load_calibration();               // persisted per-channel offsets (clamped ±5 °C on load)

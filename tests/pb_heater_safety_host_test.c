@@ -28,7 +28,7 @@ int main(void)
     // --- All clear: nothing armed, temps nominal -> no trip. --------------------
     CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 25.0f, /*armed=*/false, /*link=*/false)
           == PB_FAULT_NONE);
-    // Armed and healthy and link alive -> safe to run the bang-bang loop.
+    // Armed and healthy and link alive -> safe to run the chamber PID.
     CHECK(pb_heater_eval_trip(OK, 40.0f, OK, 50.0f, /*armed=*/true, /*link=*/false)
           == PB_FAULT_NONE);
 
@@ -51,6 +51,13 @@ int main(void)
           == PB_FAULT_PTC_OVERTEMP);
     // Chamber over-temp outranks a (later-checked) sensor fault / comms loss.
     CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 90.0f, true, /*link=*/true)
+          == PB_FAULT_CHAMBER_OVERTEMP);
+    // The selected PID process variable is irrelevant to safety: even if a Bambu
+    // sensor reports a cool chamber, the local NTC still owns the chamber trip.
+    float bambu_process_variable = 30.0f;
+    CHECK(pb_heater_select_process_variable(OK, 90.0f, bambu_process_variable)
+          == bambu_process_variable);
+    CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 90.0f, true, false)
           == PB_FAULT_CHAMBER_OVERTEMP);
 
     // --- Fail-closed sensor faults: ONLY while armed. --------------------------

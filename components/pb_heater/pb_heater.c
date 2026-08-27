@@ -48,13 +48,14 @@ static bool        s_persist_pending;  // guarded by s_mux — a latch persist n
                                        // to NVS; retried from pb_heater_tick until it lands
 static int64_t     s_persist_retry_us; // guarded by s_mux — last persist-retry timestamp
 static bool        s_on;            // written only by the control task; atomic read
-static bool        s_heat_intent;   // control-task only — local-sensor bang-bang latch
 static bool        s_fb_cut;        // control-task only — element-foldback hysteresis latch:
                                     // true while the SSR is force-cut for element over-temp
                                     // (holds until the element cools below the resume point)
 static bool        s_local_cut;     // control-task only — local chamber soft-limit latch used
                                     // only while a remote chamber temperature controls regulation
-static pb_pid_backend_state_t s_pid; // control-task only — external chamber PID state
+static pb_pid_backend_state_t s_pid; // control-task only — shared chamber PID state
+static bool        s_pid_source_known;    // control-task only
+static bool        s_pid_source_external; // control-task only
 static int64_t     s_pid_window_start_us; // control-task only — time-proportion window origin
 static float       s_pid_duty;      // control-task only — last normalized PID output [0,1]
 static float       s_max_target_c;      // guarded by s_mux — settable set-point ceiling
@@ -119,7 +120,7 @@ static void pid_runtime_reset(void)
 }
 
 // The chamber has a large amount of stored heat and keeps climbing after the SSR
-// backs off. Taper maximum heater power as the printer-reported chamber approaches
+// backs off. Taper maximum heater power as the selected process variable approaches
 // target so PID cannot charge the thermal mass at full power right up to setpoint.
 // This is a control-shaping limit only; local NTC/PTC safety cutoffs remain separate.
 static float pid_approach_max_duty(float error_c)
@@ -160,10 +161,10 @@ esp_err_t pb_heater_init(void)
     s_cool_release_c = PB_HEATER_COOL_RELEASE_C_DEFAULT;
     s_fb_cut_c = 0.0f;   // auto (per-Rref default) until a user override is loaded/set
     taskEXIT_CRITICAL(&s_mux);
-    s_heat_intent = false;
     s_fb_cut = false;
     s_local_cut = false;
     pid_runtime_reset();
+    s_pid_source_known = false;
 #ifdef CONFIG_PB_HIL_DEVBOARD
     ESP_LOGW(TAG, "HIL dev-board backend: relay GPIO compiled out");
 #else
@@ -569,14 +570,25 @@ void pb_heater_tick(void)
 
     if (latched || !armed) {
         if (s_on) ssr_set(false);
-        s_heat_intent = false;
         s_fb_cut = false;
         s_local_cut = false;
         pid_runtime_reset();
+        s_pid_source_known = false;
         return;
     }
 
     const bool external_regulation = isfinite(control_chamber_c);
+    const float process_variable_c = pb_heater_select_process_variable(
+        cs == PB_NTC_OK, chamber_c, control_chamber_c);
+
+    // A fresh/stale transition or a live selector change can move the process
+    // variable between physically different sensors. Start that source with clean
+    // controller history instead of carrying integral/derivative state across it.
+    if (!s_pid_source_known || s_pid_source_external != external_regulation) {
+        pid_runtime_reset();
+        s_pid_source_known = true;
+        s_pid_source_external = external_regulation;
+    }
 
     // Local chamber soft foldback for REMOTE regulation. This remains independent
     // of PID and wins unconditionally over its requested duty.
@@ -591,51 +603,37 @@ void pb_heater_tick(void)
     pb_heater_effective_foldback(pb_heater_get_fb_cut_c(), pb_ntc_rref_kohm(), &fb_cut, &fb_resume);
     s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut, fb_cut, fb_resume);
 
+    // Both local and Bambu chamber measurements enter this same selected PID
+    // backend and SSR time-proportioning path. A 10 s window is intentionally
+    // glacial for a chamber and kind to a zero-cross SSR: e.g. 0.30 duty means
+    // roughly 3 s ON / 7 s OFF. Independent safety/foldback vetoes stay below it.
     bool drive = false;
-    if (external_regulation) {
-        // External printer chamber telemetry gets slow time-proportioning PID rather
-        // than bang-bang. A 10 s window is intentionally glacial for a chamber and
-        // kind to a zero-cross SSR: e.g. 0.30 duty means roughly 3 s ON / 7 s OFF.
-        // If either local soft limiter intervenes, reset PID state so integral cannot
-        // accumulate behind a blocked output and launch a full-power pulse on release.
-        if (s_local_cut || s_fb_cut) {
-            pid_runtime_reset();
-            drive = false;
-        } else {
-            s_pid_duty = pb_pid_backend_step(&s_pid, target, control_chamber_c,
-                                             PB_CHAMBER_PID_DT_S,
-                                             PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
-                                             PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
-
-            // Approach shaping for the chamber's thermal inertia. Far from target
-            // PID may use the full heater, but progressively cap duty inside 10 C.
-            // With the 10 s SSR window these limits correspond to at most 7 s, 4 s,
-            // and 2 s ON per window as we close to setpoint.
-            float approach_limit = pid_approach_max_duty(target - control_chamber_c);
-            if (s_pid_duty > approach_limit)
-                s_pid_duty = approach_limit;
-
-            if (s_pid_window_start_us == 0 || now_us < s_pid_window_start_us)
-                s_pid_window_start_us = now_us;
-            int64_t elapsed = now_us - s_pid_window_start_us;
-            if (elapsed >= PB_CHAMBER_PID_WINDOW_US) {
-                int64_t windows = elapsed / PB_CHAMBER_PID_WINDOW_US;
-                s_pid_window_start_us += windows * PB_CHAMBER_PID_WINDOW_US;
-                elapsed = now_us - s_pid_window_start_us;
-            }
-            int64_t on_us = (int64_t)(s_pid_duty * (float)PB_CHAMBER_PID_WINDOW_US);
-            drive = (on_us > 0 && elapsed < on_us);
-            s_heat_intent = s_pid_duty > 0.0f;
-        }
-    } else {
-        // No usable external measurement: preserve the proven local-NTC bang-bang
-        // fallback exactly as before and discard any old remote-controller state.
+    if (s_local_cut || s_fb_cut) {
         pid_runtime_reset();
-        if (chamber_c < (target - PB_HEATER_HYSTERESIS_C))
-            s_heat_intent = true;
-        else if (chamber_c >= target)
-            s_heat_intent = false;
-        drive = s_heat_intent && !s_fb_cut;
+    } else {
+        s_pid_duty = pb_pid_backend_step(&s_pid, target, process_variable_c,
+                                         PB_CHAMBER_PID_DT_S,
+                                         PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
+                                         PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
+
+        // Approach shaping for the chamber's thermal inertia. Far from target
+        // PID may use the full heater, but progressively cap duty inside 10 C.
+        // With the 10 s SSR window these limits correspond to at most 7 s, 4 s,
+        // and 2 s ON per window as we close to setpoint.
+        float approach_limit = pid_approach_max_duty(target - process_variable_c);
+        if (s_pid_duty > approach_limit)
+            s_pid_duty = approach_limit;
+
+        if (s_pid_window_start_us == 0 || now_us < s_pid_window_start_us)
+            s_pid_window_start_us = now_us;
+        int64_t elapsed = now_us - s_pid_window_start_us;
+        if (elapsed >= PB_CHAMBER_PID_WINDOW_US) {
+            int64_t windows = elapsed / PB_CHAMBER_PID_WINDOW_US;
+            s_pid_window_start_us += windows * PB_CHAMBER_PID_WINDOW_US;
+            elapsed = now_us - s_pid_window_start_us;
+        }
+        int64_t on_us = (int64_t)(s_pid_duty * (float)PB_CHAMBER_PID_WINDOW_US);
+        drive = (on_us > 0 && elapsed < on_us);
     }
 
     if (drive != s_on) ssr_set(drive);

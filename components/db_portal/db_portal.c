@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "db_portal.h"
 #include "db_portal_config.h"
+#include "db_bambu_chamber_control.h"
 
 #include "db_klipper_mqtt.h"
 #include "dc_bambu.h"
@@ -263,9 +264,13 @@ static cJSON *describe_product(void *ctx)
     dc_bambu_get_config(&bb);
     s = section(root, "Bambu LAN");
     visible_when(s, "ctl_src", "1");
+    cJSON_AddStringToObject(s, "description",
+        "When enabled, the chamber PID uses fresh printer-reported chamber temperature. Missing, invalid, disconnected, or stale telemetry falls back to the local chamber NTC; local NTC/PTC safety always remains authoritative.");
     add_field(s, field("bb_host", "Printer host", "text", bb.host, false));
     add_field(s, field("bb_serial", "Serial", "text", bb.serial, false));
     add_field(s, field("bb_code", "Access code (leave blank to keep)", "password", "", true));
+    add_field(s, boolean_field("bb_chamber_ctl", "Use Bambu chamber sensor for PID control",
+                               db_bambu_chamber_control_get()));
     // LAN discovery: the shared SPA renders a Search picker from this block and
     // fills bb_host + bb_serial, so the user only enters the access code.
     cJSON *disc = cJSON_AddObjectToObject(s, "discovery");
@@ -463,6 +468,14 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
     db_portal_product_request_t request;
     err = parse_product_request(values, &request, message, message_size);
     if (err != ESP_OK) return err;
+    db_portal_bool_value_t bb_chamber_ctl = {0};
+    err = parse_bool_field(values, "bb_chamber_ctl", &bb_chamber_ctl,
+                           message, message_size);
+    if (err != ESP_OK) return err;
+    bool bb_chamber_ctl_changed =
+        bb_chamber_ctl.present &&
+        bb_chamber_ctl.value != db_bambu_chamber_control_get();
+
     db_portal_product_plan_t plan;
     err = db_portal_plan_product_save(&request, dc_source_get(), &mr, &bb, &ha, &km,
                                       &plan, message, message_size);
@@ -484,6 +497,11 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
         err = db_klipper_mqtt_set_config(&plan.klipper_mqtt);
         if (err != ESP_OK) return persistence_error("Klipper MQTT", err, message, message_size);
     }
+    if (bb_chamber_ctl_changed) {
+        err = db_bambu_chamber_control_set(bb_chamber_ctl.value);
+        if (err != ESP_OK)
+            return persistence_error("Bambu chamber control", err, message, message_size);
+    }
     // Source is deliberately last: an invalid or failed config save can never bind
     // a different controller. Selecting None changes only this enum; credentials stay.
     if (plan.source_changed) {
@@ -492,10 +510,14 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
     }
 
     bool changed = plan.moonraker_changed || plan.bambu_changed || plan.ha_changed ||
-                   plan.klipper_mqtt_changed || plan.source_changed;
-    snprintf(message, message_size, changed
-             ? "Configuration saved; restart to apply source changes."
-             : "Configuration already up to date.");
+                   plan.klipper_mqtt_changed || plan.source_changed ||
+                   bb_chamber_ctl_changed;
+    if (plan.source_changed)
+        snprintf(message, message_size, "Configuration saved; restart to apply source changes.");
+    else
+        snprintf(message, message_size, changed
+                 ? "Configuration saved."
+                 : "Configuration already up to date.");
     return ESP_OK;
 }
 

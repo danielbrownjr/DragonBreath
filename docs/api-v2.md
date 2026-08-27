@@ -122,12 +122,14 @@ not exposed by the public state API; it remains internal to the Bambu MQTT conne
 drives the fan-only filtration band.
 
 When the active source is Bambu, `printer_chamber_temperature_c` exposes the printer's
-own chamber sensor used for chamber set-point regulation. It is `null` when that sample is
-unavailable or has aged out in `dc_bambu`; `printer_chamber_age_ms` is likewise `null`
-when no usable sample exists. The API fields are read-only diagnostics. DragonBreath's
-local chamber NTC and PTC remain safety-authoritative; external-sensor regulation is also
-bounded by the local chamber thermal limiter before the independent hard over-temperature
-cutoff.
+own chamber sensor. It becomes the PID process variable only when **Use Bambu chamber
+sensor for PID control** (`bb_chamber_ctl` in the setup API, persisted as `bb_ch_ctl`)
+is enabled; the setting defaults off. It is `null` when that sample is unavailable or
+has aged out in `dc_bambu`, and `printer_chamber_age_ms` is likewise `null` when no
+usable sample exists. The PID automatically falls back to the local chamber NTC in
+that case. DragonBreath's local chamber NTC and PTC remain safety-authoritative;
+external-sensor regulation is also bounded by the local chamber thermal limiter
+before the independent hard over-temperature cutoff.
 
 `fan.reason` is one of: `off`, `heater` (airflow while heating), `thermal_purge`
 (residual-heat cooldown purge), `auto_filter` (the fan-only filtration band),

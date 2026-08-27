@@ -1013,8 +1013,12 @@ void pb_policy_tick(void)
             pb_heater_notify_link_alive();
     }
 
+    // Printer-reported chamber temperature is an AUTO-follow input only.
+    // Manual and Drying are local device modes and use the DragonBreath chamber
+    // NTC as the process variable even when Bambu telemetry is connected/fresh.
     float control_chamber_c =
-        (s.mk_connected && isfinite(s.chamber_src_c))
+        (s.mode == PB_MODE_AUTO &&
+         s.mk_connected && isfinite(s.chamber_src_c))
             ? s.chamber_src_c
             : NAN;
 
