@@ -59,8 +59,8 @@ void nvs_close(nvs_handle_t handle)
 
 int main(void)
 {
-    // Empty flash preserves the known-good shipped PID default.
-    assert(pb_heater_algorithm_load_persisted() == PB_HEATER_CONTROL_PID);
+    // Empty flash preserves DragonBreath's established local-NTC bang-bang default.
+    assert(pb_heater_algorithm_load_persisted() == PB_HEATER_CONTROL_BANG_BANG);
 
     assert(pb_heater_algorithm_persist(PB_HEATER_CONTROL_BANG_BANG) == ESP_OK);
     assert(pb_heater_algorithm_load_persisted() == PB_HEATER_CONTROL_BANG_BANG);
@@ -75,9 +75,9 @@ int main(void)
     assert(pb_heater_algorithm_persist(PB_HEATER_CONTROL_PID) == ESP_OK);
     assert(pb_heater_algorithm_load_persisted() == PB_HEATER_CONTROL_PID);
 
-    // A malformed future/corrupt byte fails back to PID.
+    // A malformed future/corrupt byte fails back to the established default.
     s_stored = PB_HEATER_CONTROL__COUNT;
-    assert(pb_heater_algorithm_load_persisted() == PB_HEATER_CONTROL_PID);
+    assert(pb_heater_algorithm_load_persisted() == PB_HEATER_CONTROL_BANG_BANG);
     assert(pb_heater_algorithm_persist(PB_HEATER_CONTROL__COUNT) == ESP_ERR_INVALID_ARG);
 
     puts("heater control-algorithm persistence checks: PASS");

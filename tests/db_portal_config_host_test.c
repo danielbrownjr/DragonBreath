@@ -138,9 +138,9 @@ int main(void)
     assert(plan(&invalid_port, &result, message, sizeof(message)) == ESP_ERR_INVALID_ARG);
     assert(strstr(message, "port") != NULL);
 
-    // PID is the default. An idle switch to bang-bang is staged and requires a
-    // controller reset; the same mutation is rejected before any setter runs if
-    // either heater demand or physical output is active.
+    // Persisted PID can be switched back to the default bang-bang controller while
+    // idle; the same mutation is rejected before any setter runs if either heater
+    // demand or physical output is active.
     db_portal_product_request_t bang_bang = {
         .control_algorithm_present = true,
         .control_algorithm = PB_HEATER_CONTROL_BANG_BANG,

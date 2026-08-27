@@ -7,7 +7,8 @@
 #define PB_HEATER_ALGORITHM_NVS_KEY       "heat_ctl_alg"
 
 // Read the persisted controller selection. Missing, malformed, or unreadable
-// state defaults safely to PID, which is the shipped/current behavior.
+// state defaults to the established local-NTC bang-bang behavior. PID remains an
+// explicitly selected evaluation option.
 pb_heater_control_algorithm_t pb_heater_algorithm_load_persisted(void);
 
 // Persist a validated controller selection. Runtime state is changed only after

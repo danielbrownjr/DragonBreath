@@ -158,7 +158,7 @@ esp_err_t pb_heater_init(void)
     taskENTER_CRITICAL(&s_mux);
     s_target_c = 0.0f;
     s_control_chamber_c = NAN;
-    s_control_algorithm = PB_HEATER_CONTROL_PID;
+    s_control_algorithm = PB_HEATER_CONTROL_BANG_BANG;
     s_algorithm_change_pending = false;
     s_controller_reset_pending = false;
     s_bambu_preference = false;
@@ -177,7 +177,7 @@ esp_err_t pb_heater_init(void)
     s_local_cut = false;
     controller_runtime_reset();
     s_control_diag = (pb_heater_control_snapshot_t) {
-        .algorithm = PB_HEATER_CONTROL_PID,
+        .algorithm = PB_HEATER_CONTROL_BANG_BANG,
         .process_source = PB_HEATER_PROCESS_UNAVAILABLE,
         .process_variable_c = NAN,
     };

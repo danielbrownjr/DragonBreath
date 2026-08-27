@@ -261,15 +261,20 @@ static cJSON *describe_product(void *ctx)
 
     cJSON *s = section(root, "Temperature control");
     cJSON_AddStringToObject(s, "description",
-        "PID is the default tuned controller. Bang-bang uses the local DragonBreath chamber sensor with a 1.0 C hysteresis band. Controller changes are refused while the heater is active.");
+        "Bang-bang is the default and uses the local DragonBreath chamber sensor with a 1.0 C hysteresis band. PID is an opt-in controller under evaluation. Controller changes are refused while the heater is active.");
     add_field(s, control_algorithm_field(pb_heater_get_control_algorithm()));
 
-    s = section(root, "Warning: Bambu chamber control suspended");
-    visible_when(s, "heat_ctl_alg", "bang_bang");
-    cJSON_AddStringToObject(s, "description",
-        db_bambu_chamber_control_get()
-        ? "Bang-bang control uses the local DragonBreath chamber sensor. Your saved Bambu chamber preference remains Enabled, but its effect is suspended until PID control is re-enabled."
-        : "Bang-bang control always uses the local DragonBreath chamber sensor. A saved Bambu chamber preference is used only after PID control is re-enabled.");
+    if (db_bambu_chamber_control_get()) {
+        s = section(root, "Bambu chamber temperature suspended");
+        visible_when(s, "heat_ctl_alg", "bang_bang");
+        cJSON_AddStringToObject(s, "description",
+            "Bang-bang regulates from the local DragonBreath chamber sensor. Your saved Bambu chamber-temperature preference remains enabled, but is suspended while bang-bang is active.");
+
+        s = section(root, "Warning: Bambu chamber temperature will become active");
+        visible_when(s, "heat_ctl_alg", "pid");
+        cJSON_AddStringToObject(s, "description",
+            "Bambu chamber temperature is enabled. PID will regulate from fresh Bambu chamber telemetry, falling back to the local NTC if unavailable.");
+    }
 
     s = section(root, "Control source");
     char selected_source[4];

@@ -34,7 +34,8 @@ typedef enum {
 } pb_fault_reason_t;
 
 // Persisted user-selectable chamber controller. Numeric values are stored in NVS;
-// append only. PID=0 preserves the behavior of existing devices and empty flash.
+// append only. Keep the numeric assignments stable for already-persisted choices;
+// empty/invalid storage defaults separately to legacy bang-bang.
 typedef enum {
     PB_HEATER_CONTROL_PID = 0,
     PB_HEATER_CONTROL_BANG_BANG,

@@ -5,7 +5,7 @@
 
 pb_heater_control_algorithm_t pb_heater_algorithm_load_persisted(void)
 {
-    pb_heater_control_algorithm_t algorithm = PB_HEATER_CONTROL_PID;
+    pb_heater_control_algorithm_t algorithm = PB_HEATER_CONTROL_BANG_BANG;
     nvs_handle_t handle;
     if (nvs_open(PB_HEATER_ALGORITHM_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK)
         return algorithm;

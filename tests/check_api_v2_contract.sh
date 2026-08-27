@@ -99,6 +99,22 @@ for field in printer_chamber_temperature_c printer_chamber_age_ms; do
     }
 done
 
+# Product setup must truthfully describe the independent algorithm and stored
+# Bambu preference in both directions. The PID warning is emitted only when the
+# saved preference is enabled; visible_when makes it appear as PID is selected.
+grep -q 'Bang-bang is the default' "$adapter" || {
+    echo "product setup no longer identifies the default controller" >&2
+    exit 1
+}
+grep -q 'Bambu chamber temperature is enabled. PID will regulate from fresh Bambu chamber telemetry' "$adapter" || {
+    echo "product setup is missing the PID/Bambu reactivation warning" >&2
+    exit 1
+}
+grep -q 'preference remains enabled, but is suspended while bang-bang is active' "$adapter" || {
+    echo "product setup is missing the bang-bang/Bambu suspension status" >&2
+    exit 1
+}
+
 # Ownership boundary: core owns HTTP/provisioning/recovery; the product adapter
 # supplies API registration, authorization, heater safety and image identity.
 grep -q 'dc_portal_start(&cfg)' "$adapter"
