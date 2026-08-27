@@ -210,9 +210,9 @@ static void control_task(void *arg)
         // Feed the AUTO seam from whichever ONE source is bound.
         // All paths converge on pb_policy_set_env(); the policy remains
         // source-agnostic. A fresh printer-reported chamber temperature is passed
-        // through only when the restored Bambu selector is ON. NAN selects the
-        // local chamber NTC for PID; bang-bang ignores the optional sample and is
-        // always local-only. Local sensors remain authoritative for heater safety.
+        // through only when the restored Bambu selector is ON. Bang-bang consumes
+        // that optional sample when fresh and falls back locally; PID is always
+        // local-only. Local sensors remain authoritative for heater safety.
         float bed_c = 0.0f;
         float bed_target_c = 0.0f;
         float src_target_c = 0.0f;
@@ -429,7 +429,7 @@ void app_main(void)
     // safety trip can never be lost across a reboot for want of an initialized NVS.
     nvs_init();
     db_bambu_chamber_control_load();
-    ESP_LOGI(TAG, "Saved Bambu chamber PID preference: %s",
+    ESP_LOGI(TAG, "Saved bang-bang chamber source preference: %s",
              db_bambu_chamber_control_get() ? "printer" : "local NTC");
     pb_heater_load_config();                 // persisted max-target + comms timeout
     pb_heater_load_fault();                  // restore a persisted safety-fault latch (fail-safe on NVS error)

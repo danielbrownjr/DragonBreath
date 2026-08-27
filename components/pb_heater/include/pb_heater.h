@@ -231,7 +231,7 @@ static inline pb_fault_reason_t pb_heater_eval_trip(
     return PB_FAULT_NONE;
 }
 
-// Select the process variable for the one chamber PID path. A usable external
+// Select an optional external process variable for bang-bang. A usable external
 // sample wins only after the local chamber sensor is known-good; otherwise the
 // local NTC is used. Safety evaluation remains separate and always consumes the
 // local NTC/PTC readings directly.
@@ -242,13 +242,13 @@ static inline float pb_heater_select_process_variable(
     return isfinite(external_chamber_c) ? external_chamber_c : local_chamber_c;
 }
 
-// Bang-bang is intentionally local-only. PID may consume the optional external
+// PID is intentionally local-only. Bang-bang may consume the optional external
 // Bambu sample; a missing/invalid sample falls back to the valid local NTC.
 static inline float pb_heater_controller_process_variable(
     pb_heater_control_algorithm_t algorithm,
     bool local_chamber_ok, float local_chamber_c, float external_chamber_c)
 {
-    if (algorithm == PB_HEATER_CONTROL_BANG_BANG)
+    if (algorithm == PB_HEATER_CONTROL_PID)
         return local_chamber_ok && isfinite(local_chamber_c) ? local_chamber_c : NAN;
     return pb_heater_select_process_variable(
         local_chamber_ok, local_chamber_c, external_chamber_c);

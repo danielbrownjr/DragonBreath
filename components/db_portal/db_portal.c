@@ -212,19 +212,14 @@ static cJSON *boolean_field(const char *key, const char *label, bool value)
     return f;
 }
 
-static cJSON *control_algorithm_field(pb_heater_control_algorithm_t algorithm)
+static cJSON *toggle_field(const char *key, const char *label, bool value)
 {
-    cJSON *f = field("heat_ctl_alg", "Temperature control", "select",
-                     pb_heater_control_algorithm_str(algorithm), false);
-    cJSON *opts = cJSON_AddArrayToObject(f, "options");
-    const char *values[] = {"pid", "bang_bang"};
-    const char *labels[] = {"PID", "Bang-bang"};
-    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) {
-        cJSON *o = cJSON_CreateObject();
-        cJSON_AddStringToObject(o, "value", values[i]);
-        cJSON_AddStringToObject(o, "label", labels[i]);
-        cJSON_AddItemToArray(opts, o);
-    }
+    cJSON *f = cJSON_CreateObject();
+    if (!f) return NULL;
+    cJSON_AddStringToObject(f, "key", key);
+    cJSON_AddStringToObject(f, "label", label);
+    cJSON_AddStringToObject(f, "type", "toggle");
+    cJSON_AddBoolToObject(f, "value", value);
     return f;
 }
 
@@ -241,6 +236,23 @@ static cJSON *section(cJSON *root, const char *title)
 static void add_field(cJSON *s, cJSON *f)
 {
     cJSON_AddItemToArray(cJSON_GetObjectItem(s, "fields"), f);
+}
+
+static void hide_section_action(cJSON *s)
+{
+    cJSON_AddBoolToObject(s, "hide_action", true);
+}
+
+static void auto_submit(cJSON *f)
+{
+    cJSON_AddBoolToObject(f, "auto_submit", true);
+}
+
+static void disabled_when(cJSON *f, const char *field_key, bool equals)
+{
+    cJSON *rule = cJSON_AddObjectToObject(f, "disabled_when");
+    cJSON_AddStringToObject(rule, "field", field_key);
+    cJSON_AddBoolToObject(rule, "equals", equals);
 }
 
 // Reveal a section only when the control-source selector equals this value. Sections
@@ -261,20 +273,35 @@ static cJSON *describe_product(void *ctx)
 
     cJSON *s = section(root, "Temperature control");
     cJSON_AddStringToObject(s, "description",
-        "Bang-bang is the default and uses the local DragonBreath chamber sensor with a 1.0 C hysteresis band. PID is an opt-in controller under evaluation. Controller changes are refused while the heater is active.");
-    add_field(s, control_algorithm_field(pb_heater_get_control_algorithm()));
+        "Bang-bang is the default controller. PID is opt-in, always regulates from the local DragonBreath chamber sensor, and can only be changed while the heater is off.");
+    hide_section_action(s);
 
-    if (db_bambu_chamber_control_get()) {
-        s = section(root, "Bambu chamber temperature suspended");
-        visible_when(s, "heat_ctl_alg", "bang_bang");
-        cJSON_AddStringToObject(s, "description",
-            "Bang-bang regulates from the local DragonBreath chamber sensor. Your saved Bambu chamber-temperature preference remains enabled, but is suspended while bang-bang is active.");
+    cJSON *pid = toggle_field("pid_enabled", "PID control",
+        pb_heater_get_control_algorithm() == PB_HEATER_CONTROL_PID);
+    auto_submit(pid);
+    cJSON *pid_hints = cJSON_AddObjectToObject(pid, "hint_by_value");
+    cJSON_AddStringToObject(pid_hints, "false", "Bang-bang temperature control is active.");
+    cJSON_AddStringToObject(pid_hints, "true", "PID active \xC2\xB7 Local chamber sensor");
+    cJSON *confirm = cJSON_AddObjectToObject(pid, "confirm_on_change");
+    cJSON_AddBoolToObject(confirm, "value", true);
+    cJSON *when = cJSON_AddObjectToObject(confirm, "when");
+    cJSON_AddStringToObject(when, "field", "bb_chamber_ctl");
+    cJSON_AddBoolToObject(when, "equals", true);
+    cJSON_AddStringToObject(confirm, "title", "Enable PID control?");
+    cJSON_AddStringToObject(confirm, "body",
+        "PID uses the local DragonBreath chamber sensor. Bambu chamber-temperature control will be temporarily disabled while PID is active.\n\nWhen PID is turned off, your previous Bambu setting will be restored automatically.");
+    cJSON_AddStringToObject(confirm, "cancel_label", "Cancel");
+    cJSON_AddStringToObject(confirm, "confirm_label", "Enable PID");
+    add_field(s, pid);
 
-        s = section(root, "Warning: Bambu chamber temperature will become active");
-        visible_when(s, "heat_ctl_alg", "pid");
-        cJSON_AddStringToObject(s, "description",
-            "Bambu chamber temperature is enabled. PID will regulate from fresh Bambu chamber telemetry, falling back to the local NTC if unavailable.");
-    }
+    cJSON *bb_preference = toggle_field(
+        "bb_chamber_ctl", "Use Bambu chamber temperature for bang-bang",
+        db_bambu_chamber_control_get());
+    auto_submit(bb_preference);
+    disabled_when(bb_preference, "pid_enabled", true);
+    cJSON_AddStringToObject(bb_preference, "hint",
+        "Remembered bang-bang preference. Suspended while PID is active and restored when PID is disabled.");
+    add_field(s, bb_preference);
 
     s = section(root, "Control source");
     char selected_source[4];
@@ -306,12 +333,10 @@ static cJSON *describe_product(void *ctx)
     s = section(root, "Bambu LAN");
     visible_when(s, "ctl_src", "1");
     cJSON_AddStringToObject(s, "description",
-        "When enabled, the chamber PID uses fresh printer-reported chamber temperature. Missing, invalid, disconnected, or stale telemetry falls back to the local chamber NTC; local NTC/PTC safety always remains authoritative.");
+        "Connection settings for Bambu LAN telemetry. When selected for bang-bang, missing, invalid, disconnected, or stale chamber telemetry falls back to the local chamber NTC; local NTC/PTC safety always remains authoritative.");
     add_field(s, field("bb_host", "Printer host", "text", bb.host, false));
     add_field(s, field("bb_serial", "Serial", "text", bb.serial, false));
     add_field(s, field("bb_code", "Access code (leave blank to keep)", "password", "", true));
-    add_field(s, boolean_field("bb_chamber_ctl", "Use Bambu chamber sensor for PID control",
-                               db_bambu_chamber_control_get()));
     // LAN discovery: the shared SPA renders a Search picker from this block and
     // fills bb_host + bb_serial, so the user only enters the access code.
     cJSON *disc = cJSON_AddObjectToObject(s, "discovery");
@@ -450,24 +475,37 @@ static esp_err_t parse_control_algorithm_field(
     const cJSON *values, db_portal_product_request_t *request,
     char *message, size_t message_size)
 {
-    const char *key = "heat_ctl_alg";
-    const cJSON *v = cJSON_GetObjectItemCaseSensitive(values, key);
-    if (!v) return ESP_OK;
-
-    pb_heater_control_algorithm_t algorithm;
-    if (cJSON_IsString(v) && !strcmp(v->valuestring, "pid")) {
-        algorithm = PB_HEATER_CONTROL_PID;
-    } else if (cJSON_IsString(v) && !strcmp(v->valuestring, "bang_bang")) {
-        algorithm = PB_HEATER_CONTROL_BANG_BANG;
-    } else if (cJSON_IsNumber(v) && v->valuedouble == v->valueint &&
-               v->valueint >= PB_HEATER_CONTROL_PID &&
-               v->valueint < PB_HEATER_CONTROL__COUNT) {
-        algorithm = (pb_heater_control_algorithm_t)v->valueint;
-    } else {
-        return request_error(key, message, message_size);
+    const cJSON *legacy = cJSON_GetObjectItemCaseSensitive(values, "heat_ctl_alg");
+    bool legacy_present = legacy != NULL;
+    pb_heater_control_algorithm_t legacy_algorithm = PB_HEATER_CONTROL_BANG_BANG;
+    if (legacy_present) {
+        if (cJSON_IsString(legacy) && !strcmp(legacy->valuestring, "pid")) {
+            legacy_algorithm = PB_HEATER_CONTROL_PID;
+        } else if (cJSON_IsString(legacy) && !strcmp(legacy->valuestring, "bang_bang")) {
+            legacy_algorithm = PB_HEATER_CONTROL_BANG_BANG;
+        } else if (cJSON_IsNumber(legacy) && legacy->valuedouble == legacy->valueint &&
+                   legacy->valueint >= PB_HEATER_CONTROL_PID &&
+                   legacy->valueint < PB_HEATER_CONTROL__COUNT) {
+            legacy_algorithm = (pb_heater_control_algorithm_t)legacy->valueint;
+        } else {
+            return request_error("heat_ctl_alg", message, message_size);
+        }
     }
+
+    db_portal_bool_value_t pid_enabled = {0};
+    esp_err_t err = parse_bool_field(values, "pid_enabled", &pid_enabled,
+                                     message, message_size);
+    if (err != ESP_OK) return err;
+    pb_heater_control_algorithm_t toggle_algorithm = pid_enabled.value
+        ? PB_HEATER_CONTROL_PID : PB_HEATER_CONTROL_BANG_BANG;
+    if (legacy_present && pid_enabled.present &&
+        legacy_algorithm != toggle_algorithm)
+        return request_error("pid_enabled", message, message_size);
+    if (!legacy_present && !pid_enabled.present) return ESP_OK;
+
     request->control_algorithm_present = true;
-    request->control_algorithm = algorithm;
+    request->control_algorithm = pid_enabled.present
+        ? toggle_algorithm : legacy_algorithm;
     return ESP_OK;
 }
 

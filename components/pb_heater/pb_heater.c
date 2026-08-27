@@ -649,7 +649,7 @@ void pb_heater_tick(void)
     pb_ntc_status_t cs = pb_ntc_read(PB_NTC_CHAMBER, &chamber_c);
 
     const bool external_regulation =
-        algorithm == PB_HEATER_CONTROL_PID && isfinite(control_chamber_c);
+        algorithm == PB_HEATER_CONTROL_BANG_BANG && isfinite(control_chamber_c);
     const float process_variable_c = pb_heater_controller_process_variable(
         algorithm, cs == PB_NTC_OK, chamber_c, control_chamber_c);
     pb_heater_control_snapshot_t diag = {
@@ -690,15 +690,16 @@ void pb_heater_tick(void)
 
     // A fresh/stale transition or a live selector change can move the process
     // variable between physically different sensors. Start that source with clean
-    // controller history instead of carrying integral/derivative state across it.
+    // controller history instead of carrying controller state across it.
     if (!s_pid_source_known || s_pid_source_external != external_regulation) {
-        pid_runtime_reset();
+        if (algorithm == PB_HEATER_CONTROL_PID) pid_runtime_reset();
+        else s_bang_bang_demand = false;
         s_pid_source_known = true;
         s_pid_source_external = external_regulation;
     }
 
     // Local chamber soft foldback for REMOTE regulation. This remains independent
-    // of PID and wins unconditionally over its requested duty.
+    // of the selected controller and wins unconditionally over requested output.
     if (external_regulation)
         s_local_cut = pb_heater_local_foldback_cut(cs == PB_NTC_OK, chamber_c, s_local_cut);
     else
@@ -719,7 +720,7 @@ void pb_heater_tick(void)
     bool drive = false;
     if (algorithm == PB_HEATER_CONTROL_BANG_BANG) {
         s_bang_bang_demand = pb_heater_bang_bang_step(
-            s_bang_bang_demand, target, chamber_c);
+            s_bang_bang_demand, target, process_variable_c);
         diag.bang_bang_demand = s_bang_bang_demand;
         diag.requested_duty = s_bang_bang_demand ? 1.0f : 0.0f;
         diag.output_constrained = (s_local_cut || s_fb_cut) && s_bang_bang_demand;

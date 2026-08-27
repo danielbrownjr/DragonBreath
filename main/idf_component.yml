@@ -25,9 +25,11 @@ dependencies:
     path: components/dc_moonraker
     version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_ui:
-    git: https://github.com/justinh-rahb/dragon-core.git
+    # Temporary integration pin for the generic toggle/confirmation schema.
+    # Replace with the normal released dragon-core dependency before merge.
+    git: https://github.com/danielbrownjr/dragon-core.git
     path: components/dc_ui
-    version: ae54a70fdbb8cdc06a351299e146746781ae28df
+    version: f0dd64de53a3d03ad84a44f471f9efa34f07c2d6
   dc_mqtt:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_mqtt

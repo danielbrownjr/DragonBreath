@@ -54,28 +54,30 @@ int main(void)
     assert(pb_heater_pid_approach_max_duty(0.0f) == 0.0f);
     assert(pb_heater_pid_approach_max_duty(-0.1f) == 0.0f);
 
-    // The selector changes only the process variable; OFF, fresh ON, and stale
-    // ON all execute this same selected backend (dc_pid by default, pb_pid in the
-    // retained fallback build). A hot Bambu reading suppresses demand only when
-    // enabled and fresh; otherwise the cooler local NTC produces positive demand.
+    // PID always executes this backend from the local NTC (dc_pid by default,
+    // pb_pid in the retained fallback build), regardless of the remembered
+    // bang-bang source or whether fresh Bambu telemetry is available.
     const float local_c = 55.0f;
     const float bambu_c = 61.0f;
     float external_c = db_bambu_chamber_control_source(false, true, bambu_c);
-    float process_c = pb_heater_select_process_variable(true, local_c, external_c);
+    float process_c = pb_heater_controller_process_variable(
+        PB_HEATER_CONTROL_PID, true, local_c, external_c);
     pb_pid_backend_reset(&state);
     output = pb_pid_backend_step(&state, 60.0f, process_c, 0.5f,
                                  0.04f, 0.0008f, 0.02f, 0.20f);
     assert(process_c == local_c && output > 0.0f);
 
     external_c = db_bambu_chamber_control_source(true, true, bambu_c);
-    process_c = pb_heater_select_process_variable(true, local_c, external_c);
+    process_c = pb_heater_controller_process_variable(
+        PB_HEATER_CONTROL_PID, true, local_c, external_c);
     pb_pid_backend_reset(&state);
     output = pb_pid_backend_step(&state, 60.0f, process_c, 0.5f,
                                  0.04f, 0.0008f, 0.02f, 0.20f);
-    assert(process_c == bambu_c && output == 0.0f);
+    assert(process_c == local_c && output > 0.0f);
 
     external_c = db_bambu_chamber_control_source(true, true, NAN);
-    process_c = pb_heater_select_process_variable(true, local_c, external_c);
+    process_c = pb_heater_controller_process_variable(
+        PB_HEATER_CONTROL_PID, true, local_c, external_c);
     pb_pid_backend_reset(&state);
     output = pb_pid_backend_step(&state, 60.0f, process_c, 0.5f,
                                  0.04f, 0.0008f, 0.02f, 0.20f);
@@ -91,12 +93,12 @@ int main(void)
     assert(!bang);
     assert(!pb_heater_bang_bang_step(bang, 55.0f, 54.5f));
 
-    // Bang-bang hard-selects the local sensor even when a fresh Bambu value is
-    // present; PID restores that external sample without changing preference.
+    // Bang-bang restores a fresh remembered Bambu source; PID hard-selects local
+    // without changing that preference.
     assert(pb_heater_controller_process_variable(
-               PB_HEATER_CONTROL_BANG_BANG, true, local_c, bambu_c) == local_c);
+               PB_HEATER_CONTROL_BANG_BANG, true, local_c, bambu_c) == bambu_c);
     assert(pb_heater_controller_process_variable(
-               PB_HEATER_CONTROL_PID, true, local_c, bambu_c) == bambu_c);
+               PB_HEATER_CONTROL_PID, true, local_c, bambu_c) == local_c);
 
     // Real algorithm changes are rejected while target demand or SSR output is
     // active. An accepted idle transition explicitly requires state reset.

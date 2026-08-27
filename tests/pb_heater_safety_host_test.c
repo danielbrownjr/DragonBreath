@@ -52,19 +52,23 @@ int main(void)
     // Chamber over-temp outranks a (later-checked) sensor fault / comms loss.
     CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 90.0f, true, /*link=*/true)
           == PB_FAULT_CHAMBER_OVERTEMP);
-    // The selected PID process variable is irrelevant to safety: even if a Bambu
-    // sensor reports a cool chamber, the local NTC still owns the chamber trip.
+    // The selected bang-bang process variable is irrelevant to safety: even if a
+    // Bambu sensor reports a cool chamber, the local NTC owns the chamber trip.
     float bambu_process_variable = 30.0f;
     CHECK(pb_heater_select_process_variable(OK, 90.0f, bambu_process_variable)
           == bambu_process_variable);
     CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 90.0f, true, false)
           == PB_FAULT_CHAMBER_OVERTEMP);
-    // Bang-bang cannot substitute Bambu telemetry into regulation or safety.
+    // Bang-bang may regulate from Bambu, but cannot substitute it into safety.
     CHECK(pb_heater_controller_process_variable(
               PB_HEATER_CONTROL_BANG_BANG, OK, 90.0f, bambu_process_variable)
-          == 90.0f);
+          == bambu_process_variable);
     CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 90.0f, true, false)
           == PB_FAULT_CHAMBER_OVERTEMP);
+    // PID remains local even while the remembered Bambu sample is usable.
+    CHECK(pb_heater_controller_process_variable(
+              PB_HEATER_CONTROL_PID, OK, 90.0f, bambu_process_variable)
+          == 90.0f);
 
     // --- Fail-closed sensor faults: ONLY while armed. --------------------------
     // A dead chamber sensor while armed -> blind heater -> latch (chamber first).

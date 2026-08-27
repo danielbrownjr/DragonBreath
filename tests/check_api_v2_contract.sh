@@ -99,21 +99,50 @@ for field in printer_chamber_temperature_c printer_chamber_age_ms; do
     }
 done
 
-# Product setup must truthfully describe the independent algorithm and stored
-# Bambu preference in both directions. The PID warning is emitted only when the
-# saved preference is enabled; visible_when makes it appear as PID is selected.
-grep -q 'Bang-bang is the default' "$adapter" || {
-    echo "product setup no longer identifies the default controller" >&2
+# Product setup presents the existing algorithm enum as a boolean PID feature,
+# preserves the boolean Bambu preference, and delegates only generic mechanics to
+# dc_ui. The hidden action prevents a duplicate section Save button.
+for marker in \
+    'toggle_field("pid_enabled", "PID control"' \
+    'toggle_field(' \
+    '"bb_chamber_ctl", "Use Bambu chamber temperature for bang-bang"' \
+    'hide_section_action(s)' \
+    'auto_submit(pid)' \
+    'disabled_when(bb_preference, "pid_enabled", true)' \
+    '"Enable PID control?"' \
+    '"Enable PID"'
+do
+    grep -q "$marker" "$adapter" || {
+        echo "product setup is missing temperature-control UX marker: $marker" >&2
+        exit 1
+    }
+done
+grep -q 'PID uses the local DragonBreath chamber sensor' "$adapter" || {
+    echo "product setup is missing the conditional PID acknowledgement" >&2
     exit 1
 }
-grep -q 'Bambu chamber temperature is enabled. PID will regulate from fresh Bambu chamber telemetry' "$adapter" || {
-    echo "product setup is missing the PID/Bambu reactivation warning" >&2
+grep -q 'previous Bambu setting will be restored automatically' "$adapter" || {
+    echo "product setup is missing the preserved-preference acknowledgement" >&2
     exit 1
 }
-grep -q 'preference remains enabled, but is suspended while bang-bang is active' "$adapter" || {
-    echo "product setup is missing the bang-bang/Bambu suspension status" >&2
+if grep -q 'Warning: Bambu chamber temperature will become active\|Bambu chamber temperature suspended' "$adapter"; then
+    echo "obsolete permanent PID/Bambu warning card remains" >&2
     exit 1
-}
+fi
+
+# The pinned shared UI must support the generic schema and preserve booleans.
+for marker in \
+    "field.type==='toggle'?'checkbox'" \
+    'field.confirm_on_change' \
+    'f.disabled_when' \
+    'if(!section.hide_action)' \
+    "input.type==='checkbox'?input.checked"
+do
+    grep -q "$marker" "$portal" || {
+        echo "pinned dc_ui is missing generic setup behavior: $marker" >&2
+        exit 1
+    }
+done
 
 # Ownership boundary: core owns HTTP/provisioning/recovery; the product adapter
 # supplies API registration, authorization, heater safety and image identity.
