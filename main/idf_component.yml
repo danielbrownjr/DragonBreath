@@ -29,7 +29,7 @@ dependencies:
     # Replace with the normal released dragon-core dependency before merge.
     git: https://github.com/danielbrownjr/dragon-core.git
     path: components/dc_ui
-    version: f0dd64de53a3d03ad84a44f471f9efa34f07c2d6
+    version: f6368c33c5f69458b50145e07f61637c2766460c
   dc_mqtt:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_mqtt
