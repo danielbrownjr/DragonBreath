@@ -27,6 +27,33 @@ for route in info state command heartbeat events health; do
     }
 done
 
+# Control-loop diagnostics use one controller-agnostic runtime vocabulary. Source
+# selection must be explicit rather than inferred from saved configuration.
+for field in controller preferred_source effective_source process_variable_c controller_output requested_output; do
+    grep -q "\"$field\"" "$httpd" || {
+        echo "state document is missing generic control-loop field: $field" >&2
+        exit 1
+    }
+done
+for obsolete in algorithm bambu_chamber_preference bambu_chamber_effective process_variable_source process_variable_temperature_c pid_output_duty requested_duty bang_bang_demand; do
+    if grep -q "\"$obsolete\"" "$httpd"; then
+        echo "state document still exposes controller-specific/obsolete field: $obsolete" >&2
+        exit 1
+    fi
+done
+for marker in 'tc.controller' 'tc.preferred_source' 'tc.effective_source' 'tc.process_variable_c' 'tc.controller_output' 'tc.requested_output'; do
+    grep -q "$marker" "$adapter" || {
+        echo "diagnostics page is missing generic control-loop consumer: $marker" >&2
+        exit 1
+    }
+done
+for obsolete in bambu_chamber_preference bambu_chamber_effective process_variable_source process_variable_temperature_c pid_output_duty requested_duty bang_bang_demand; do
+    if grep -q "$obsolete" "$adapter"; then
+        echo "diagnostics page still consumes controller-specific/obsolete field: $obsolete" >&2
+        exit 1
+    fi
+done
+
 for field in '"schema"' '"product"' '"display_name"'; do
     grep -q "$field" "$httpd" || {
         echo "api v2 info is missing shared-SPA descriptor field: $field" >&2

@@ -102,6 +102,14 @@ static void add_num1(cJSON *o, const char *key, float v)
     cJSON_AddRawToObject(o, key, b);
 }
 
+static void add_num4(cJSON *o, const char *key, float v)
+{
+    if (!isfinite(v)) { cJSON_AddNullToObject(o, key); return; }
+    char b[20];
+    snprintf(b, sizeof b, "%.4f", (double)v);
+    cJSON_AddRawToObject(o, key, b);
+}
+
 static const char *fan_reason(const pb_policy_snapshot_t *s)
 {
     if (s->fault_latched || s->inhibited) return "fault";
@@ -115,7 +123,7 @@ static const char *fan_reason(const pb_policy_snapshot_t *s)
 static const char *process_source_str(pb_heater_process_source_t source)
 {
     switch (source) {
-        case PB_HEATER_PROCESS_LOCAL_NTC: return "local_ntc";
+        case PB_HEATER_PROCESS_LOCAL_NTC: return "local";
         case PB_HEATER_PROCESS_BAMBU: return "bambu";
         default: return "unavailable";
     }
@@ -222,30 +230,22 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
     pb_heater_control_snapshot_t controller;
     pb_heater_get_control_snapshot(&controller);
     cJSON *temperature = cJSON_AddObjectToObject(control, "temperature");
-    cJSON_AddStringToObject(temperature, "algorithm",
+    cJSON_AddStringToObject(temperature, "controller",
                             pb_heater_control_algorithm_str(controller.algorithm));
-    cJSON_AddBoolToObject(temperature, "bambu_chamber_preference",
-                          controller.bambu_preference);
-    cJSON_AddBoolToObject(temperature, "bambu_chamber_effective",
-                          controller.bambu_effective);
-    cJSON_AddStringToObject(temperature, "process_variable_source",
-                            process_source_str(controller.process_source));
-    add_num1(temperature, "process_variable_temperature_c",
-             controller.process_variable_c);
+    cJSON_AddStringToObject(temperature, "preferred_source",
+                            process_source_str(controller.preferred_source));
+    cJSON_AddStringToObject(temperature, "effective_source",
+                            process_source_str(controller.effective_source));
+    add_num1(temperature, "process_variable_c", controller.process_variable_c);
+    add_num4(temperature, "controller_output", controller.controller_output);
+    add_num4(temperature, "requested_output", controller.requested_output);
     if (controller.algorithm == PB_HEATER_CONTROL_PID) {
-        add_num1(temperature, "pid_output_duty", controller.pid_output_duty);
-        add_num1(temperature, "requested_duty", controller.requested_duty);
-        add_num1(temperature, "approach_cap", controller.approach_cap);
+        add_num4(temperature, "approach_cap", controller.approach_cap);
         cJSON_AddBoolToObject(temperature, "approach_limited",
                               controller.approach_limited);
-        cJSON_AddNullToObject(temperature, "bang_bang_demand");
     } else {
-        cJSON_AddNullToObject(temperature, "pid_output_duty");
-        add_num1(temperature, "requested_duty", controller.requested_duty);
         cJSON_AddNullToObject(temperature, "approach_cap");
         cJSON_AddBoolToObject(temperature, "approach_limited", false);
-        cJSON_AddBoolToObject(temperature, "bang_bang_demand",
-                              controller.bang_bang_demand);
     }
     cJSON_AddBoolToObject(temperature, "local_foldback_active",
                           controller.local_foldback_active);

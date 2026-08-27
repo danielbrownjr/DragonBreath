@@ -178,7 +178,8 @@ esp_err_t pb_heater_init(void)
     controller_runtime_reset();
     s_control_diag = (pb_heater_control_snapshot_t) {
         .algorithm = PB_HEATER_CONTROL_BANG_BANG,
-        .process_source = PB_HEATER_PROCESS_UNAVAILABLE,
+        .preferred_source = PB_HEATER_PROCESS_LOCAL_NTC,
+        .effective_source = PB_HEATER_PROCESS_UNAVAILABLE,
         .process_variable_c = NAN,
     };
 #ifdef CONFIG_PB_HIL_DEVBOARD
@@ -287,7 +288,8 @@ void pb_heater_get_control_snapshot(pb_heater_control_snapshot_t *snapshot)
     if (!snapshot) return;
     taskENTER_CRITICAL(&s_mux);
     *snapshot = s_control_diag;
-    snapshot->bambu_preference = s_bambu_preference;
+    snapshot->preferred_source = s_bambu_preference
+        ? PB_HEATER_PROCESS_BAMBU : PB_HEATER_PROCESS_LOCAL_NTC;
     taskEXIT_CRITICAL(&s_mux);
 }
 
@@ -654,17 +656,15 @@ void pb_heater_tick(void)
         algorithm, cs == PB_NTC_OK, chamber_c, control_chamber_c);
     pb_heater_control_snapshot_t diag = {
         .algorithm = algorithm,
-        .process_source = !isfinite(process_variable_c)
+        .effective_source = !isfinite(process_variable_c)
             ? PB_HEATER_PROCESS_UNAVAILABLE
             : (external_regulation ? PB_HEATER_PROCESS_BAMBU
                                    : PB_HEATER_PROCESS_LOCAL_NTC),
         .process_variable_c = process_variable_c,
-        .pid_output_duty = 0.0f,
-        .requested_duty = 0.0f,
+        .controller_output = 0.0f,
+        .requested_output = 0.0f,
         .approach_cap = algorithm == PB_HEATER_CONTROL_PID
             ? pb_heater_pid_approach_max_duty(target - process_variable_c) : 1.0f,
-        .bang_bang_demand = s_bang_bang_demand,
-        .bambu_effective = external_regulation,
     };
 
     int64_t now_us = esp_timer_get_time();
@@ -683,7 +683,6 @@ void pb_heater_tick(void)
         s_fb_cut = false;
         s_local_cut = false;
         controller_runtime_reset();
-        diag.bang_bang_demand = false;
         publish_control_diag(&diag);
         return;
     }
@@ -721,8 +720,8 @@ void pb_heater_tick(void)
     if (algorithm == PB_HEATER_CONTROL_BANG_BANG) {
         s_bang_bang_demand = pb_heater_bang_bang_step(
             s_bang_bang_demand, target, process_variable_c);
-        diag.bang_bang_demand = s_bang_bang_demand;
-        diag.requested_duty = s_bang_bang_demand ? 1.0f : 0.0f;
+        diag.controller_output = s_bang_bang_demand ? 1.0f : 0.0f;
+        diag.requested_output = diag.controller_output;
         diag.output_constrained = (s_local_cut || s_fb_cut) && s_bang_bang_demand;
         drive = s_bang_bang_demand && !s_local_cut && !s_fb_cut;
     } else if (s_local_cut || s_fb_cut) {
@@ -739,8 +738,8 @@ void pb_heater_tick(void)
             target - process_variable_c);
         s_pid_duty = pid_output_duty > approach_limit
             ? approach_limit : pid_output_duty;
-        diag.pid_output_duty = pid_output_duty;
-        diag.requested_duty = s_pid_duty;
+        diag.controller_output = pid_output_duty;
+        diag.requested_output = s_pid_duty;
         diag.approach_cap = approach_limit;
         diag.approach_limited = pid_output_duty > approach_limit;
 

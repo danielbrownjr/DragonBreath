@@ -50,15 +50,13 @@ typedef enum {
 
 typedef struct {
     pb_heater_control_algorithm_t algorithm;
-    pb_heater_process_source_t process_source;
+    pb_heater_process_source_t preferred_source;
+    pb_heater_process_source_t effective_source;
     float process_variable_c;
-    float pid_output_duty;       // backend output before approach limiting / SSR window
-    float requested_duty;        // controller demand after approach limiting, before vetoes
+    float controller_output;     // normalized raw controller output before shaping/vetoes
+    float requested_output;      // output after shaping, before foldback/safety vetoes
     float approach_cap;
     bool approach_limited;
-    bool bang_bang_demand;
-    bool bambu_preference;
-    bool bambu_effective;
     bool local_foldback_active;
     bool element_foldback_active;
     bool output_constrained;
