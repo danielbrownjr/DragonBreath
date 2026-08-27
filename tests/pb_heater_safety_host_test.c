@@ -59,6 +59,12 @@ int main(void)
           == bambu_process_variable);
     CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 90.0f, true, false)
           == PB_FAULT_CHAMBER_OVERTEMP);
+    // Bang-bang cannot substitute Bambu telemetry into regulation or safety.
+    CHECK(pb_heater_controller_process_variable(
+              PB_HEATER_CONTROL_BANG_BANG, OK, 90.0f, bambu_process_variable)
+          == 90.0f);
+    CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 90.0f, true, false)
+          == PB_FAULT_CHAMBER_OVERTEMP);
 
     // --- Fail-closed sensor faults: ONLY while armed. --------------------------
     // A dead chamber sensor while armed -> blind heater -> latch (chamber first).

@@ -6,6 +6,12 @@
 // Mirrors the real ceiling: pb_policy clamps persisted parameters against it.
 #define PB_HEATER_ABS_MAX_TARGET_C 70.0f
 
+typedef enum {
+    PB_HEATER_CONTROL_PID = 0,
+    PB_HEATER_CONTROL_BANG_BANG,
+    PB_HEATER_CONTROL__COUNT,
+} pb_heater_control_algorithm_t;
+
 // Optional external chamber measurement used for regulation only.
 // Pass NAN to fall back to the local chamber NTC.
 void pb_heater_set_control_chamber_c(float temp_c);

@@ -104,6 +104,10 @@ static const char DIAG_BODY[] =
     "<div><div class=dlab>SSR output</div><div class=dval id=d-ssr>--</div></div>"
     "<div><div class=dlab>Mode</div><div class=dval id=d-mode>--</div></div>"
     "<div><div class=dlab>Fault</div><div class=dval id=d-fault>--</div></div>"
+    "<div><div class=dlab>Controller</div><div class=dval id=d-ctl>--</div></div>"
+    "<div><div class=dlab>Process variable</div><div class=dval id=d-pv>--</div></div>"
+    "<div><div class=dlab>Controller demand</div><div class=dval id=d-demand>--</div></div>"
+    "<div><div class=dlab>Limit / constraint</div><div class=dval id=d-limit>--</div></div>"
     "</div>"
     "<canvas id=d-chart></canvas>"
     "<div style='display:flex;justify-content:space-between;align-items:center'>"
@@ -126,7 +130,7 @@ static const char DIAG_BODY[] =
     "function f1(x){return (x==null)?'--':Number(x).toFixed(1);}"
     "function apply(s){"
     "if(!s||s.api_version!==2)return;"
-    "var ch=s.sensors.chamber,pt=s.sensors.ptc,saf=s.safety||{};"
+    "var ch=s.sensors.chamber,pt=s.sensors.ptc,saf=s.safety||{},tc=((s.control||{}).temperature||{});"
     "var chv=ch.temperature_c,ptv=pt.temperature_c,out=!!s.heater.output,fl=!!saf.fault_latched;"
     "if(ptv!=null&&ptv>peak)peak=ptv;"
     "$('d-ch').textContent=f1(chv)+' \\u00b0C';"
@@ -134,9 +138,13 @@ static const char DIAG_BODY[] =
     "$('d-peak').textContent=f1(peak)+' \\u00b0C';"
     "$('d-ssr').textContent=out?'ON':'off';"
     "$('d-mode').textContent=s.mode;"
+    "$('d-ctl').textContent=(tc.algorithm||'--')+(tc.bambu_chamber_preference?' \u00b7 Bambu saved ON':' \u00b7 Bambu saved off');"
+    "$('d-pv').textContent=f1(tc.process_variable_temperature_c)+' \u00b0C ('+(tc.process_variable_source||'--')+')';"
+    "$('d-demand').textContent=tc.algorithm==='bang_bang'?(tc.bang_bang_demand?'ON':'off'):(tc.requested_duty==null?'--':(Number(tc.requested_duty)*100).toFixed(0)+'%');"
+    "$('d-limit').textContent=tc.output_constrained?(tc.constraint||'constrained'):(tc.approach_limited?('approach '+(Number(tc.approach_cap)*100).toFixed(0)+'%'):'none');"
     "var fe=$('d-fault');fe.textContent=fl?('FAULT: '+(saf.reason||'?')):'none';fe.className='dval'+(fl?' warn':'');"
     "var now=Date.now()/1000;if(t0==null)t0=now;"
-    "samples.push({t:now-t0,ch:chv,pt:ptv,ps:pt.status,o:out?1:0,m:s.mode,fl:fl?1:0,rs:saf.reason||'',pk:peak});"
+    "samples.push({t:now-t0,ch:chv,pt:ptv,ps:pt.status,o:out?1:0,m:s.mode,fl:fl?1:0,rs:saf.reason||'',pk:peak,alg:tc.algorithm||'',bp:tc.bambu_chamber_preference?1:0,be:tc.bambu_chamber_effective?1:0,pvs:tc.process_variable_source||'',pv:tc.process_variable_temperature_c,pid:tc.pid_output_duty,req:tc.requested_duty,bb:tc.bang_bang_demand==null?'':(tc.bang_bang_demand?1:0),cap:tc.approach_cap,alim:tc.approach_limited?1:0,lf:tc.local_foldback_active?1:0,ef:tc.element_foldback_active?1:0,oc:tc.output_constrained?1:0,con:tc.constraint||''});"
     "if(samples.length>MAX)samples.shift();"
     "$('d-stat').textContent=samples.length+' samples';draw();"
     "}"
@@ -153,8 +161,8 @@ static const char DIAG_BODY[] =
     "ln('pt','#ff8a49');ln('ch','#3399ff');"
     "}"
     "$('d-dl').addEventListener('click',function(){"
-    "var r=['t_s,chamber_c,ptc_c,ptc_status,out,mode,fault,reason,peak_c'];"
-    "samples.forEach(function(s){r.push([s.t.toFixed(1),(s.ch==null?'':s.ch.toFixed(1)),(s.pt==null?'':s.pt.toFixed(1)),s.ps,s.o,s.m,s.fl,'\"'+String(s.rs).replace(/\"/g,'\"\"')+'\"',s.pk.toFixed(1)].join(','));});"
+    "var r=['t_s,chamber_c,ptc_c,ptc_status,out,mode,fault,reason,peak_c,control_algorithm,bambu_preference,bambu_effective,pv_source,pv_c,pid_output_duty,requested_duty,bang_bang_demand,approach_cap,approach_limited,local_foldback,element_foldback,output_constrained,constraint'];"
+    "samples.forEach(function(s){r.push([s.t.toFixed(1),(s.ch==null?'':s.ch.toFixed(1)),(s.pt==null?'':s.pt.toFixed(1)),s.ps,s.o,s.m,s.fl,'\"'+String(s.rs).replace(/\"/g,'\"\"')+'\"',s.pk.toFixed(1),s.alg,s.bp,s.be,s.pvs,(s.pv==null?'':Number(s.pv).toFixed(1)),(s.pid==null?'':Number(s.pid).toFixed(4)),(s.req==null?'':Number(s.req).toFixed(4)),s.bb,(s.cap==null?'':Number(s.cap).toFixed(4)),s.alim,s.lf,s.ef,s.oc,s.con].join(','));});"
     "var b=new Blob([r.join('\\n')+'\\n'],{type:'text/csv'});"
     "var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='dragonbreath_diag.csv';a.click();"
     "setTimeout(function(){URL.revokeObjectURL(a.href);},1000);"
@@ -204,6 +212,22 @@ static cJSON *boolean_field(const char *key, const char *label, bool value)
     return f;
 }
 
+static cJSON *control_algorithm_field(pb_heater_control_algorithm_t algorithm)
+{
+    cJSON *f = field("heat_ctl_alg", "Temperature control", "select",
+                     pb_heater_control_algorithm_str(algorithm), false);
+    cJSON *opts = cJSON_AddArrayToObject(f, "options");
+    const char *values[] = {"pid", "bang_bang"};
+    const char *labels[] = {"PID", "Bang-bang"};
+    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) {
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "value", values[i]);
+        cJSON_AddStringToObject(o, "label", labels[i]);
+        cJSON_AddItemToArray(opts, o);
+    }
+    return f;
+}
+
 static cJSON *section(cJSON *root, const char *title)
 {
     cJSON *sections = cJSON_GetObjectItem(root, "sections");
@@ -235,7 +259,19 @@ static cJSON *describe_product(void *ctx)
     cJSON *root = cJSON_CreateObject();
     cJSON_AddItemToObject(root, "sections", cJSON_CreateArray());
 
-    cJSON *s = section(root, "Control source");
+    cJSON *s = section(root, "Temperature control");
+    cJSON_AddStringToObject(s, "description",
+        "PID is the default tuned controller. Bang-bang uses the local DragonBreath chamber sensor with a 1.0 C hysteresis band. Controller changes are refused while the heater is active.");
+    add_field(s, control_algorithm_field(pb_heater_get_control_algorithm()));
+
+    s = section(root, "Warning: Bambu chamber control suspended");
+    visible_when(s, "heat_ctl_alg", "bang_bang");
+    cJSON_AddStringToObject(s, "description",
+        db_bambu_chamber_control_get()
+        ? "Bang-bang control uses the local DragonBreath chamber sensor. Your saved Bambu chamber preference remains Enabled, but its effect is suspended until PID control is re-enabled."
+        : "Bang-bang control always uses the local DragonBreath chamber sensor. A saved Bambu chamber preference is used only after PID control is re-enabled.");
+
+    s = section(root, "Control source");
     char selected_source[4];
     snprintf(selected_source, sizeof selected_source, "%d", dc_source_get());
     cJSON *src = field("ctl_src", "Source", "select", selected_source, false);
@@ -405,12 +441,39 @@ static esp_err_t parse_source_field(const cJSON *values,
     return ESP_OK;
 }
 
+static esp_err_t parse_control_algorithm_field(
+    const cJSON *values, db_portal_product_request_t *request,
+    char *message, size_t message_size)
+{
+    const char *key = "heat_ctl_alg";
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(values, key);
+    if (!v) return ESP_OK;
+
+    pb_heater_control_algorithm_t algorithm;
+    if (cJSON_IsString(v) && !strcmp(v->valuestring, "pid")) {
+        algorithm = PB_HEATER_CONTROL_PID;
+    } else if (cJSON_IsString(v) && !strcmp(v->valuestring, "bang_bang")) {
+        algorithm = PB_HEATER_CONTROL_BANG_BANG;
+    } else if (cJSON_IsNumber(v) && v->valuedouble == v->valueint &&
+               v->valueint >= PB_HEATER_CONTROL_PID &&
+               v->valueint < PB_HEATER_CONTROL__COUNT) {
+        algorithm = (pb_heater_control_algorithm_t)v->valueint;
+    } else {
+        return request_error(key, message, message_size);
+    }
+    request->control_algorithm_present = true;
+    request->control_algorithm = algorithm;
+    return ESP_OK;
+}
+
 static esp_err_t parse_product_request(const cJSON *values,
                                        db_portal_product_request_t *request,
                                        char *message, size_t message_size)
 {
     memset(request, 0, sizeof(*request));
     esp_err_t err = parse_source_field(values, request, message, message_size);
+    if (err != ESP_OK) return err;
+    err = parse_control_algorithm_field(values, request, message, message_size);
     if (err != ESP_OK) return err;
 
 #define PARSE_TEXT(member) do { \
@@ -478,8 +541,22 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
 
     db_portal_product_plan_t plan;
     err = db_portal_plan_product_save(&request, dc_source_get(), &mr, &bb, &ha, &km,
+                                      pb_heater_get_control_algorithm(),
+                                      pb_heater_heat_mode() || pb_heater_is_on(),
                                       &plan, message, message_size);
     if (err != ESP_OK) return err;
+
+    if (plan.control_algorithm_changed) {
+        err = pb_heater_set_control_algorithm(plan.control_algorithm);
+        if (err == ESP_ERR_INVALID_STATE) {
+            snprintf(message, message_size,
+                     "Turn the heater off before changing the temperature-control algorithm.");
+            return err;
+        }
+        if (err != ESP_OK)
+            return persistence_error("temperature-control algorithm", err,
+                                     message, message_size);
+    }
 
     if (plan.moonraker_changed) {
         err = dc_moonraker_set_config(&plan.moonraker);
@@ -511,7 +588,7 @@ static esp_err_t apply_product(const cJSON *values, void *ctx, char *message, si
 
     bool changed = plan.moonraker_changed || plan.bambu_changed || plan.ha_changed ||
                    plan.klipper_mqtt_changed || plan.source_changed ||
-                   bb_chamber_ctl_changed;
+                   plan.control_algorithm_changed || bb_chamber_ctl_changed;
     if (plan.source_changed)
         snprintf(message, message_size, "Configuration saved; restart to apply source changes.");
     else

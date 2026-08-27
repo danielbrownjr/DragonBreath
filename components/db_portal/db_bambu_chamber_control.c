@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "db_bambu_chamber_control.h"
+#include "pb_heater.h"
 
 #include "nvs.h"
 
@@ -20,6 +21,7 @@ void db_bambu_chamber_control_load(void)
         nvs_close(handle);
     }
     s_enabled = enabled == 1;
+    pb_heater_set_bambu_chamber_preference(s_enabled);
 }
 
 bool db_bambu_chamber_control_get(void)
@@ -41,6 +43,9 @@ esp_err_t db_bambu_chamber_control_set(bool enabled)
 
     // The setup API reports the active value. Do not change it unless the new
     // selection was durably committed.
-    if (err == ESP_OK) s_enabled = enabled;
+    if (err == ESP_OK) {
+        s_enabled = enabled;
+        pb_heater_set_bambu_chamber_preference(enabled);
+    }
     return err;
 }

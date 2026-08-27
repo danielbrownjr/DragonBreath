@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "pb_heater.h"
+#include "pb_heater_algorithm_store.h"
 #include "pb_pid_backend.h"
 #include "pb_board.h"
 #include "pb_ntc.h"
@@ -39,6 +40,10 @@ static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static float       s_target_c;      // guarded by s_mux
 static float       s_control_chamber_c; // guarded by s_mux; optional external regulation temp
+static pb_heater_control_algorithm_t s_control_algorithm; // guarded by s_mux
+static bool        s_algorithm_change_pending; // guarded by s_mux; blocks arming during NVS write
+static bool        s_controller_reset_pending; // guarded by s_mux; consumed by control task
+static bool        s_bambu_preference; // guarded by s_mux; diagnostic mirror only
 static bool        s_latched_off;   // guarded by s_mux (set by a safety trip)
 static bool        s_inhibited;     // guarded by s_mux (PERMANENT; reboot-only)
 static int64_t     s_last_link_us;  // guarded by s_mux
@@ -58,6 +63,8 @@ static bool        s_pid_source_known;    // control-task only
 static bool        s_pid_source_external; // control-task only
 static int64_t     s_pid_window_start_us; // control-task only — time-proportion window origin
 static float       s_pid_duty;      // control-task only — last normalized PID output [0,1]
+static bool        s_bang_bang_demand; // control-task only — local-NTC hysteresis state
+static pb_heater_control_snapshot_t s_control_diag; // guarded by s_mux
 static float       s_max_target_c;      // guarded by s_mux — settable set-point ceiling
 static int64_t     s_comms_timeout_us;  // guarded by s_mux — comms deadman (microseconds)
 static float       s_cool_release_c;    // guarded by s_mux — residual-heat purge "cool down to" temp
@@ -119,17 +126,18 @@ static void pid_runtime_reset(void)
     s_pid_duty = 0.0f;
 }
 
-// The chamber has a large amount of stored heat and keeps climbing after the SSR
-// backs off. Taper maximum heater power as the selected process variable approaches
-// target so PID cannot charge the thermal mass at full power right up to setpoint.
-// This is a control-shaping limit only; local NTC/PTC safety cutoffs remain separate.
-static float pid_approach_max_duty(float error_c)
+static void controller_runtime_reset(void)
 {
-    if (error_c <= 0.0f) return 0.0f;
-    if (error_c < 2.0f)  return 0.20f;
-    if (error_c < 5.0f)  return 0.40f;
-    if (error_c < 10.0f) return 0.70f;
-    return 1.0f;
+    pid_runtime_reset();
+    s_bang_bang_demand = false;
+    s_pid_source_known = false;
+}
+
+static void publish_control_diag(const pb_heater_control_snapshot_t *snapshot)
+{
+    taskENTER_CRITICAL(&s_mux);
+    s_control_diag = *snapshot;
+    taskEXIT_CRITICAL(&s_mux);
 }
 
 esp_err_t pb_heater_init(void)
@@ -150,6 +158,10 @@ esp_err_t pb_heater_init(void)
     taskENTER_CRITICAL(&s_mux);
     s_target_c = 0.0f;
     s_control_chamber_c = NAN;
+    s_control_algorithm = PB_HEATER_CONTROL_PID;
+    s_algorithm_change_pending = false;
+    s_controller_reset_pending = false;
+    s_bambu_preference = false;
     s_latched_off = false;
     s_fault_reason = NULL;
     s_fault_code = PB_FAULT_NONE;
@@ -163,8 +175,12 @@ esp_err_t pb_heater_init(void)
     taskEXIT_CRITICAL(&s_mux);
     s_fb_cut = false;
     s_local_cut = false;
-    pid_runtime_reset();
-    s_pid_source_known = false;
+    controller_runtime_reset();
+    s_control_diag = (pb_heater_control_snapshot_t) {
+        .algorithm = PB_HEATER_CONTROL_PID,
+        .process_source = PB_HEATER_PROCESS_UNAVAILABLE,
+        .process_variable_c = NAN,
+    };
 #ifdef CONFIG_PB_HIL_DEVBOARD
     ESP_LOGW(TAG, "HIL dev-board backend: relay GPIO compiled out");
 #else
@@ -184,7 +200,7 @@ esp_err_t pb_heater_set_target_c(float target_c)
     esp_err_t r = ESP_OK;
     taskENTER_CRITICAL(&s_mux);
     if (target_c > s_max_target_c) target_c = s_max_target_c;
-    if ((s_latched_off || s_inhibited) && target_c > 0.0f) {
+    if ((s_latched_off || s_inhibited || s_algorithm_change_pending) && target_c > 0.0f) {
         r = ESP_ERR_INVALID_STATE;
     } else {
         s_target_c = target_c;
@@ -213,12 +229,75 @@ void pb_heater_set_control_chamber_c(float temp_c)
     taskEXIT_CRITICAL(&s_mux);
 }
 
+const char *pb_heater_control_algorithm_str(pb_heater_control_algorithm_t algorithm)
+{
+    return algorithm == PB_HEATER_CONTROL_BANG_BANG ? "bang_bang" : "pid";
+}
+
+pb_heater_control_algorithm_t pb_heater_get_control_algorithm(void)
+{
+    taskENTER_CRITICAL(&s_mux);
+    pb_heater_control_algorithm_t algorithm = s_control_algorithm;
+    taskEXIT_CRITICAL(&s_mux);
+    return algorithm;
+}
+
+esp_err_t pb_heater_set_control_algorithm(pb_heater_control_algorithm_t algorithm)
+{
+    if (algorithm < PB_HEATER_CONTROL_PID || algorithm >= PB_HEATER_CONTROL__COUNT)
+        return ESP_ERR_INVALID_ARG;
+
+    taskENTER_CRITICAL(&s_mux);
+    pb_heater_control_algorithm_t current = s_control_algorithm;
+    bool allowed = !s_algorithm_change_pending &&
+        pb_heater_algorithm_change_allowed(current, algorithm, s_target_c, s_on);
+    bool reset_required = pb_heater_algorithm_change_requires_reset(current, algorithm);
+    if (allowed && reset_required) s_algorithm_change_pending = true;
+    taskEXIT_CRITICAL(&s_mux);
+    if (!allowed) return ESP_ERR_INVALID_STATE;
+    if (!reset_required) return ESP_OK;
+
+    esp_err_t err = pb_heater_algorithm_persist(algorithm);
+    taskENTER_CRITICAL(&s_mux);
+    if (err == ESP_OK) {
+        s_control_algorithm = algorithm;
+        s_controller_reset_pending = true;
+    }
+    s_algorithm_change_pending = false;
+    taskEXIT_CRITICAL(&s_mux);
+
+    if (err == ESP_OK)
+        ESP_LOGI(TAG, "temperature control algorithm set to %s",
+                 pb_heater_control_algorithm_str(algorithm));
+    else
+        ESP_LOGE(TAG, "could not persist temperature control algorithm: %s",
+                 esp_err_to_name(err));
+    return err;
+}
+
+void pb_heater_set_bambu_chamber_preference(bool enabled)
+{
+    taskENTER_CRITICAL(&s_mux);
+    s_bambu_preference = enabled;
+    taskEXIT_CRITICAL(&s_mux);
+}
+
+void pb_heater_get_control_snapshot(pb_heater_control_snapshot_t *snapshot)
+{
+    if (!snapshot) return;
+    taskENTER_CRITICAL(&s_mux);
+    *snapshot = s_control_diag;
+    snapshot->bambu_preference = s_bambu_preference;
+    taskEXIT_CRITICAL(&s_mux);
+}
+
 void pb_heater_load_config(void)
 {
     float    max_c    = PB_HEATER_MAX_TARGET_C_DEFAULT;
     uint32_t comms_ms = PB_HEATER_COMMS_TIMEOUT_MS_DEFAULT;
     float    cool_c   = PB_HEATER_COOL_RELEASE_C_DEFAULT;
     float    fb_cut   = 0.0f;
+    pb_heater_control_algorithm_t algorithm = pb_heater_algorithm_load_persisted();
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         uint32_t v;
@@ -243,10 +322,13 @@ void pb_heater_load_config(void)
     s_comms_timeout_us = (int64_t)comms_ms * 1000;
     s_cool_release_c = cool_c;
     s_fb_cut_c = fb_cut;
+    s_control_algorithm = algorithm;
+    s_controller_reset_pending = true;
     if (s_target_c > s_max_target_c) s_target_c = s_max_target_c;
     taskEXIT_CRITICAL(&s_mux);
-    ESP_LOGI(TAG, "config: max_target=%.1fC comms_timeout=%ums cool_release=%.1fC fb_cut=%.1fC",
-             max_c, (unsigned)comms_ms, cool_c, fb_cut);
+    ESP_LOGI(TAG, "config: max_target=%.1fC comms_timeout=%ums cool_release=%.1fC fb_cut=%.1fC control=%s",
+             max_c, (unsigned)comms_ms, cool_c, fb_cut,
+             pb_heater_control_algorithm_str(algorithm));
 }
 
 esp_err_t pb_heater_set_max_target_c(float max_c)
@@ -543,27 +625,55 @@ void pb_heater_tick(void)
 
     float target;
     float control_chamber_c;
+    pb_heater_control_algorithm_t algorithm;
+    bool controller_reset_pending;
     bool latched;
     int64_t last_link;
     int64_t comms_timeout_us;
     taskENTER_CRITICAL(&s_mux);
     target = s_target_c;
     control_chamber_c = s_control_chamber_c;
+    algorithm = s_control_algorithm;
+    controller_reset_pending = s_controller_reset_pending;
+    s_controller_reset_pending = false;
     latched = s_latched_off;
     last_link = s_last_link_us;
     comms_timeout_us = s_comms_timeout_us;
     taskEXIT_CRITICAL(&s_mux);
+
+    if (controller_reset_pending) controller_runtime_reset();
 
     const bool armed = (target > 0.0f);
     float ptc_c = 0.0f, chamber_c = 0.0f;
     pb_ntc_status_t ps = pb_ntc_read(PB_NTC_PTC, &ptc_c);
     pb_ntc_status_t cs = pb_ntc_read(PB_NTC_CHAMBER, &chamber_c);
 
+    const bool external_regulation =
+        algorithm == PB_HEATER_CONTROL_PID && isfinite(control_chamber_c);
+    const float process_variable_c = pb_heater_controller_process_variable(
+        algorithm, cs == PB_NTC_OK, chamber_c, control_chamber_c);
+    pb_heater_control_snapshot_t diag = {
+        .algorithm = algorithm,
+        .process_source = !isfinite(process_variable_c)
+            ? PB_HEATER_PROCESS_UNAVAILABLE
+            : (external_regulation ? PB_HEATER_PROCESS_BAMBU
+                                   : PB_HEATER_PROCESS_LOCAL_NTC),
+        .process_variable_c = process_variable_c,
+        .pid_output_duty = 0.0f,
+        .requested_duty = 0.0f,
+        .approach_cap = algorithm == PB_HEATER_CONTROL_PID
+            ? pb_heater_pid_approach_max_duty(target - process_variable_c) : 1.0f,
+        .bang_bang_demand = s_bang_bang_demand,
+        .bambu_effective = external_regulation,
+    };
+
     int64_t now_us = esp_timer_get_time();
     pb_fault_reason_t trip_code = pb_heater_eval_trip(
         ps == PB_NTC_OK, ptc_c, cs == PB_NTC_OK, chamber_c, armed,
         (now_us - last_link) > comms_timeout_us);
     if (trip_code != PB_FAULT_NONE) {
+        diag.output_constrained = true;
+        publish_control_diag(&diag);
         trip(trip_code);
         return;
     }
@@ -572,14 +682,11 @@ void pb_heater_tick(void)
         if (s_on) ssr_set(false);
         s_fb_cut = false;
         s_local_cut = false;
-        pid_runtime_reset();
-        s_pid_source_known = false;
+        controller_runtime_reset();
+        diag.bang_bang_demand = false;
+        publish_control_diag(&diag);
         return;
     }
-
-    const bool external_regulation = isfinite(control_chamber_c);
-    const float process_variable_c = pb_heater_select_process_variable(
-        cs == PB_NTC_OK, chamber_c, control_chamber_c);
 
     // A fresh/stale transition or a live selector change can move the process
     // variable between physically different sensors. Start that source with clean
@@ -603,27 +710,40 @@ void pb_heater_tick(void)
     pb_heater_effective_foldback(pb_heater_get_fb_cut_c(), pb_ntc_rref_kohm(), &fb_cut, &fb_resume);
     s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut, fb_cut, fb_resume);
 
-    // Both local and Bambu chamber measurements enter this same selected PID
-    // backend and SSR time-proportioning path. A 10 s window is intentionally
-    // glacial for a chamber and kind to a zero-cross SSR: e.g. 0.30 duty means
-    // roughly 3 s ON / 7 s OFF. Independent safety/foldback vetoes stay below it.
+    diag.local_foldback_active = s_local_cut;
+    diag.element_foldback_active = s_fb_cut;
+
+    // The selected algorithm produces requested output only after the common
+    // local-sensor safety evaluation above. Independent foldback vetoes remain
+    // authoritative beneath either controller and immediately force the SSR off.
     bool drive = false;
-    if (s_local_cut || s_fb_cut) {
+    if (algorithm == PB_HEATER_CONTROL_BANG_BANG) {
+        s_bang_bang_demand = pb_heater_bang_bang_step(
+            s_bang_bang_demand, target, chamber_c);
+        diag.bang_bang_demand = s_bang_bang_demand;
+        diag.requested_duty = s_bang_bang_demand ? 1.0f : 0.0f;
+        diag.output_constrained = (s_local_cut || s_fb_cut) && s_bang_bang_demand;
+        drive = s_bang_bang_demand && !s_local_cut && !s_fb_cut;
+    } else if (s_local_cut || s_fb_cut) {
+        // Preserve the current PID foldback behavior: blank controller history
+        // while a thermal veto is active instead of winding against a blocked SSR.
         pid_runtime_reset();
+        diag.output_constrained = true;
     } else {
-        s_pid_duty = pb_pid_backend_step(&s_pid, target, process_variable_c,
-                                         PB_CHAMBER_PID_DT_S,
-                                         PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
-                                         PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
+        float pid_output_duty = pb_pid_backend_step(
+            &s_pid, target, process_variable_c, PB_CHAMBER_PID_DT_S,
+            PB_CHAMBER_PID_KP, PB_CHAMBER_PID_KI,
+            PB_CHAMBER_PID_KD, PB_CHAMBER_PID_D_ALPHA);
+        float approach_limit = pb_heater_pid_approach_max_duty(
+            target - process_variable_c);
+        s_pid_duty = pid_output_duty > approach_limit
+            ? approach_limit : pid_output_duty;
+        diag.pid_output_duty = pid_output_duty;
+        diag.requested_duty = s_pid_duty;
+        diag.approach_cap = approach_limit;
+        diag.approach_limited = pid_output_duty > approach_limit;
 
-        // Approach shaping for the chamber's thermal inertia. Far from target
-        // PID may use the full heater, but progressively cap duty inside 10 C.
-        // With the 10 s SSR window these limits correspond to at most 7 s, 4 s,
-        // and 2 s ON per window as we close to setpoint.
-        float approach_limit = pid_approach_max_duty(target - process_variable_c);
-        if (s_pid_duty > approach_limit)
-            s_pid_duty = approach_limit;
-
+        // Preserve the current 10 s zero-cross-SSR time-proportioning window.
         if (s_pid_window_start_us == 0 || now_us < s_pid_window_start_us)
             s_pid_window_start_us = now_us;
         int64_t elapsed = now_us - s_pid_window_start_us;
@@ -637,4 +757,5 @@ void pb_heater_tick(void)
     }
 
     if (drive != s_on) ssr_set(drive);
+    publish_control_diag(&diag);
 }

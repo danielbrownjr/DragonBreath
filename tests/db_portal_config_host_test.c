@@ -28,8 +28,11 @@ static void current_configs(dc_moonraker_config_t *mr, dc_bambu_config_t *bb,
     km->writeback = true;
 }
 
-static esp_err_t plan(const db_portal_product_request_t *request,
-                      db_portal_product_plan_t *out, char *message, size_t size)
+static esp_err_t plan_with_control(const db_portal_product_request_t *request,
+                                   pb_heater_control_algorithm_t algorithm,
+                                   bool heater_active,
+                                   db_portal_product_plan_t *out,
+                                   char *message, size_t size)
 {
     dc_moonraker_config_t mr = {0};
     dc_bambu_config_t bb = {0};
@@ -37,7 +40,15 @@ static esp_err_t plan(const db_portal_product_request_t *request,
     db_km_config_t km = {0};
     current_configs(&mr, &bb, &ha, &km);
     return db_portal_plan_product_save(request, DC_SRC_KLIPPER, &mr, &bb, &ha,
-                                       &km, out, message, size);
+                                       &km, algorithm, heater_active,
+                                       out, message, size);
+}
+
+static esp_err_t plan(const db_portal_product_request_t *request,
+                      db_portal_product_plan_t *out, char *message, size_t size)
+{
+    return plan_with_control(request, PB_HEATER_CONTROL_PID, false,
+                             out, message, size);
 }
 
 int main(void)
@@ -126,6 +137,27 @@ int main(void)
     db_portal_product_request_t invalid_port = {.ha_port = {true, 0}};
     assert(plan(&invalid_port, &result, message, sizeof(message)) == ESP_ERR_INVALID_ARG);
     assert(strstr(message, "port") != NULL);
+
+    // PID is the default. An idle switch to bang-bang is staged and requires a
+    // controller reset; the same mutation is rejected before any setter runs if
+    // either heater demand or physical output is active.
+    db_portal_product_request_t bang_bang = {
+        .control_algorithm_present = true,
+        .control_algorithm = PB_HEATER_CONTROL_BANG_BANG,
+    };
+    assert(plan(&bang_bang, &result, message, sizeof(message)) == ESP_OK);
+    assert(result.control_algorithm_changed);
+    assert(result.control_algorithm == PB_HEATER_CONTROL_BANG_BANG);
+    assert(plan_with_control(&bang_bang, PB_HEATER_CONTROL_PID, true,
+                             &result, message, sizeof(message)) == ESP_ERR_INVALID_STATE);
+    assert(strstr(message, "Turn the heater off") != NULL);
+
+    db_portal_product_request_t invalid_algorithm = {
+        .control_algorithm_present = true,
+        .control_algorithm = PB_HEATER_CONTROL__COUNT,
+    };
+    assert(plan(&invalid_algorithm, &result, message, sizeof(message)) == ESP_ERR_INVALID_ARG);
+    assert(strstr(message, "heat_ctl_alg") != NULL);
 
     puts("db portal config planning tests: PASS");
     return 0;

@@ -112,6 +112,15 @@ static const char *fan_reason(const pb_policy_snapshot_t *s)
     return "off";
 }
 
+static const char *process_source_str(pb_heater_process_source_t source)
+{
+    switch (source) {
+        case PB_HEATER_PROCESS_LOCAL_NTC: return "local_ntc";
+        case PB_HEATER_PROCESS_BAMBU: return "bambu";
+        default: return "unavailable";
+    }
+}
+
 static cJSON *state_json(const pb_policy_snapshot_t *s)
 {
     cJSON *o = cJSON_CreateObject();
@@ -209,6 +218,45 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
         cJSON_AddNullToObject(lease, "owner");
         cJSON_AddNumberToObject(lease, "expires_in_ms", 0);
     }
+
+    pb_heater_control_snapshot_t controller;
+    pb_heater_get_control_snapshot(&controller);
+    cJSON *temperature = cJSON_AddObjectToObject(control, "temperature");
+    cJSON_AddStringToObject(temperature, "algorithm",
+                            pb_heater_control_algorithm_str(controller.algorithm));
+    cJSON_AddBoolToObject(temperature, "bambu_chamber_preference",
+                          controller.bambu_preference);
+    cJSON_AddBoolToObject(temperature, "bambu_chamber_effective",
+                          controller.bambu_effective);
+    cJSON_AddStringToObject(temperature, "process_variable_source",
+                            process_source_str(controller.process_source));
+    add_num1(temperature, "process_variable_temperature_c",
+             controller.process_variable_c);
+    if (controller.algorithm == PB_HEATER_CONTROL_PID) {
+        add_num1(temperature, "pid_output_duty", controller.pid_output_duty);
+        add_num1(temperature, "requested_duty", controller.requested_duty);
+        add_num1(temperature, "approach_cap", controller.approach_cap);
+        cJSON_AddBoolToObject(temperature, "approach_limited",
+                              controller.approach_limited);
+        cJSON_AddNullToObject(temperature, "bang_bang_demand");
+    } else {
+        cJSON_AddNullToObject(temperature, "pid_output_duty");
+        add_num1(temperature, "requested_duty", controller.requested_duty);
+        cJSON_AddNullToObject(temperature, "approach_cap");
+        cJSON_AddBoolToObject(temperature, "approach_limited", false);
+        cJSON_AddBoolToObject(temperature, "bang_bang_demand",
+                              controller.bang_bang_demand);
+    }
+    cJSON_AddBoolToObject(temperature, "local_foldback_active",
+                          controller.local_foldback_active);
+    cJSON_AddBoolToObject(temperature, "element_foldback_active",
+                          controller.element_foldback_active);
+    bool constrained = controller.output_constrained || s->fault_latched || s->inhibited;
+    cJSON_AddBoolToObject(temperature, "output_constrained", constrained);
+    cJSON_AddStringToObject(temperature, "constraint",
+        (s->fault_latched || s->inhibited) ? "safety_fault" :
+        controller.local_foldback_active ? "local_chamber_foldback" :
+        controller.element_foldback_active ? "element_foldback" : "none");
 
     // Remembered mode parameters: what a mode is re-armed with when the caller
     // supplies no values of its own (front-panel buttons), and what the UI

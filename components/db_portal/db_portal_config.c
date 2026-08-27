@@ -49,6 +49,8 @@ esp_err_t db_portal_plan_product_save(
     const dc_bambu_config_t *current_bambu,
     const pb_ha_config_t *current_ha,
     const db_km_config_t *current_klipper_mqtt,
+    pb_heater_control_algorithm_t current_control_algorithm,
+    bool heater_active,
     db_portal_product_plan_t *plan,
     char *message,
     size_t message_size)
@@ -59,6 +61,16 @@ esp_err_t db_portal_plan_product_save(
     if (request->source_present &&
         (request->source < DC_SRC_KLIPPER || request->source >= DC_SRC_MAX))
         return invalid_field("ctl_src", message, message_size);
+    if (request->control_algorithm_present &&
+        (request->control_algorithm < PB_HEATER_CONTROL_PID ||
+         request->control_algorithm >= PB_HEATER_CONTROL__COUNT))
+        return invalid_field("heat_ctl_alg", message, message_size);
+    if (request->control_algorithm_present &&
+        request->control_algorithm != current_control_algorithm && heater_active) {
+        snprintf(message, message_size,
+                 "Turn the heater off before changing the temperature-control algorithm.");
+        return ESP_ERR_INVALID_STATE;
+    }
     if ((request->mr_port.present && !request->mr_port.value) ||
         (request->ha_port.present && !request->ha_port.value) ||
         (request->km_port.present && !request->km_port.value))
@@ -66,6 +78,7 @@ esp_err_t db_portal_plan_product_save(
 
     memset(plan, 0, sizeof(*plan));
     plan->source = current_source;
+    plan->control_algorithm = current_control_algorithm;
     plan->moonraker = *current_moonraker;
     plan->bambu = *current_bambu;
     plan->ha = *current_ha;
@@ -74,6 +87,11 @@ esp_err_t db_portal_plan_product_save(
     if (request->source_present && request->source != current_source) {
         plan->source = request->source;
         plan->source_changed = true;
+    }
+    if (request->control_algorithm_present &&
+        request->control_algorithm != current_control_algorithm) {
+        plan->control_algorithm = request->control_algorithm;
+        plan->control_algorithm_changed = true;
     }
 
 #define STAGE_TEXT(group, request_member, destination_member, secret) do { \

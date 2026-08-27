@@ -2,15 +2,15 @@ dependencies:
   dc_evlog:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_evlog
-    version: v0.27.0
+    version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_source:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_source
-    version: v0.27.0
+    version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_bambu:
     git: https://github.com/danielbrownjr/dragon-core.git
     path: components/dc_bambu
-    version: bfaffa4
+    version: bfaffa460ac2ddfbea9376c6a07dcc924c2c7f99
   # Temporary pin pending upstream dragon-core PR #54 merge and release.
   dc_pid:
     git: https://github.com/danielbrownjr/dragon-core.git
@@ -19,20 +19,20 @@ dependencies:
   dc_wifi:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_wifi
-    version: v0.27.0
+    version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_moonraker:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_moonraker
-    version: v0.27.0
+    version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_ui:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_ui
-    version: v0.27.0
+    version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_mqtt:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_mqtt
-    version: v0.27.0
+    version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_portal:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_portal
-    version: v0.27.0
+    version: ae54a70fdbb8cdc06a351299e146746781ae28df
