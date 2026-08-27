@@ -7,6 +7,16 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.14] - 2026-08-26
+
+### Changed
+- Pin **dragon-core v0.30.0** — **Wi-Fi join reliability.** Disables WiFi modem
+  power-save (fixes "associated but never gets a DHCP IP"), adds a no-DHCP-IP
+  watchdog that drops a mesh node that admits the client but won't hand out a
+  lease and tries another, raises the connect-retry budget, and adds an opt-in
+  **fallback** AP availability mode (STA-only while connected, recovery portal
+  only if the join fails). Hardware-proven on a C3 in a multi-AP mesh.
+
 ## [1.1.13] - 2026-08-26
 
 ### Added
