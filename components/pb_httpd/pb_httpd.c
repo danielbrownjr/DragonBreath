@@ -10,6 +10,7 @@
 #include "dc_evlog.h"
 
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "cJSON.h"
 #include "nvs.h"
@@ -634,6 +635,12 @@ static esp_err_t health_get(httpd_req_t *req)
     cJSON_AddNumberToObject(o, "uptime_ms", esp_timer_get_time() / 1000);
     cJSON_AddNumberToObject(o, "free_heap_bytes", esp_get_free_heap_size());
     cJSON_AddNumberToObject(o, "minimum_free_heap_bytes", esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(o, "largest_free_block_bytes",
+                            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    // Health handlers run on the HTTP server task, so NULL measures the task
+    // whose stack also holds dc_portal's bounded console streaming buffer.
+    cJSON_AddNumberToObject(o, "http_task_stack_high_water_mark_bytes",
+                            uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         cJSON_AddNumberToObject(o, "wifi_rssi_dbm", ap.rssi);
         cJSON_AddNumberToObject(o, "wifi_channel", ap.primary);
