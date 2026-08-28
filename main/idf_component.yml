@@ -1,8 +1,8 @@
 dependencies:
   dc_evlog:
-    git: https://github.com/justinh-rahb/dragon-core.git
+    git: https://github.com/danielbrownjr/dragon-core.git
     path: components/dc_evlog
-    version: ae54a70fdbb8cdc06a351299e146746781ae28df
+    version: b28b0d78b545707872d430f8c2f3030df559ef6a
   dc_source:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_source
@@ -35,6 +35,6 @@ dependencies:
     path: components/dc_mqtt
     version: ae54a70fdbb8cdc06a351299e146746781ae28df
   dc_portal:
-    git: https://github.com/justinh-rahb/dragon-core.git
+    git: https://github.com/danielbrownjr/dragon-core.git
     path: components/dc_portal
-    version: ae54a70fdbb8cdc06a351299e146746781ae28df
+    version: b28b0d78b545707872d430f8c2f3030df559ef6a
