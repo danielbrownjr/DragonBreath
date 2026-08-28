@@ -228,8 +228,11 @@ Defined error codes include `invalid_command`, `unsupported_api_version`,
 `auth_failed`, `revision_conflict`, `stale_lease`, `fault_latched`,
 `inhibited`, `heater_busy` (enabling filtration while the heater is heating/cooling —
 HTTP 409), and `persist_failed` (an NVS write did not commit). Separately, `busy` is
-the HTTP 503 returned by `GET /api/v2/events` when both SSE slots are already in use —
-a stream-capacity limit, not a command rejection.
+the HTTP 503 returned by `GET /api/v2/events` when both task-backed SSE slots are
+already in use — a stream-capacity limit, not a command rejection. The dashboard
+and `/diag` clients fall back to serialized `GET /api/v2/state` polling when a live
+stream is unavailable, so an additional diagnostics page remains usable without
+allocating another long-lived SSE task.
 
 ## Other endpoints (not versioned)
 

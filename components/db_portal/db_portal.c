@@ -29,7 +29,9 @@ static const char *TAG = "db_portal";
         httpd_resp_send_chunk((req), chunk_, HTTPD_RESP_USE_STRLEN); \
 } while (0)
 
+// cppcheck-suppress syntaxError ; GNU asm label binds the embedded binary blob.
 extern const unsigned char favicon_png_start[] asm("_binary_favicon_png_start");
+// cppcheck-suppress syntaxError ; GNU asm label binds the embedded binary blob.
 extern const unsigned char favicon_png_end[] asm("_binary_favicon_png_end");
 
 // ---- product-local diagnostics page (/diag) ---------------------------------
@@ -92,11 +94,13 @@ static const char DIAG_BODY[] =
     ".dlab{font-size:.72rem;color:var(--muted)}"
     ".dval{font-size:1.2rem;font-weight:700;margin-top:2px}"
     ".dval.warn{color:var(--bad)}"
+    ".dconn{margin:.35em 0;color:var(--muted)}.dconn.warn{color:var(--bad)}"
     "#d-chart{display:block;width:100%;height:120px;background:var(--input);border-radius:8px;margin:.5em 0}"
     ".drow{display:flex;gap:8px}.drow button{flex:1;margin-top:0}"
     "</style>"
     "<div class=card><h2>Diagnostics</h2>"
     "<div id=d-meta><small>connecting\xE2\x80\xA6</small></div>"
+    "<div class=dconn id=d-conn><small>Telemetry: connecting\xE2\x80\xA6</small></div>"
     "<div class=dgrid>"
     "<div><div class=dlab>Chamber</div><div class=dval id=d-ch>--</div></div>"
     "<div><div class=dlab>Element (PTC)</div><div class=dval id=d-ptc>--</div></div>"
@@ -121,13 +125,14 @@ static const char DIAG_BODY[] =
     "<p style='text-align:center'><small><a href='/'>\xE2\x86\x90 Back to status</a></small></p>"
     "<div id=ver style='text-align:center;color:var(--muted);font-size:.72rem;margin-top:2px'></div>"
     "<script>(function(){"
-    "var peak=0,samples=[],t0=null,MAX=900;"
+    "var peak=0,samples=[],t0=null,MAX=900,polling=false,pollDelay=2000;"
     "function $(i){return document.getElementById(i);}"
     "if(window.DB_VER)$('ver').textContent='DragonBreath '+window.DB_VER;"
     "fetch('/api/v2/info',{cache:'no-store'}).then(function(r){return r.json();}).then(function(i){"
     "$('d-meta').innerHTML='<small>device '+i.device_id+' \\u00b7 fw '+i.firmware+' \\u00b7 Rref '+i.rref_kohm+'k</small>';"
     "}).catch(function(){});"
     "function f1(x){return (x==null)?'--':Number(x).toFixed(1);}"
+    "function conn(text,bad){var e=$('d-conn');e.innerHTML='<small>'+text+'</small>';e.className='dconn'+(bad?' warn':'');}"
     "function apply(s){"
     "if(!s||s.api_version!==2)return;"
     "var ch=s.sensors.chamber,pt=s.sensors.ptc,saf=s.safety||{},tc=((s.control||{}).temperature||{});"
@@ -169,9 +174,16 @@ static const char DIAG_BODY[] =
     "});"
     "$('d-clear').addEventListener('click',function(){samples=[];peak=0;t0=null;$('d-stat').textContent='0 samples';draw();});"
     "window.addEventListener('resize',draw);"
-    "var es=new EventSource('/api/v2/events');"
-    "function ev(e){try{apply(JSON.parse(e.data));}catch(_){}}"
+    "function poll(){if(polling)return;polling=true;fetch('/api/v2/state',{cache:'no-store'})"
+    ".then(function(r){if(!r.ok)throw 0;return r.json();})"
+    ".then(function(s){apply(s);pollDelay=2000;conn('Telemetry: polling (live stream unavailable)',true);})"
+    ".catch(function(){conn('Telemetry unavailable \u2014 retrying',true);pollDelay=Math.min(10000,Math.round(pollDelay*1.6));})"
+    ".finally(function(){polling=false;setTimeout(poll,pollDelay+Math.random()*250);});}"
+    "function events(){var es=new EventSource('/api/v2/events');"
+    "function ev(e){try{apply(JSON.parse(e.data));conn('Telemetry: live stream',false);}catch(_){}}"
     "es.addEventListener('state',ev);es.addEventListener('telemetry',ev);"
+    "es.onerror=function(){es.close();conn('Live stream unavailable \u2014 switching to polling',true);poll();};}"
+    "fetch('/api/v2/state',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json();}).then(apply).catch(function(){});events();"
     "})();</script></body></html>";
 
 static esp_err_t diag_page(httpd_req_t *req)

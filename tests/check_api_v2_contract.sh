@@ -46,6 +46,28 @@ do
         exit 1
     }
 done
+grep -q '#define PB_SSE_MAX_CLIENTS 2' "$root/components/pb_httpd/pb_sse_registry.h" || {
+    echo "task-backed SSE client budget changed without contract review" >&2
+    exit 1
+}
+
+# The product diagnostics page follows the shared dashboard's resilient live-data
+# pattern: initial state, SSE when capacity exists, then serialized polling with a
+# visible status when the fixed stream budget is full or the connection fails.
+for marker in \
+    'id=d-conn' \
+    "fetch('/api/v2/state'" \
+    "EventSource('/api/v2/events')" \
+    'es.onerror=function()' \
+    'if(polling)return' \
+    'Live stream unavailable' \
+    'Telemetry: polling'
+do
+    grep -q "$marker" "$adapter" || {
+        echo "diagnostics page is missing SSE fallback marker: $marker" >&2
+        exit 1
+    }
+done
 
 # Control-loop diagnostics use one controller-agnostic runtime vocabulary. Source
 # selection must be explicit rather than inferred from saved configuration.
