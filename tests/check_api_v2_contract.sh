@@ -27,6 +27,15 @@ for route in info state command heartbeat events health; do
     }
 done
 
+# Temporary hardware-validation diagnostics identify each registered SSE stream
+# without changing the transport or the existing aggregate client count.
+for field in sse_client_diagnostics connection_id socket_fd; do
+    grep -q "\"$field\"" "$httpd" || {
+        echo "health document is missing temporary SSE diagnostic field: $field" >&2
+        exit 1
+    }
+done
+
 # Control-loop diagnostics use one controller-agnostic runtime vocabulary. Source
 # selection must be explicit rather than inferred from saved configuration.
 for field in controller preferred_source effective_source process_variable_c controller_output requested_output; do
