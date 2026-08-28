@@ -886,6 +886,10 @@ static void sse_task(void *arg)
              connection_id, sockfd, esp_err_to_name(complete_result),
              (unsigned)complete_result, clients_before, clients_after,
              slot_matched ? "true" : "false", exit_reason);
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d task exiting "
+             "exit_reason=%s",
+             connection_id, sockfd, exit_reason);
     vTaskDelete(NULL);
 }
 
@@ -955,6 +959,11 @@ static esp_err_t events_get(httpd_req_t *req)
         return api_error(req, "503 Service Unavailable", "busy",
                          "cannot start event stream", NULL);
     }
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d async request created: "
+             "result=%s (0x%x) slot=%u",
+             connection_id, socket_fd, esp_err_to_name(begin_result),
+             (unsigned)begin_result, (unsigned)slot);
     portENTER_CRITICAL(&s_sse_mux);
     s_sse_client_diagnostics[slot].request = async_req;
     portEXIT_CRITICAL(&s_sse_mux);
@@ -979,6 +988,10 @@ static esp_err_t events_get(httpd_req_t *req)
                  slot_matched ? "true" : "false");
         return ESP_OK;
     }
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d task creation succeeded "
+             "slot=%u",
+             connection_id, socket_fd, (unsigned)slot);
     return ESP_OK;
 }
 
