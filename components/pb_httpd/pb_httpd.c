@@ -105,20 +105,20 @@ static const char *ntc_status_str(pb_ntc_status_t s)
 
 // Add a number rounded to 1 decimal (as a raw JSON literal so cJSON doesn't emit
 // full float precision), or JSON null when the value is non-finite.
-static void add_num1(cJSON *o, const char *key, float v)
+static bool add_num1(cJSON *o, const char *key, float v)
 {
-    if (!isfinite(v)) { cJSON_AddNullToObject(o, key); return; }
+    if (!isfinite(v)) return cJSON_AddNullToObject(o, key) != NULL;
     char b[16];
     snprintf(b, sizeof b, "%.1f", (double)v);
-    cJSON_AddRawToObject(o, key, b);
+    return cJSON_AddRawToObject(o, key, b) != NULL;
 }
 
-static void add_num4(cJSON *o, const char *key, float v)
+static bool add_num4(cJSON *o, const char *key, float v)
 {
-    if (!isfinite(v)) { cJSON_AddNullToObject(o, key); return; }
+    if (!isfinite(v)) return cJSON_AddNullToObject(o, key) != NULL;
     char b[20];
     snprintf(b, sizeof b, "%.4f", (double)v);
-    cJSON_AddRawToObject(o, key, b);
+    return cJSON_AddRawToObject(o, key, b) != NULL;
 }
 
 static const char *fan_reason(const pb_policy_snapshot_t *s)
@@ -142,70 +142,97 @@ static const char *process_source_str(pb_heater_process_source_t source)
 
 static cJSON *state_json(const pb_policy_snapshot_t *s)
 {
+#define STATE_JSON_REQUIRE(expression) do { \
+    if (!(expression)) goto allocation_failed; \
+} while (0)
     cJSON *o = cJSON_CreateObject();
     if (!o) return NULL;
-    cJSON_AddNumberToObject(o, "api_version", API_VERSION);
-    cJSON_AddStringToObject(o, "device_id", s_device_id);
-    cJSON_AddStringToObject(o, "boot_id", s_boot_id);
-    cJSON_AddStringToObject(o, "firmware", esp_app_get_description()->version);
-    cJSON_AddNumberToObject(o, "state_revision", s->state_revision);
-    cJSON_AddStringToObject(o, "mode", pb_policy_mode_str(s->mode));
-    cJSON_AddStringToObject(o, "source", pb_policy_source_str(s->source));
+    STATE_JSON_REQUIRE(cJSON_AddNumberToObject(o, "api_version", API_VERSION));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(o, "device_id", s_device_id));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(o, "boot_id", s_boot_id));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        o, "firmware", esp_app_get_description()->version));
+    STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+        o, "state_revision", s->state_revision));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        o, "mode", pb_policy_mode_str(s->mode)));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        o, "source", pb_policy_source_str(s->source)));
 
     cJSON *target = cJSON_AddObjectToObject(o, "target");
-    add_num1(target, "requested_c", s->requested_target_c);
-    add_num1(target, "effective_c", s->effective_target_c);
-    add_num1(target, "maximum_c", pb_heater_get_max_target_c());
+    STATE_JSON_REQUIRE(target);
+    STATE_JSON_REQUIRE(add_num1(target, "requested_c", s->requested_target_c));
+    STATE_JSON_REQUIRE(add_num1(target, "effective_c", s->effective_target_c));
+    STATE_JSON_REQUIRE(add_num1(target, "maximum_c", pb_heater_get_max_target_c()));
 
     cJSON *config = cJSON_AddObjectToObject(o, "config");
-    add_num1(config, "max", pb_heater_get_max_target_c());
-    add_num1(config, "max_abs", PB_HEATER_ABS_MAX_TARGET_C);
-    cJSON_AddNumberToObject(
-        config, "comms_ms", pb_heater_get_comms_timeout_ms());
+    STATE_JSON_REQUIRE(config);
+    STATE_JSON_REQUIRE(add_num1(config, "max", pb_heater_get_max_target_c()));
+    STATE_JSON_REQUIRE(add_num1(config, "max_abs", PB_HEATER_ABS_MAX_TARGET_C));
+    STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+        config, "comms_ms", pb_heater_get_comms_timeout_ms()));
 
     cJSON *heater = cJSON_AddObjectToObject(o, "heater");
-    cJSON_AddBoolToObject(heater, "demand", s->heater_demand);
-    cJSON_AddBoolToObject(heater, "output", s->heater_output);
+    STATE_JSON_REQUIRE(heater);
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        heater, "demand", s->heater_demand));
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        heater, "output", s->heater_output));
 
     cJSON *fan = cJSON_AddObjectToObject(o, "fan");
-    cJSON_AddNumberToObject(fan, "requested_percent", s->requested_fan_percent);
-    cJSON_AddNumberToObject(fan, "effective_percent", s->effective_fan_percent);
-    cJSON_AddStringToObject(fan, "reason", fan_reason(s));
+    STATE_JSON_REQUIRE(fan);
+    STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+        fan, "requested_percent", s->requested_fan_percent));
+    STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+        fan, "effective_percent", s->effective_fan_percent));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(fan, "reason", fan_reason(s)));
 
     cJSON *sensors = cJSON_AddObjectToObject(o, "sensors");
+    STATE_JSON_REQUIRE(sensors);
     cJSON *chamber = cJSON_AddObjectToObject(sensors, "chamber");
-    add_num1(chamber, "temperature_c", s->chamber_c);
-    cJSON_AddStringToObject(chamber, "status", ntc_status_str(s->chamber_status));
+    STATE_JSON_REQUIRE(chamber);
+    STATE_JSON_REQUIRE(add_num1(chamber, "temperature_c", s->chamber_c));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        chamber, "status", ntc_status_str(s->chamber_status)));
     cJSON *ptc = cJSON_AddObjectToObject(sensors, "ptc");
-    add_num1(ptc, "temperature_c", s->ptc_c);
-    cJSON_AddStringToObject(ptc, "status", ntc_status_str(s->ptc_status));
+    STATE_JSON_REQUIRE(ptc);
+    STATE_JSON_REQUIRE(add_num1(ptc, "temperature_c", s->ptc_c));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        ptc, "status", ntc_status_str(s->ptc_status)));
 
     cJSON *environment = cJSON_AddObjectToObject(o, "environment");
+    STATE_JSON_REQUIRE(environment);
     // Active control source (klipper/bambu/ha). Read from NVS; since /setup reboots
     // on save, this matches the running source except for the sub-second window
     // between a save and the reboot. Lets the dashboard label the printer/source row.
     dc_ctl_source_t ctl_src = dc_source_get();
-    cJSON_AddStringToObject(environment, "control_source", dc_source_str(ctl_src));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        environment, "control_source", dc_source_str(ctl_src)));
     if (ctl_src == DC_SRC_BAMBU) {
         // Surface the active print's filament so the dashboard status card can show
         // "Filament: PETG" while a Bambu print runs (Bambu-only; Klipper drives the
         // chamber via macros and reports no filament here).
         dc_bambu_status_t bs;
         if (dc_bambu_get_status(&bs) == ESP_OK) {
-            cJSON_AddBoolToObject(environment, "bambu_printing", bs.printing);
+            STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+                environment, "bambu_printing", bs.printing));
             if (bs.printing && bs.filament[0])
-                cJSON_AddStringToObject(environment, "bambu_filament", bs.filament);
+                STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+                    environment, "bambu_filament", bs.filament));
 
             // Diagnostic view of the printer's own chamber sensor. dc_bambu
             // invalidates chamber_temp when its sample is stale, so the API emits
             // JSON null rather than letting an old value masquerade as live data.
             // The local DragonBreath NTC/PTC remain the safety-authoritative sensors.
-            add_num1(environment, "printer_chamber_temperature_c", bs.chamber_temp);
+            STATE_JSON_REQUIRE(add_num1(
+                environment, "printer_chamber_temperature_c", bs.chamber_temp));
             if (bs.chamber_temp_age_ms == UINT32_MAX)
-                cJSON_AddNullToObject(environment, "printer_chamber_age_ms");
+                STATE_JSON_REQUIRE(cJSON_AddNullToObject(
+                    environment, "printer_chamber_age_ms"));
             else
-                cJSON_AddNumberToObject(environment, "printer_chamber_age_ms",
-                                        bs.chamber_temp_age_ms);
+                STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+                    environment, "printer_chamber_age_ms",
+                    bs.chamber_temp_age_ms));
         }
     } else if (ctl_src == DC_SRC_KLIPPER) {
         // Klipper now follows filament zones too: surface Moonraker's active-print
@@ -214,81 +241,122 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
         // not gated on the strict PRINTING sub-state.
         dc_moonraker_status_t ms;
         if (dc_moonraker_get_status(&ms) == ESP_OK && ms.material[0])
-            cJSON_AddStringToObject(environment, "material", ms.material);
+            STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+                environment, "material", ms.material));
     }
-    cJSON_AddBoolToObject(environment, "moonraker_connected", s->moonraker_connected);
-    add_num1(environment, "bed_temperature_c", s->bed_c);
-    add_num1(environment, "bed_target_c", s->bed_target_c);
-    cJSON_AddBoolToObject(environment, "auto_engaged", s->auto_engaged);
-    cJSON_AddBoolToObject(environment, "auto_filtering", s->auto_filtering);
-    add_num1(environment, "auto_bed_threshold_c", s->auto_bed_threshold_c);
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        environment, "moonraker_connected", s->moonraker_connected));
+    STATE_JSON_REQUIRE(add_num1(environment, "bed_temperature_c", s->bed_c));
+    STATE_JSON_REQUIRE(add_num1(environment, "bed_target_c", s->bed_target_c));
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        environment, "auto_engaged", s->auto_engaged));
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        environment, "auto_filtering", s->auto_filtering));
+    STATE_JSON_REQUIRE(add_num1(
+        environment, "auto_bed_threshold_c", s->auto_bed_threshold_c));
 
     cJSON *drying = cJSON_AddObjectToObject(o, "drying");
-    cJSON_AddBoolToObject(drying, "active", s->drying);
-    cJSON_AddNumberToObject(drying, "remaining_seconds", s->drying_remaining_s);
+    STATE_JSON_REQUIRE(drying);
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(drying, "active", s->drying));
+    STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+        drying, "remaining_seconds", s->drying_remaining_s));
 
     cJSON *control = cJSON_AddObjectToObject(o, "control");
+    STATE_JSON_REQUIRE(control);
     cJSON *lease = cJSON_AddObjectToObject(control, "lease");
-    cJSON_AddBoolToObject(lease, "active", s->lease_active);
+    STATE_JSON_REQUIRE(lease);
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        lease, "active", s->lease_active));
     if (s->lease_active) {
-        cJSON_AddStringToObject(lease, "owner", s->lease_owner);
-        cJSON_AddNumberToObject(lease, "expires_in_ms", s->lease_expires_ms);
+        STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+            lease, "owner", s->lease_owner));
+        STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+            lease, "expires_in_ms", s->lease_expires_ms));
     } else {
-        cJSON_AddNullToObject(lease, "owner");
-        cJSON_AddNumberToObject(lease, "expires_in_ms", 0);
+        STATE_JSON_REQUIRE(cJSON_AddNullToObject(lease, "owner"));
+        STATE_JSON_REQUIRE(cJSON_AddNumberToObject(lease, "expires_in_ms", 0));
     }
 
     pb_heater_control_snapshot_t controller;
     pb_heater_get_control_snapshot(&controller);
     cJSON *temperature = cJSON_AddObjectToObject(control, "temperature");
-    cJSON_AddStringToObject(temperature, "controller",
-                            pb_heater_control_algorithm_str(controller.algorithm));
-    cJSON_AddStringToObject(temperature, "preferred_source",
-                            process_source_str(controller.preferred_source));
-    cJSON_AddStringToObject(temperature, "effective_source",
-                            process_source_str(controller.effective_source));
-    add_num1(temperature, "process_variable_c", controller.process_variable_c);
-    add_num4(temperature, "controller_output", controller.controller_output);
-    add_num4(temperature, "requested_output", controller.requested_output);
+    STATE_JSON_REQUIRE(temperature);
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        temperature, "controller",
+        pb_heater_control_algorithm_str(controller.algorithm)));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        temperature, "preferred_source",
+        process_source_str(controller.preferred_source)));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+        temperature, "effective_source",
+        process_source_str(controller.effective_source)));
+    STATE_JSON_REQUIRE(add_num1(
+        temperature, "process_variable_c", controller.process_variable_c));
+    STATE_JSON_REQUIRE(add_num4(
+        temperature, "controller_output", controller.controller_output));
+    STATE_JSON_REQUIRE(add_num4(
+        temperature, "requested_output", controller.requested_output));
     if (controller.algorithm == PB_HEATER_CONTROL_PID) {
-        add_num4(temperature, "approach_cap", controller.approach_cap);
-        cJSON_AddBoolToObject(temperature, "approach_limited",
-                              controller.approach_limited);
+        STATE_JSON_REQUIRE(add_num4(
+            temperature, "approach_cap", controller.approach_cap));
+        STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+            temperature, "approach_limited", controller.approach_limited));
     } else {
-        cJSON_AddNullToObject(temperature, "approach_cap");
-        cJSON_AddBoolToObject(temperature, "approach_limited", false);
+        STATE_JSON_REQUIRE(cJSON_AddNullToObject(temperature, "approach_cap"));
+        STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+            temperature, "approach_limited", false));
     }
-    cJSON_AddBoolToObject(temperature, "local_foldback_active",
-                          controller.local_foldback_active);
-    cJSON_AddBoolToObject(temperature, "element_foldback_active",
-                          controller.element_foldback_active);
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        temperature, "local_foldback_active", controller.local_foldback_active));
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        temperature, "element_foldback_active",
+        controller.element_foldback_active));
     bool constrained = controller.output_constrained || s->fault_latched || s->inhibited;
-    cJSON_AddBoolToObject(temperature, "output_constrained", constrained);
-    cJSON_AddStringToObject(temperature, "constraint",
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        temperature, "output_constrained", constrained));
+    STATE_JSON_REQUIRE(cJSON_AddStringToObject(temperature, "constraint",
         (s->fault_latched || s->inhibited) ? "safety_fault" :
         controller.local_foldback_active ? "local_chamber_foldback" :
-        controller.element_foldback_active ? "element_foldback" : "none");
+        controller.element_foldback_active ? "element_foldback" : "none"));
 
     // Remembered mode parameters: what a mode is re-armed with when the caller
     // supplies no values of its own (front-panel buttons), and what the UI
     // pre-fills from. These persist across reboot; active state never does.
     cJSON *pj = cJSON_AddObjectToObject(o, "params");
-    add_num1(pj, "manual_target_c", s->params.manual_target_c);
-    add_num1(pj, "auto_target_c", s->params.auto_target_c);
-    add_num1(pj, "auto_bed_threshold_c", s->params.auto_bed_threshold_c);
-    add_num1(pj, "dry_target_c", s->params.dry_target_c);
-    cJSON_AddNumberToObject(pj, "dry_hours", s->params.dry_hours);
-    add_num1(pj, "filter_temp_c", s->params.filter_temp_c);
-    cJSON_AddBoolToObject(pj, "filter_auto_enable", s->params.filter_auto_enable);
+    STATE_JSON_REQUIRE(pj);
+    STATE_JSON_REQUIRE(add_num1(
+        pj, "manual_target_c", s->params.manual_target_c));
+    STATE_JSON_REQUIRE(add_num1(
+        pj, "auto_target_c", s->params.auto_target_c));
+    STATE_JSON_REQUIRE(add_num1(
+        pj, "auto_bed_threshold_c", s->params.auto_bed_threshold_c));
+    STATE_JSON_REQUIRE(add_num1(
+        pj, "dry_target_c", s->params.dry_target_c));
+    STATE_JSON_REQUIRE(cJSON_AddNumberToObject(
+        pj, "dry_hours", s->params.dry_hours));
+    STATE_JSON_REQUIRE(add_num1(
+        pj, "filter_temp_c", s->params.filter_temp_c));
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        pj, "filter_auto_enable", s->params.filter_auto_enable));
 
     cJSON *safety = cJSON_AddObjectToObject(o, "safety");
-    cJSON_AddBoolToObject(safety, "fault_latched", s->fault_latched);
-    cJSON_AddBoolToObject(safety, "inhibited", s->inhibited);
+    STATE_JSON_REQUIRE(safety);
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        safety, "fault_latched", s->fault_latched));
+    STATE_JSON_REQUIRE(cJSON_AddBoolToObject(
+        safety, "inhibited", s->inhibited));
     if (s->fault_reason[0])
-        cJSON_AddStringToObject(safety, "reason", s->fault_reason);
+        STATE_JSON_REQUIRE(cJSON_AddStringToObject(
+            safety, "reason", s->fault_reason));
     else
-        cJSON_AddNullToObject(safety, "reason");
+        STATE_JSON_REQUIRE(cJSON_AddNullToObject(safety, "reason"));
+#undef STATE_JSON_REQUIRE
     return o;
+
+allocation_failed:
+#undef STATE_JSON_REQUIRE
+    cJSON_Delete(o);
+    return NULL;
 }
 
 static esp_err_t send_json(httpd_req_t *req, cJSON *o)

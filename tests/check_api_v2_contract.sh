@@ -35,7 +35,12 @@ for field in sse_client_diagnostics connection_id socket_fd; do
         exit 1
     }
 done
-for marker in 'async request created' 'task creation succeeded' 'task exiting'; do
+for marker in \
+    'async request created' \
+    'task creation succeeded' \
+    'task exiting' \
+    'STATE_JSON_REQUIRE'
+do
     grep -q "$marker" "$httpd" || {
         echo "SSE lifecycle diagnostics are missing marker: $marker" >&2
         exit 1
