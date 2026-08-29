@@ -59,9 +59,20 @@ for marker in \
     "fetch('/api/v2/state'" \
     "EventSource('/api/v2/events')" \
     'es.onerror=function()' \
-    'if(polling)return' \
+    'if(polling)' \
     'Live stream unavailable' \
-    'Telemetry: polling'
+    'Telemetry: polling' \
+    'DIAGTRACE' \
+    "trace('init'" \
+    "trace('initial_fetch_start'" \
+    "trace('sse_error'" \
+    "trace('poll_start'" \
+    "trace('apply_error'" \
+    "trace('first_dom_update'" \
+    "trace('sample_count'" \
+    "trace('visibilitychange'" \
+    "tracePending('initial_fetch'" \
+    "tracePending('poll'"
 do
     grep -q "$marker" "$adapter" || {
         echo "diagnostics page is missing SSE fallback marker: $marker" >&2
