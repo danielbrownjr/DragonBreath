@@ -35,3 +35,9 @@ dependencies:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_portal
     version: v0.30.0
+  # Temporary exact pin for draft integration against dragon-core PR #54.
+  # Replace with the normal released/tagged dragon-core dependency after merge.
+  dc_pid:
+    git: https://github.com/danielbrownjr/dragon-core.git
+    path: components/dc_pid
+    version: 3447fd4d7d76235c8d14b10aed18a7c169e3fc80

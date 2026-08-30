@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "pb_heater.h"
+#include "pb_heater_pid.h"
 #include "pb_board.h"
 #include "pb_ntc.h"
 
@@ -35,9 +36,7 @@ static bool        s_persist_pending;  // guarded by s_mux — a latch persist n
                                        // to NVS; retried from pb_heater_tick until it lands
 static int64_t     s_persist_retry_us; // guarded by s_mux — last persist-retry timestamp
 static bool        s_on;            // written only by the control task; atomic read
-static bool        s_heat_intent;   // control-task only — chamber-hysteresis latch (the
-                                    // "want heat at all" decision, distinct from the
-                                    // momentary SSR state s_on)
+static pb_heater_pid_state_t s_pid; // control-task only — shared dc_pid state + SSR window
 static bool        s_fb_cut;        // control-task only — element-foldback hysteresis latch:
                                     // true while the SSR is force-cut for element over-temp
                                     // (holds until the element cools below the resume point)
@@ -112,6 +111,7 @@ esp_err_t pb_heater_init(void)
     if (err != ESP_OK) return err;
 #endif
     ssr_set(false);                  // guaranteed OFF before any request
+    pb_heater_pid_reset(&s_pid);
     taskENTER_CRITICAL(&s_mux);
     s_target_c = 0.0f;
     s_control_chamber_c = NAN;
@@ -576,30 +576,27 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
 
     if (latched || !armed) {
         if (s_on) ssr_set(false);
-        s_heat_intent = false;   // drop the chamber + foldback latches so the next arm
-        s_fb_cut      = false;   // starts clean rather than mid-cycle
+        pb_heater_pid_reset(&s_pid);
+        s_fb_cut      = false;   // drop foldback latches so the next arm starts clean
         s_local_cut   = false;
         return;
     }
 
     // Here: armed && !latched && cs==OK && ps==OK.
-    // Step 1 — chamber bang-bang with hysteresis decides the BASE demand (do we want
-    // heat at all). If policy supplied a finite external control temperature (for
-    // example the printer-reported chamber sensor), use it ONLY for regulation.
-    // The local chamber NTC above remains authoritative for every safety trip.
-    float regulation_c = isfinite(control_chamber_c) ? control_chamber_c : chamber_c;
-    if (regulation_c < (target - PB_HEATER_HYSTERESIS_C)) {
-        s_heat_intent = true;
-    } else if (regulation_c >= target) {
-        s_heat_intent = false;
-    }
+    // Step 1 — select the process variable. Policy supplies a finite external value
+    // only for AUTO mode with fresh Bambu telemetry and the persisted preference on;
+    // NAN means use DragonBreath's local chamber NTC. Both sources feed this same PID
+    // path. Local sensors above remain authoritative for every safety decision.
+    bool external_regulation;
+    float regulation_c = pb_heater_pid_process_variable(
+        chamber_c, control_chamber_c, &external_regulation);
+    pb_heater_pid_set_source(&s_pid, external_regulation);
 
     // Step 2 — local chamber soft foldback for REMOTE regulation. The printer sensor
     // represents bulk chamber air, while DragonBreath's local chamber NTC can see much
     // hotter outlet/near-heater air. When an external control temperature is active, cut
     // heat at the local soft ceiling and hold it off until the local region cools through
     // the resume threshold. The fixed 85 C chamber trip above remains the latching backstop.
-    bool external_regulation = isfinite(control_chamber_c);
     if (external_regulation)
         s_local_cut = pb_heater_local_foldback_cut(cs == PB_NTC_OK, chamber_c, s_local_cut);
     else
@@ -614,8 +611,21 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     pb_heater_effective_foldback(pb_heater_get_fb_cut_c(), pb_ntc_rref_kohm(), &fb_cut, &fb_resume);
     s_fb_cut = pb_heater_foldback_cut(ps == PB_NTC_OK, ptc_c, s_fb_cut, fb_cut, fb_resume);
 
-    // Step 4 — drive the SSR only when regulation wants heat and neither soft limiter
-    // is holding it off. (Zero-cross SSR: plain on/off, no phase-cut.)
-    bool drive = s_heat_intent && !s_local_cut && !s_fb_cut;
+    // Step 4 — advance the common chamber PID. If either local soft safety layer
+    // inhibits the requested output, hold integration while still updating the
+    // measurement/derivative history. The safety layers remain downstream and
+    // authoritative regardless of PID demand.
+    bool safety_inhibited = s_local_cut || s_fb_cut;
+    float duty = 0.0f;
+    if (!pb_heater_pid_step(&s_pid, target, regulation_c,
+                            !safety_inhibited, &duty)) {
+        ESP_LOGE(TAG, "PID step rejected; forcing SSR off");
+        duty = 0.0f;
+    }
+
+    // Step 5 — time-proportion normalized duty through a slow 10 s window. This is
+    // still plain on/off drive of a zero-cross SSR; there is no phase cutting.
+    bool drive = !safety_inhibited &&
+                 pb_heater_pid_window_on(&s_pid, duty, esp_timer_get_time());
     if (drive != s_on) ssr_set(drive);
 }

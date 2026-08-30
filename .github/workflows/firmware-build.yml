@@ -63,6 +63,9 @@ jobs:
       - name: Test heater safety-trip decision (over-temp / fail-closed / watchdog)
         run: sh tests/run_heater_safety_host_test.sh
 
+      - name: Test chamber dc_pid integration and safety hold
+        run: sh tests/run_heater_pid_host_test.sh
+
       - name: Test MQTT-Klipper arming state machine (retained-aware arm/heartbeat)
         run: sh tests/run_db_klipper_mqtt_host_test.sh
 

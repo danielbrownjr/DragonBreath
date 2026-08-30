@@ -28,7 +28,7 @@ int main(void)
     // --- All clear: nothing armed, temps nominal -> no trip. --------------------
     CHECK(pb_heater_eval_trip(OK, 25.0f, OK, 25.0f, /*armed=*/false, /*link=*/false)
           == PB_FAULT_NONE);
-    // Armed and healthy and link alive -> safe to run the bang-bang loop.
+    // Armed and healthy and link alive -> safe to run the control loop.
     CHECK(pb_heater_eval_trip(OK, 40.0f, OK, 50.0f, /*armed=*/true, /*link=*/false)
           == PB_FAULT_NONE);
 
