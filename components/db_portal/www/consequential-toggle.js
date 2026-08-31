@@ -99,6 +99,9 @@
           dialog.close();
           dialog.remove();
           resolve(accepted);
+          // Native dialog focus restoration runs as the close completes. Move
+          // focus back to the initiating switch after that browser work.
+          setTimeout(function () { input.focus(); }, 0);
         }
         cancel.addEventListener('click', function () { finish(false); });
         confirm.addEventListener('click', function () { finish(true); });
@@ -134,7 +137,9 @@
     }
 
     function applyRequested(requested) {
-      if (pending || modalOpen || authoritative.disabled) {
+      if (pending || modalOpen)
+        return Promise.resolve(authoritative);
+      if (authoritative.disabled) {
         render(authoritative, authoritative.disabledReason || '', false);
         return Promise.resolve(authoritative);
       }

@@ -116,7 +116,8 @@ test('pending mutation rejects duplicate submissions', async () => {
   let finish; let count = 0;
   const f = fixture({ mutate: () => { count += 1; return new Promise((resolve) => { finish = resolve; }); } });
   await settle(); const first = f.api.request(true); await settle(); await f.api.request(false);
-  assert.equal(count, 1); finish({ value: true }); await first; assert.equal(f.api.state().value, true);
+  assert.equal(count, 1); assert.equal(f.api.elements.input.disabled, true); assert.match(f.api.elements.status.textContent, /Saving/);
+  finish({ value: true }); await first; assert.equal(f.api.state().value, true);
 });
 
 test('mutation failure reconciles authoritative state', async () => {
@@ -148,7 +149,9 @@ test('keyboard cancellation closes modal without mutation', async () => {
   const f = fixture({ confirm: () => ({ title: 'Enable?' }) }); await settle();
   const pending = f.api.request(true); await settle(); const dialog = byClass(f.document.body, 'ct-dialog');
   const event = dialog.dispatch('keydown', { key: 'Escape' }); await pending;
+  await new Promise((resolve) => setTimeout(resolve, 1));
   assert.equal(event.defaultPrevented, true); assert.equal(f.mutations, 0); assert.equal(byClass(f.document.body, 'ct-dialog'), null);
+  assert.equal(f.document.activeElement, f.api.elements.input);
 });
 
 test('server response differing from request wins', async () => {
