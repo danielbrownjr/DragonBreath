@@ -5,10 +5,10 @@ root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 tmp="${TMPDIR:-/tmp}/dragonbreath-dc-pid"
 out="${TMPDIR:-/tmp}/dragonbreath-pb-heater-pid-test"
 
-# Keep host coverage on the exact temporary dependency used by the firmware
-# manifest. Delete this fetch/pin once dc_pid is consumed from a dragon-core tag.
-dc_pid_commit=3447fd4d7d76235c8d14b10aed18a7c169e3fc80
-base="https://raw.githubusercontent.com/danielbrownjr/dragon-core/$dc_pid_commit/components/dc_pid"
+# Keep host coverage on the exact released dependency used by the firmware
+# manifest.
+dc_pid_version=v0.31.0
+base="https://raw.githubusercontent.com/justinh-rahb/dragon-core/$dc_pid_version/components/dc_pid"
 mkdir -p "$tmp/include"
 curl -fsSL "$base/include/dc_pid.h" -o "$tmp/include/dc_pid.h"
 curl -fsSL "$base/dc_pid.c" -o "$tmp/dc_pid.c"
