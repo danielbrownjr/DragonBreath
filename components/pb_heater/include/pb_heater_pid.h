@@ -82,13 +82,19 @@ static inline bool pb_heater_pid_step(pb_heater_pid_state_t *state,
     if (duty) *duty = 0.0f;
     if (!state || !duty) return false;
 
+    const float error_c = target_c - measurement_c;
+    const float approach_cap = pb_heater_pid_approach_max_duty(error_c);
     const dc_pid_config_t config = {
         .kp = PB_HEATER_PID_KP,
         .ki = PB_HEATER_PID_KI,
         .kd = PB_HEATER_PID_KD,
         .derivative_alpha = PB_HEATER_PID_D_ALPHA,
         .output_min = 0.0f,
-        .output_max = 1.0f,
+        // The approach ceiling is normal actuator shaping, so dc_pid must see
+        // it while deciding whether additional integration would wind up.
+        // At/above target the heater-only policy below commands zero; retain a
+        // valid controller range so history and negative-error unwinding advance.
+        .output_max = approach_cap > 0.0f ? approach_cap : 1.0f,
         .integral_min = 0.0f,
         .integral_max = 1.0f,
     };
@@ -100,8 +106,7 @@ static inline bool pb_heater_pid_step(pb_heater_pid_state_t *state,
     if (measurement_c >= target_c)
         return true;
 
-    float approach_cap = pb_heater_pid_approach_max_duty(target_c - measurement_c);
-    *duty = result.output < approach_cap ? result.output : approach_cap;
+    *duty = result.output;
     return true;
 }
 

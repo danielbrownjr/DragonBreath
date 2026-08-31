@@ -63,6 +63,51 @@ static void test_approach_and_ssr_window(void)
     CHECK(!pb_heater_pid_window_on(&state, 0.0f, start + 10000001));
 }
 
+static void test_approach_caps_prevent_integral_windup(void)
+{
+    pb_heater_pid_state_t state = {0};
+    float duty = 0.0f;
+
+    // Justin's reported case: a fixed 4 C error remains under the 40% approach
+    // ceiling for thousands of samples without storing demand behind that cap.
+    for (int i = 0; i < 4000; ++i) {
+        CHECK(pb_heater_pid_step(&state, 60.0f, 56.0f, true, &duty));
+        CHECK(duty <= 0.400001f);
+    }
+    float integral_at_40 = state.controller.integral;
+    float raw_at_40 = PB_HEATER_PID_KP * 4.0f + integral_at_40;
+    CHECK(integral_at_40 > 0.29f && integral_at_40 < 0.301f);
+    CHECK(raw_at_40 <= 0.400001f);
+
+    // Relaxing the active ceiling does not reveal a hidden integral jump. Only
+    // the single normal integration increment for the new 6 C error is allowed.
+    CHECK(pb_heater_pid_step(&state, 60.0f, 54.0f, true, &duty));
+    CHECK(state.controller.integral > integral_at_40);
+    CHECK(state.controller.integral - integral_at_40 < 0.001f);
+    CHECK(duty <= 0.700001f);
+
+    pb_heater_pid_reset(&state);
+    for (int i = 0; i < 4000; ++i) {
+        CHECK(pb_heater_pid_step(&state, 60.0f, 52.0f, true, &duty));
+        CHECK(duty <= 0.700001f);
+    }
+    float raw_at_70 = PB_HEATER_PID_KP * 8.0f + state.controller.integral;
+    CHECK(state.controller.integral > 0.49f && state.controller.integral < 0.501f);
+    CHECK(raw_at_70 <= 0.700001f);
+
+    // Outside the approach bands, the original full 0..1 controller range is
+    // still available and converges against that unchanged ceiling.
+    pb_heater_pid_reset(&state);
+    for (int i = 0; i < 4000; ++i) {
+        CHECK(pb_heater_pid_step(&state, 60.0f, 48.0f, true, &duty));
+        CHECK(duty <= 1.000001f);
+    }
+    float raw_uncapped = PB_HEATER_PID_KP * 12.0f + state.controller.integral;
+    CHECK(state.controller.integral > 0.69f && state.controller.integral < 0.701f);
+    CHECK(raw_uncapped <= 1.000001f);
+    CHECK(duty > 0.99f);
+}
+
 static void test_safety_inhibition_holds_integral(void)
 {
     pb_heater_pid_state_t state = {0};
@@ -119,6 +164,7 @@ int main(void)
     test_known_gains_and_heater_policy();
     test_process_variable_selection();
     test_approach_and_ssr_window();
+    test_approach_caps_prevent_integral_windup();
     test_safety_inhibition_holds_integral();
     test_source_transition_reset();
     puts("pb_heater dc_pid host checks: PASS");
