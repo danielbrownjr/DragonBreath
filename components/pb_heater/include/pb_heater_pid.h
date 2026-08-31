@@ -84,6 +84,17 @@ static inline bool pb_heater_pid_step(pb_heater_pid_state_t *state,
 
     const float error_c = target_c - measurement_c;
     const float approach_cap = pb_heater_pid_approach_max_duty(error_c);
+    const float output_max = approach_cap > 0.0f ? approach_cap : 1.0f;
+    const float proportional = PB_HEATER_PID_KP * error_c;
+    // Keep stored, non-derivative demand inside the actuator range that
+    // DragonBreath currently exposes. dc_pid normalizes an existing integral
+    // against a contracted bound transactionally, so a 1.00 -> 0.70 -> 0.40
+    // approach transition cannot leave hidden integral behind the tighter cap.
+    // Derivative/history continuity is preserved; a transient derivative may
+    // still move the requested output within dc_pid's active output range.
+    float integral_max = output_max - proportional;
+    if (integral_max < 0.0f) integral_max = 0.0f;
+    if (integral_max > 1.0f) integral_max = 1.0f;
     const dc_pid_config_t config = {
         .kp = PB_HEATER_PID_KP,
         .ki = PB_HEATER_PID_KI,
@@ -94,9 +105,9 @@ static inline bool pb_heater_pid_step(pb_heater_pid_state_t *state,
         // it while deciding whether additional integration would wind up.
         // At/above target the heater-only policy below commands zero; retain a
         // valid controller range so history and negative-error unwinding advance.
-        .output_max = approach_cap > 0.0f ? approach_cap : 1.0f,
+        .output_max = output_max,
         .integral_min = 0.0f,
-        .integral_max = 1.0f,
+        .integral_max = integral_max,
     };
     dc_pid_result_t result;
     if (!dc_pid_step(&state->controller, &config, target_c, measurement_c,

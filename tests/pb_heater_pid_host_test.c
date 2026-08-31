@@ -108,6 +108,47 @@ static void test_approach_caps_prevent_integral_windup(void)
     CHECK(duty > 0.99f);
 }
 
+static void test_approach_cap_contraction_normalizes_stored_demand(void)
+{
+    pb_heater_pid_state_t state = {0};
+    float duty = 0.0f;
+
+    // Accumulate meaningful integral in the full-output band without resetting
+    // the controller between the approach bands the real chamber traverses.
+    for (int i = 0; i < 4000; ++i)
+        CHECK(pb_heater_pid_step(&state, 60.0f, 48.0f, true, &duty));
+    CHECK(state.controller.integral > 0.69f);
+    CHECK(duty > 0.99f);
+
+    // Tightening to 70% back-calculates I so stored P+I matches the new range.
+    CHECK(pb_heater_pid_step(&state, 60.0f, 52.0f, true, &duty));
+    float stored_at_70 = PB_HEATER_PID_KP * 8.0f + state.controller.integral;
+    CHECK(stored_at_70 <= 0.700001f);
+    CHECK(duty > 0.05f && duty <= 0.700001f);
+
+    // Tightening again to 40% performs the same normalization with no reset and
+    // no negative-output kick from the retained derivative history.
+    CHECK(pb_heater_pid_step(&state, 60.0f, 56.0f, true, &duty));
+    float stored_at_40 = PB_HEATER_PID_KP * 4.0f + state.controller.integral;
+    CHECK(stored_at_40 <= 0.400001f);
+    CHECK(duty > 0.05f && duty <= 0.400001f);
+
+    for (int i = 0; i < 4000; ++i) {
+        CHECK(pb_heater_pid_step(&state, 60.0f, 56.0f, true, &duty));
+        float stored = PB_HEATER_PID_KP * 4.0f + state.controller.integral;
+        CHECK(stored <= 0.400001f);
+        CHECK(duty >= 0.0f && duty <= 0.400001f);
+    }
+
+    // Relaxing the cap reveals no stored-demand jump: only the next ordinary
+    // integration increment is permitted.
+    float integral_at_40 = state.controller.integral;
+    CHECK(pb_heater_pid_step(&state, 60.0f, 54.0f, true, &duty));
+    CHECK(state.controller.integral >= integral_at_40);
+    CHECK(state.controller.integral - integral_at_40 < 0.001f);
+    CHECK(duty <= 0.700001f);
+}
+
 static void test_safety_inhibition_holds_integral(void)
 {
     pb_heater_pid_state_t state = {0};
@@ -165,6 +206,7 @@ int main(void)
     test_process_variable_selection();
     test_approach_and_ssr_window();
     test_approach_caps_prevent_integral_windup();
+    test_approach_cap_contraction_normalizes_stored_demand();
     test_safety_inhibition_holds_integral();
     test_source_transition_reset();
     puts("pb_heater dc_pid host checks: PASS");
