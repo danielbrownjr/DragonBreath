@@ -7,6 +7,8 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+## [1.1.15] - 2026-09-01
+
 ### Fixed
 - Restore the standard-radio Wi-Fi path for DragonBreath. The firmware no longer
   forces `WIFI_PS_NONE`, and **dragon-core v0.32.0** defaults normal-antenna
