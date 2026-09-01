@@ -4,6 +4,7 @@
 #     -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hil-devboard" build
 CONFIG_PB_HIL_CONSOLE=y
 CONFIG_PB_HIL_DEVBOARD=y
+CONFIG_PB_DEVBOARD_SAFE=y
 
 # This dual-USB-C dev board is connected through the ESP32-C3 native USB port.
 # Use the built-in USB Serial/JTAG device for flashing, commands, and log capture.

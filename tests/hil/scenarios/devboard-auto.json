@@ -36,8 +36,13 @@
       }
     },
     {
-      "name": "connect at threshold",
-      "send": {"cmd": "env", "connected": true, "bed_c": 100}
+      "name": "connect with an active source zone",
+      "send": {
+        "cmd": "env",
+        "connected": true,
+        "bed_c": 100,
+        "src_target_c": 55
+      }
     },
     {"name": "allow engaged tick", "wait_s": 0.7},
     {
@@ -51,7 +56,12 @@
     },
     {
       "name": "disconnect live printer",
-      "send": {"cmd": "env", "connected": false, "bed_c": 100}
+      "send": {
+        "cmd": "env",
+        "connected": false,
+        "bed_c": 100,
+        "src_target_c": 55
+      }
     },
     {"name": "allow fail-closed tick", "wait_s": 0.7},
     {

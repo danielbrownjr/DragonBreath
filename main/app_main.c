@@ -31,7 +31,6 @@
 #include "pb_hil.h"
 #include "dc_evlog.h"
 
-#include "esp_wifi.h"
 #include "esp_mac.h"
 #include "dc_wifi.h"
 #include "dc_moonraker.h"
@@ -500,9 +499,6 @@ void app_main(void)
     // abort/reboot and tear down the safety loop that's already running above.
     if ((e = dc_wifi_start()) != ESP_OK)
         ESP_LOGE(TAG, "dc_wifi_start: %s (continuing; safety loop unaffected)", esp_err_to_name(e));
-    // Mains-powered device: disable WiFi modem-sleep so the control API stays
-    // responsive (power-save adds ~0.5s latency spikes to incoming requests).
-    esp_wifi_set_ps(WIFI_PS_NONE);
     // Control-source selector: start ONLY the bound client. Klipper is the
     // default and the shipped path; Bambu/HA are opt-in. Each is log-and-continue
     // like the rest of network bring-up — a source that fails to init just leaves

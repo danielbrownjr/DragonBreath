@@ -7,6 +7,18 @@ below into the GitHub Release notes.
 
 ## [Unreleased]
 
+### Fixed
+- Restore the standard-radio Wi-Fi path for DragonBreath. The firmware no longer
+  forces `WIFI_PS_NONE`, and **dragon-core v0.32.0** defaults normal-antenna
+  products to modem power-save, the original retry/boot budgets, and no aggressive
+  DHCP watchdog. The constrained-radio tuning remains available only to products
+  that explicitly opt in.
+
+### Added
+- Add a native-USB ESP32-C3 debug profile that keeps production networking and
+  the web UI active while compiling out every Panda-specific GPIO/ADC backend.
+  Unlike HIL images, it exposes no JSON command console.
+
 ## [1.1.14] - 2026-08-26
 
 ### Changed
