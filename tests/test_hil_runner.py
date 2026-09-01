@@ -66,6 +66,36 @@ class HilRunnerTest(unittest.TestCase):
                         f"{path}: request id is reserved for runner correlation",
                     )
 
+    def test_each_scenario_starts_from_explicit_safe_state(self):
+        for path in sorted(hil.SCENARIO_DIR.glob("*.json")):
+            scenario = hil.load_scenario(path)
+            first = scenario["steps"][0]
+            self.assertEqual(first.get("send"), {"cmd": "off"}, path)
+            self.assertEqual(first.get("expect", {}).get("state.mode"), "off", path)
+            self.assertFalse(
+                first.get("expect", {}).get("state.heater_output", True), path
+            )
+
+    def test_auto_scenario_injects_current_source_target_policy(self):
+        scenario = hil.load_scenario(
+            hil.SCENARIO_DIR / "devboard-auto.json", "devboard"
+        )
+        env_steps = [
+            step["send"]
+            for step in scenario["steps"]
+            if step.get("send", {}).get("cmd") == "env"
+        ]
+        self.assertTrue(env_steps)
+        for command in env_steps:
+            self.assertEqual(command.get("src_target_c"), 55)
+            self.assertEqual(command.get("chamber_src_c"), 25)
+        self.assertTrue(
+            any(command.get("connected") is True for command in env_steps)
+        )
+        self.assertTrue(
+            any(command.get("connected") is False for command in env_steps)
+        )
+
     def test_suite_only_loads_scenarios_for_target(self):
         scenarios = hil.load_suite_scenarios("devboard")
         self.assertTrue(scenarios)

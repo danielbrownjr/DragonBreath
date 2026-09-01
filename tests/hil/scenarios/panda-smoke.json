@@ -3,21 +3,21 @@
   "targets": ["panda"],
   "steps": [
     {
+      "name": "start safe",
+      "send": {"cmd": "off"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.heater_output": false
+      }
+    },
+    {
       "name": "identify real hardware target",
       "send": {"cmd": "state"},
       "expect": {
         "ok": true,
         "state.io.target": "panda",
         "state.io.mains_gpio_compiled_out": false
-      }
-    },
-    {
-      "name": "physical OFF is always accepted",
-      "send": {"cmd": "off"},
-      "expect": {
-        "ok": true,
-        "state.mode": "off",
-        "state.heater_output": false
       }
     }
   ]
