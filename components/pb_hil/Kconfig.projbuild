@@ -1,4 +1,13 @@
-menu "DragonBreath hardware-in-loop"
+menu "DragonBreath development hardware"
+
+config PB_DEVBOARD_SAFE
+    bool "Compile out Panda-specific physical I/O"
+    default n
+    help
+        Replace the Panda relay, fan, thermistor ADC, LEDs, buttons, and board
+        strap backends with safe logical development-board backends. Production
+        networking and the web UI remain enabled unless PB_HIL_DEVBOARD is also
+        selected. Use this for native-USB debugging on a generic ESP32-C3 board.
 
 config PB_HIL_CONSOLE
     bool "Enable the serial HIL command console"
@@ -11,6 +20,7 @@ config PB_HIL_CONSOLE
 config PB_HIL_DEVBOARD
     bool "Build for a safe ESP32-C3 development board"
     depends on PB_HIL_CONSOLE
+    select PB_DEVBOARD_SAFE
     default n
     help
         Compile out every Panda mains GPIO write. Thermistors, zero-cross, and

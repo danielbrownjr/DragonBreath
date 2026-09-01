@@ -28,7 +28,7 @@ static _Atomic bool s_enabled = true;
 #define CODE_OFF_TICKS     3    // 150 ms between pulses within a burst
 #define CODE_GAP_TICKS    16    // 800 ms quiet gap after each burst
 
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
 static const gpio_num_t s_gpio[PB_LED_COUNT] = {
     PB_GPIO_LED_K1, PB_GPIO_LED_K2, PB_GPIO_LED_K3, PB_GPIO_LED_POWER,
 };
@@ -100,7 +100,7 @@ static void led_task(void *arg)
             // indication is preserved), but when disabled the physical output is
             // forced off — the LEDs simply are not driven.
             if (!atomic_load(&s_enabled)) on = 0;
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
             gpio_set_level(s_gpio[i], on ? 1 : 0);
 #else
             (void)on;
@@ -118,12 +118,12 @@ void pb_leds_flash_all(uint8_t times, uint16_t on_ms, uint16_t off_ms)
     // resume it — the caller reboots right after this returns.
     if (s_task) vTaskSuspend(s_task);
     for (uint8_t n = 0; n < times; n++) {
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
         for (int i = 0; i < PB_LED_COUNT; i++)
             if (PB_LED_DRIVEN(i)) gpio_set_level(s_gpio[i], 1);
 #endif
         vTaskDelay(pdMS_TO_TICKS(on_ms));
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
         for (int i = 0; i < PB_LED_COUNT; i++)
             if (PB_LED_DRIVEN(i)) gpio_set_level(s_gpio[i], 0);
 #endif
@@ -135,7 +135,7 @@ esp_err_t pb_leds_start(void)
 {
     if (s_task) return ESP_ERR_INVALID_STATE;
 
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
     uint64_t mask = 0;
     for (int i = 0; i < PB_LED_COUNT; i++)
         if (PB_LED_DRIVEN(i)) mask |= 1ULL << s_gpio[i];   // skip GPIO21 unless enabled
@@ -152,7 +152,7 @@ esp_err_t pb_leds_start(void)
     for (int i = 0; i < PB_LED_COUNT; i++) {
         atomic_store(&s_pat[i], PB_LED_OFF);
         atomic_store(&s_code[i], 0);
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
         if (PB_LED_DRIVEN(i)) gpio_set_level(s_gpio[i], 0);
 #endif
     }
@@ -161,8 +161,8 @@ esp_err_t pb_leds_start(void)
         s_task = NULL;
         return ESP_ERR_NO_MEM;
     }
-#ifdef CONFIG_PB_HIL_DEVBOARD
-    ESP_LOGW(TAG, "HIL dev-board backend: LED GPIO writes compiled out");
+#ifdef CONFIG_PB_DEVBOARD_SAFE
+    ESP_LOGW(TAG, "safe dev-board backend: LED GPIO writes compiled out");
 #else
     ESP_LOGI(TAG, "started");
 #endif

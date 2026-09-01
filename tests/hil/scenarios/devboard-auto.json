@@ -51,7 +51,7 @@
       }
     },
     {
-      "name": "connect at threshold",
+      "name": "connect with an active source zone",
       "send": {
         "cmd": "env",
         "connected": true,

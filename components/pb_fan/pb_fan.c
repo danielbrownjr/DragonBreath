@@ -25,7 +25,7 @@ static volatile uint32_t s_zc_count;
 static volatile uint32_t s_zc_interval_us;
 static volatile uint64_t s_zc_last_us;
 
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
 static void IRAM_ATTR zcd_isr(void *arg)
 {
     uint64_t now = esp_timer_get_time();
@@ -43,13 +43,13 @@ static void IRAM_ATTR zcd_isr(void *arg)
 
 esp_err_t pb_fan_init(void)
 {
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
     s_want_on = false;
     s_applied = false;
     s_zc_count = 0;
     s_zc_interval_us = 0;
     s_zc_last_us = 0;
-    ESP_LOGW(TAG, "HIL dev-board backend: fan gate and ZCD GPIOs compiled out");
+    ESP_LOGW(TAG, "safe dev-board backend: fan gate and ZCD GPIOs compiled out");
     return ESP_OK;
 #else
     const gpio_config_t gate = {
@@ -88,7 +88,7 @@ void pb_fan_set_level(uint8_t percent)
     bool on = (percent > 0);
     s_want_on = on;
     if (!on) {                                     // turn OFF immediately (don't wait for a ZC)
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
         gpio_set_level(PB_GPIO_FAN_GATE, 0);
 #endif
         s_applied = false;
@@ -104,7 +104,7 @@ void pb_fan_zc_diag(uint32_t *count_out, uint32_t *interval_us_out)
     if (interval_us_out) *interval_us_out = s_zc_interval_us;
 }
 
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
 void pb_fan_hil_zero_cross(uint32_t count, uint32_t interval_us)
 {
     if (count == 0) return;
