@@ -11,6 +11,7 @@ on:
       - 'partitions.csv'
       - 'sdkconfig.defaults'
       - 'sdkconfig.hil-*'
+      - 'sdkconfig.debug-*'
       - 'tools/hil.py'
       - 'tools/idf-build.sh'
       - '.github/workflows/firmware-build.yml'
@@ -23,6 +24,7 @@ on:
       - 'partitions.csv'
       - 'sdkconfig.defaults'
       - 'sdkconfig.hil-*'
+      - 'sdkconfig.debug-*'
       - 'tools/hil.py'
       - 'tools/idf-build.sh'
   workflow_dispatch:
@@ -137,6 +139,20 @@ jobs:
               build
             sh tests/check_hil_compileout.sh build-hil-devboard-uart
 
+      - name: Build native-USB production-network debug profile (ESP-IDF v5.3)
+        uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
+        with:
+          esp_idf_version: v5.3
+          target: esp32c3
+          path: '.'
+          command: |
+            set -e
+            idf.py -B build-debug-devboard-native \
+              -DSDKCONFIG="$PWD/build-debug-devboard-native/sdkconfig.profile" \
+              -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.debug-devboard-native" \
+              build
+            sh tests/check_devboard_compileout.sh build-debug-devboard-native
+
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -147,4 +163,5 @@ jobs:
             build/partition_table/partition-table.bin
             build-hil-devboard/dragonbreath.bin
             build-hil-devboard-uart/dragonbreath.bin
+            build-debug-devboard-native/dragonbreath.bin
           if-no-files-found: warn

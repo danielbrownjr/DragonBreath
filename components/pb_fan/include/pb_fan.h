@@ -24,7 +24,7 @@ uint8_t pb_fan_get_level(void);
 // (ZCD not working / no mains) — lets us verify the detector without firing.
 void pb_fan_zc_diag(uint32_t *count_out, uint32_t *interval_us_out);
 
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
 // Inject one or more zero-cross events into the dev-board backend.
 void pb_fan_hil_zero_cross(uint32_t count, uint32_t interval_us);
 #endif

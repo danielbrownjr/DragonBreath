@@ -7,7 +7,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
 #include "driver/gpio.h"
 #endif
 
@@ -31,7 +31,7 @@ static btn_t s_btns[PB_BUTTON_COUNT] = {
 static pb_button_cb_t s_cb;
 static TaskHandle_t   s_task;
 
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
 // Injected electrical levels; default 1 (idle high, matching the pull-up) so a
 // button reads released until a scenario drives it low.
 static _Atomic int s_hil_level[PB_BUTTON_COUNT] = { 1, 1, 1, 1 };
@@ -113,7 +113,7 @@ esp_err_t pb_buttons_start(pb_button_cb_t cb)
     s_cb = cb;
 
     for (int i = 0; i < PB_BUTTON_COUNT; ++i) {
-#ifndef CONFIG_PB_HIL_DEVBOARD
+#ifndef CONFIG_PB_DEVBOARD_SAFE
         configure_pin(s_btns[i].pin);
 #endif
         // Seed from a live sample so a button held through boot (or a shorted
@@ -125,8 +125,8 @@ esp_err_t pb_buttons_start(pb_button_cb_t cb)
         s_task = NULL;
         return ESP_ERR_NO_MEM;
     }
-#ifdef CONFIG_PB_HIL_DEVBOARD
-    ESP_LOGW(TAG, "HIL dev-board backend: button levels injected over serial");
+#ifdef CONFIG_PB_DEVBOARD_SAFE
+    ESP_LOGW(TAG, "safe dev-board backend: button GPIO reads compiled out");
 #else
     ESP_LOGI(TAG, "front-panel buttons running (poll %d ms)", PB_BTN_TICK_MS);
 #endif
