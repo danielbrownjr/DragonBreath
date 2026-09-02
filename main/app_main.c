@@ -339,7 +339,7 @@ static void control_task(void *arg)
             pb_policy_snapshot_t snap;
             pb_policy_get_snapshot(&snap);
             uint32_t zc = 0, zciv = 0;
-            pb_fan_zc_diag(&zc, &zciv);
+            pb_fan_zc_diag(&zc, &zciv, NULL, NULL);
             // Build the status line WITHOUT the ZC counters (which change every
             // sample). Collapse consecutive identical states into a single
             // "repeated Nx" instead of spamming a line every 2 s — this keeps the

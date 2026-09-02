@@ -138,12 +138,36 @@
     },
     {"name": "clear PTC fault", "send": {"cmd": "clear_fault"}},
     {
-      "name": "inject zero-cross events",
+      "name": "accept nominal 50 Hz zero-cross events",
       "send": {"cmd": "zero_cross", "count": 12, "interval_us": 10000},
       "expect": {
         "ok": true,
         "state.io.zero_cross_count": {"gte": 12},
         "state.io.zero_cross_interval_us": 10000
+      },
+      "save": {
+        "accepted_before_noise": "state.io.zero_cross_count",
+        "rejected_before_noise": "state.io.zero_cross_rejected_count"
+      }
+    },
+    {
+      "name": "reject a burst of sub-threshold noise edges",
+      "send": {"cmd": "zero_cross", "count": 3, "interval_us": 500},
+      "expect": {
+        "ok": true,
+        "state.io.zero_cross_count": "$accepted_before_noise",
+        "state.io.zero_cross_rejected_count": {"gt": "$rejected_before_noise"},
+        "state.io.zero_cross_interval_us": 10000
+      }
+    },
+    {
+      "name": "accept valid 60 Hz edge after rejected duplicates",
+      "send": {"cmd": "zero_cross", "count": 1, "interval_us": 6833},
+      "expect": {
+        "ok": true,
+        "state.io.zero_cross_count": {"gt": "$accepted_before_noise"},
+        "state.io.zero_cross_interval_us": 8333,
+        "state.io.zero_cross_min_interval_us": 8333
       }
     }
   ]

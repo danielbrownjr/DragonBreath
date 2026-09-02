@@ -20,6 +20,7 @@ from typing import Any, Optional
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCENARIO_DIR = ROOT / "tests" / "hil" / "scenarios"
 RESPONSE_PREFIX = "DBHIL "
+UINT32_MASK = (1 << 32) - 1
 
 
 class HilError(RuntimeError):
@@ -80,6 +81,62 @@ def requests_heat(command: dict[str, Any]) -> bool:
     return command.get("mode") in {"power_on", "auto", "drying"} and (
         float(command.get("target_c", 0)) > 0
     )
+
+
+def measure_zero_cross(
+    transport: SerialTransport, specification: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    duration_s = float(specification.get("duration_s", 2.0))
+    if duration_s <= 0:
+        raise HilError("zero-cross measurement duration_s must be positive")
+
+    before = transport.request({"cmd": "state"})
+    started = time.monotonic()
+    time.sleep(duration_s)
+    after = transport.request({"cmd": "state"})
+    elapsed_s = time.monotonic() - started
+    if elapsed_s <= 0:
+        raise HilError("zero-cross measurement elapsed time is not positive")
+
+    before_count = int(dotted_get(before, "state.io.zero_cross_count"))
+    after_count = int(dotted_get(after, "state.io.zero_cross_count"))
+    accepted_edges = (after_count - before_count) & UINT32_MASK
+    accepted_hz = accepted_edges / elapsed_s
+    interval_us = int(dotted_get(after, "state.io.zero_cross_interval_us"))
+    min_interval_us = int(
+        dotted_get(after, "state.io.zero_cross_min_interval_us")
+    )
+
+    bounds = {
+        "accepted_hz": (
+            float(specification["min_hz"]),
+            float(specification["max_hz"]),
+            accepted_hz,
+        ),
+        "last_interval_us": (
+            int(specification["min_interval_us"]),
+            int(specification["max_interval_us"]),
+            interval_us,
+        ),
+        "minimum_interval_us": (
+            int(specification["min_interval_us"]),
+            int(specification["max_interval_us"]),
+            min_interval_us,
+        ),
+    }
+    for name, (minimum, maximum, actual) in bounds.items():
+        if not minimum <= actual <= maximum:
+            raise HilError(
+                f"zero-cross {name} expected {minimum}..{maximum}, got {actual}"
+            )
+
+    return after, {
+        "duration_s": elapsed_s,
+        "accepted_edges": accepted_edges,
+        "accepted_hz": accepted_hz,
+        "last_interval_us": interval_us,
+        "minimum_interval_us": min_interval_us,
+    }
 
 
 def load_scenario(
@@ -524,6 +581,15 @@ def run_scenario(
             if "wait_s" in step:
                 time.sleep(float(step["wait_s"]))
                 response: Optional[dict[str, Any]] = None
+            elif "measure_zero_cross" in step:
+                specification = step["measure_zero_cross"]
+                if not isinstance(specification, dict):
+                    raise HilError("measure_zero_cross must be an object")
+                response, measurement = measure_zero_cross(transport, specification)
+                expected = substitute(step.get("expect", {"ok": True}), variables)
+                check_expectations(response, expected)
+                report["response"] = response
+                report["measurement"] = measurement
             else:
                 command = substitute(step.get("send"), variables)
                 if not isinstance(command, dict):
@@ -535,7 +601,8 @@ def run_scenario(
                 response = transport.request(
                     command, timeout_s=float(step.get("timeout_s", 4.0))
                 )
-                check_expectations(response, step.get("expect", {"ok": True}))
+                expected = substitute(step.get("expect", {"ok": True}), variables)
+                check_expectations(response, expected)
                 for variable, path in step.get("save", {}).items():
                     variables[variable] = dotted_get(response, path)
                 report["response"] = response

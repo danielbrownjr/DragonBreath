@@ -19,12 +19,15 @@ esp_err_t pb_fan_init(void);
 void pb_fan_set_level(uint8_t percent);
 uint8_t pb_fan_get_level(void);
 
-// Diagnostics: total zero-cross interrupts since boot, and microseconds between
-// the last two edges (mains cycle period). interval 0 = no zero-cross seen yet
-// (ZCD not working / no mains) — lets us verify the detector without firing.
-void pb_fan_zc_diag(uint32_t *count_out, uint32_t *interval_us_out);
+// Diagnostics count only accepted zero-cross edges.  Reports the latest and
+// minimum accepted-to-accepted intervals plus the number of raw edges rejected
+// by the minimum-spacing filter.  Interval 0 means fewer than two accepted
+// crossings have been seen.
+void pb_fan_zc_diag(uint32_t *count_out, uint32_t *interval_us_out,
+                    uint32_t *min_interval_us_out, uint32_t *rejected_count_out);
 
 #ifdef CONFIG_PB_DEVBOARD_SAFE
-// Inject one or more zero-cross events into the dev-board backend.
+// Inject raw zero-cross edges into the dev-board backend.  The production edge
+// qualifier is applied to each simulated edge.
 void pb_fan_hil_zero_cross(uint32_t count, uint32_t interval_us);
 #endif

@@ -41,6 +41,77 @@ class HilRunnerTest(unittest.TestCase):
         )
         self.assertEqual(value["lease_id"], "abc")
 
+    def test_zero_cross_measurement_accepts_50_or_60_hz_cadence(self):
+        class FakeTransport:
+            def __init__(self):
+                self.responses = iter(
+                    [
+                        {"state": {"io": {"zero_cross_count": 100}}},
+                        {
+                            "state": {
+                                "io": {
+                                    "zero_cross_count": 340,
+                                    "zero_cross_interval_us": 8333,
+                                    "zero_cross_min_interval_us": 8200,
+                                }
+                            }
+                        },
+                    ]
+                )
+
+            def request(self, command):
+                self.command = command
+                return next(self.responses)
+
+        specification = {
+            "duration_s": 2,
+            "min_hz": 90,
+            "max_hz": 130,
+            "min_interval_us": 7000,
+            "max_interval_us": 11000,
+        }
+        with mock.patch.object(hil.time, "sleep"), mock.patch.object(
+            hil.time, "monotonic", side_effect=(10.0, 12.0)
+        ):
+            _, measurement = hil.measure_zero_cross(FakeTransport(), specification)
+
+        self.assertEqual(measurement["accepted_edges"], 240)
+        self.assertEqual(measurement["accepted_hz"], 120)
+
+    def test_zero_cross_measurement_rejects_duplicate_cadence(self):
+        class FakeTransport:
+            def __init__(self):
+                self.responses = iter(
+                    [
+                        {"state": {"io": {"zero_cross_count": 100}}},
+                        {
+                            "state": {
+                                "io": {
+                                    "zero_cross_count": 520,
+                                    "zero_cross_interval_us": 1000,
+                                    "zero_cross_min_interval_us": 980,
+                                }
+                            }
+                        },
+                    ]
+                )
+
+            def request(self, command):
+                return next(self.responses)
+
+        specification = {
+            "duration_s": 2,
+            "min_hz": 90,
+            "max_hz": 130,
+            "min_interval_us": 7000,
+            "max_interval_us": 11000,
+        }
+        with mock.patch.object(hil.time, "sleep"), mock.patch.object(
+            hil.time, "monotonic", side_effect=(10.0, 12.0)
+        ):
+            with self.assertRaisesRegex(hil.HilError, "accepted_hz"):
+                hil.measure_zero_cross(FakeTransport(), specification)
+
     def test_heat_detection(self):
         self.assertTrue(
             hil.requests_heat(

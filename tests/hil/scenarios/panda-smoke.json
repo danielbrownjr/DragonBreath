@@ -19,6 +19,21 @@
         "state.io.target": "panda",
         "state.io.mains_gpio_compiled_out": false
       }
+    },
+    {
+      "name": "qualify accepted zero-cross cadence while forced off",
+      "measure_zero_cross": {
+        "duration_s": 2.0,
+        "min_hz": 90.0,
+        "max_hz": 130.0,
+        "min_interval_us": 7000,
+        "max_interval_us": 11000
+      },
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.heater_output": false
+      }
     }
   ]
 }

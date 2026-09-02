@@ -10,6 +10,7 @@
 // variable speed and this mirrors that. Adding variable speed later would mean
 // ONE zero-cross-synced pulse per half-cycle (phase control) — never PWM.
 #include "pb_fan.h"
+#include "pb_fan_zcd.h"
 #include "pb_board.h"
 
 #include "esp_log.h"
@@ -23,15 +24,38 @@ static volatile bool     s_want_on;
 static volatile bool     s_applied;
 static volatile uint32_t s_zc_count;
 static volatile uint32_t s_zc_interval_us;
-static volatile uint64_t s_zc_last_us;
+static volatile uint32_t s_zc_min_interval_us;
+static volatile uint32_t s_zc_rejected_count;
+static pb_fan_zcd_filter_t s_zc_filter;
+#ifdef CONFIG_PB_DEVBOARD_SAFE
+static uint64_t s_hil_now_us;
+#endif
+
+// Called with either the real ISR timestamp or the safe-devboard simulated
+// timestamp.  Only qualified edges are allowed to change accepted-edge
+// diagnostics or apply a pending gate transition.
+static bool IRAM_ATTR accept_zcd_edge(uint64_t now_us)
+{
+    uint32_t interval_us = 0;
+    if (!pb_fan_zcd_accept(&s_zc_filter, now_us, &interval_us)) {
+        s_zc_rejected_count++;
+        return false;
+    }
+
+    if (interval_us != 0) {
+        s_zc_interval_us = interval_us;
+        if (s_zc_min_interval_us == 0 || interval_us < s_zc_min_interval_us)
+            s_zc_min_interval_us = interval_us;
+    }
+    s_zc_count++;
+    return true;
+}
 
 #ifndef CONFIG_PB_DEVBOARD_SAFE
 static void IRAM_ATTR zcd_isr(void *arg)
 {
-    uint64_t now = esp_timer_get_time();
-    if (s_zc_last_us) s_zc_interval_us = (uint32_t)(now - s_zc_last_us);
-    s_zc_last_us = now;
-    s_zc_count++;
+    (void)arg;
+    if (!accept_zcd_edge((uint64_t)esp_timer_get_time())) return;
 
     bool on = s_want_on;                 // apply the commanded level at the zero cross
     if (on != s_applied) {
@@ -43,12 +67,19 @@ static void IRAM_ATTR zcd_isr(void *arg)
 
 esp_err_t pb_fan_init(void)
 {
-#ifdef CONFIG_PB_DEVBOARD_SAFE
+    // Reset all ISR-visible state before registering the physical handler.
     s_want_on = false;
     s_applied = false;
     s_zc_count = 0;
     s_zc_interval_us = 0;
-    s_zc_last_us = 0;
+    s_zc_min_interval_us = 0;
+    s_zc_rejected_count = 0;
+    s_zc_filter = (pb_fan_zcd_filter_t){0};
+#ifdef CONFIG_PB_DEVBOARD_SAFE
+    s_hil_now_us = 0;
+#endif
+
+#ifdef CONFIG_PB_DEVBOARD_SAFE
     ESP_LOGW(TAG, "safe dev-board backend: fan gate and ZCD GPIOs compiled out");
     return ESP_OK;
 #else
@@ -75,8 +106,6 @@ esp_err_t pb_fan_init(void)
     esp_err_t err = gpio_isr_handler_add(PB_GPIO_ZERO_CROSS, zcd_isr, NULL);
     if (err != ESP_OK) return err;
 
-    s_want_on = false;
-    s_applied = false;
     ESP_LOGI(TAG, "init: ON/OFF held-gate (stock model), gate GPIO%d, ZCD GPIO%d; never PWM'd",
              PB_GPIO_FAN_GATE, PB_GPIO_ZERO_CROSS);
     return ESP_OK;
@@ -98,18 +127,22 @@ void pb_fan_set_level(uint8_t percent)
 
 uint8_t pb_fan_get_level(void) { return s_want_on ? 100 : 0; }
 
-void pb_fan_zc_diag(uint32_t *count_out, uint32_t *interval_us_out)
+void pb_fan_zc_diag(uint32_t *count_out, uint32_t *interval_us_out,
+                    uint32_t *min_interval_us_out, uint32_t *rejected_count_out)
 {
     if (count_out) *count_out = s_zc_count;
     if (interval_us_out) *interval_us_out = s_zc_interval_us;
+    if (min_interval_us_out) *min_interval_us_out = s_zc_min_interval_us;
+    if (rejected_count_out) *rejected_count_out = s_zc_rejected_count;
 }
 
 #ifdef CONFIG_PB_DEVBOARD_SAFE
 void pb_fan_hil_zero_cross(uint32_t count, uint32_t interval_us)
 {
     if (count == 0) return;
-    s_zc_count += count;
-    s_zc_interval_us = interval_us;
-    s_applied = s_want_on;
+    for (uint32_t i = 0; i < count; ++i) {
+        s_hil_now_us += interval_us;
+        if (accept_zcd_edge(s_hil_now_us)) s_applied = s_want_on;
+    }
 }
 #endif

@@ -371,6 +371,7 @@ Step fields:
 | `timeout_s` | Response timeout override, default 4 seconds |
 | `expect` | Dotted response paths and expected values |
 | `save` | Variable name to dotted response path |
+| `measure_zero_cross` | Sample accepted-edge count and intervals over a timed window |
 
 A string beginning with `$` substitutes a saved variable recursively in later
 requests. Assertions accept exact values or one operator:
@@ -384,6 +385,10 @@ requests. Assertions accept exact values or one operator:
 ```
 
 Supported operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, and `contains`.
+Saved variables may also be used in later `expect` operands. The Panda smoke
+scenario uses `measure_zero_cross` to require a 90–130 Hz accepted-edge rate and
+7–11 ms latest/minimum accepted intervals, covering both 50 Hz and 60 Hz mains
+while detecting the previously observed ~1 ms duplicate-edge cadence.
 `--suite` loads only scenarios whose `targets` include the selected target.
 
 ## Serial protocol
@@ -416,7 +421,7 @@ Devboard-only injection:
 |---|---|---|
 | `sensor` | `channel`, `status`, optional `temp_c` | Inject chamber/PTC value or `open`, `short`, `uninit` |
 | `env` | `connected`, `bed_c` | Inject Moonraker connection and bed temperature |
-| `zero_cross` | optional `count`, `interval_us` | Inject fan zero-cross diagnostics |
+| `zero_cross` | optional `count`, `interval_us` | Inject raw fan ZCD edges through the production qualifier |
 | `button` | `button`, `level` | Inject a raw level (`0` pressed, `1` released) for `power`, `auto`, `on`, or `dry` |
 
 Every response includes the authoritative policy snapshot: mode, source,
