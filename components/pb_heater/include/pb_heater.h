@@ -176,7 +176,7 @@ static inline bool pb_heater_foldback_cut(bool ptc_ok, float ptc_c, bool prev_cu
 // priority ordering can be host-tested without the ADC/SSR/RTOS backend. Given the
 // freshest per-channel sensor reads (status-OK flags + instantaneous °C), whether a
 // target is armed, and whether the comms deadman has expired, returns the fault the
-// tick must latch — or PB_FAULT_NONE if it is safe to run the bang-bang loop. The
+// tick must latch — or PB_FAULT_NONE if it is safe to run the control loop. The
 // order is load-bearing and MUST stay identical to pb_heater_tick():
 //   1. PTC over-temp     — only trusted when the PTC sensor reads valid
 //   2. chamber over-temp — only trusted when the chamber sensor reads valid
@@ -257,10 +257,10 @@ float     pb_heater_get_fb_cut_c(void);
 // pb_heater_get_comms_timeout_ms() while heating, the heater latches off.
 void pb_heater_notify_link_alive(void);
 
-// Periodic control tick (call at ~1-2 Hz). Reads the local chamber + PTC temps,
-// enforces all safety cutoffs from those local sensors, and drives the SSR with
-// hysteresis around the set-point using the optional external regulation
-// temperature when one is supplied.
+// Periodic control tick (call at ~2 Hz). Reads the local chamber + PTC temps,
+// enforces all safety cutoffs from those local sensors, and drives the SSR from
+// the shared dc_pid controller using the optional external regulation temperature
+// when one is supplied (otherwise the local chamber NTC is the process variable).
 void pb_heater_tick(void);
 
 // Immediate, latching shutoff. Clears the target and latches off. Heat stays off
@@ -313,9 +313,9 @@ pb_fault_reason_t pb_heater_fault_code(void);
 // Canonical, stable string for a fault code (never NULL; out-of-range -> generic).
 const char *pb_heater_fault_str(pb_fault_reason_t code);
 
-// True if the SSR is currently commanded on (momentary bang-bang state).
+// True if the SSR is currently commanded on (momentary time-proportion state).
 bool pb_heater_is_on(void);
 
 // True in "heat mode": a target is armed and no fault is latched. Steady across
-// the SSR's bang-bang cycling — use this (not pb_heater_is_on) for the fan/LED.
+// the SSR's time-proportion cycling — use this (not pb_heater_is_on) for the fan/LED.
 bool pb_heater_heat_mode(void);

@@ -3,6 +3,16 @@
   "targets": ["devboard"],
   "steps": [
     {
+      "name": "start safe",
+      "send": {"cmd": "off"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.heater_output": false,
+        "state.io.mains_gpio_compiled_out": true
+      }
+    },
+    {
       "name": "inject nominal chamber sensor",
       "send": {"cmd": "sensor", "channel": "chamber", "status": "ok", "temp_c": 25}
     },

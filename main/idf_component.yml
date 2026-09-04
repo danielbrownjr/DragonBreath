@@ -35,3 +35,7 @@ dependencies:
     git: https://github.com/justinh-rahb/dragon-core.git
     path: components/dc_portal
     version: v0.32.0
+  dc_pid:
+    git: https://github.com/justinh-rahb/dragon-core.git
+    path: components/dc_pid
+    version: v0.32.0

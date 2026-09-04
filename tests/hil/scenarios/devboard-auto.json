@@ -2,7 +2,16 @@
   "name": "devboard AUTO environment injection",
   "targets": ["devboard"],
   "steps": [
-    {"name": "start safe", "send": {"cmd": "off"}},
+    {
+      "name": "start safe",
+      "send": {"cmd": "off"},
+      "expect": {
+        "ok": true,
+        "state.mode": "off",
+        "state.heater_output": false,
+        "state.io.mains_gpio_compiled_out": true
+      }
+    },
     {
       "name": "nominal chamber",
       "send": {"cmd": "sensor", "channel": "chamber", "status": "ok", "temp_c": 25}
@@ -22,7 +31,13 @@
     },
     {
       "name": "disconnected printer cannot engage",
-      "send": {"cmd": "env", "connected": false, "bed_c": 110}
+      "send": {
+        "cmd": "env",
+        "connected": false,
+        "bed_c": 110,
+        "src_target_c": 55,
+        "chamber_src_c": 25
+      }
     },
     {"name": "allow disconnected tick", "wait_s": 0.7},
     {
@@ -41,7 +56,8 @@
         "cmd": "env",
         "connected": true,
         "bed_c": 100,
-        "src_target_c": 55
+        "src_target_c": 55,
+        "chamber_src_c": 25
       }
     },
     {"name": "allow engaged tick", "wait_s": 0.7},
@@ -51,6 +67,7 @@
       "expect": {
         "ok": true,
         "state.auto_engaged": true,
+        "state.effective_target_c": 55,
         "state.heater_output": true
       }
     },
@@ -60,7 +77,8 @@
         "cmd": "env",
         "connected": false,
         "bed_c": 100,
-        "src_target_c": 55
+        "src_target_c": 55,
+        "chamber_src_c": 25
       }
     },
     {"name": "allow fail-closed tick", "wait_s": 0.7},
