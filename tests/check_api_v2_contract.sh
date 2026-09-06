@@ -27,6 +27,48 @@ for route in info state command heartbeat events health; do
     }
 done
 
+# Temporary SSE lifecycle instrumentation must remain observable through the
+# existing read-only health endpoint and retain the transport lifecycle markers
+# needed to correlate device logs with DragonSniff churn records.
+for field in \
+    largest_free_block_bytes \
+    http_task_stack_high_water_mark_bytes \
+    task_count \
+    sse_accepted_total \
+    sse_rejected_total \
+    sse_failures_total \
+    sse_cleanups_total \
+    sse_connections \
+    connection_id \
+    socket_fd \
+    peer_ipv4 \
+    peer_port \
+    registered_age_ms \
+    last_event_age_ms
+do
+    grep -q "\"$field\"" "$httpd" || {
+        echo "health document is missing SSE diagnostic field: $field" >&2
+        exit 1
+    }
+done
+for marker in \
+    'registration accepted' \
+    'registration rejected' \
+    'first state send' \
+    'succeeded revision' \
+    'disconnect peek' \
+    'socket ownership lost' \
+    'failed result' \
+    'cleanup complete' \
+    'slot_matched=%s' \
+    'task exiting'
+do
+    grep -q "$marker" "$httpd" || {
+        echo "SSE lifecycle diagnostics are missing marker: $marker" >&2
+        exit 1
+    }
+done
+
 for field in '"schema"' '"product"' '"display_name"'; do
     grep -q "$field" "$httpd" || {
         echo "api v2 info is missing shared-SPA descriptor field: $field" >&2

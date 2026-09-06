@@ -9,6 +9,7 @@
 #include "dc_moonraker.h"
 #include "dc_evlog.h"
 
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "cJSON.h"
@@ -22,8 +23,10 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lwip/inet.h"
 #include "lwip/sockets.h"   // recv(), MSG_DONTWAIT/MSG_PEEK for SSE FIN detection
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +42,42 @@ static unsigned s_sse_clients;
 #define API_VERSION 2
 #define API_BODY_MAX 1536
 #define SSE_MAX_CLIENTS 2
+
+typedef struct {
+    bool active;
+    bool task_started;
+    bool first_event_sent;
+    bool peer_valid;
+    uint64_t connection_id;
+    int socket_fd;
+    uint32_t peer_ipv4;
+    uint16_t peer_port;
+    httpd_req_t *request;
+    int64_t registered_us;
+    int64_t task_started_us;
+    int64_t last_event_us;
+    uint32_t successful_events;
+} sse_diagnostic_slot_t;
+
+static uint64_t s_sse_next_connection_id;
+static uint64_t s_sse_accepted_total;
+static uint64_t s_sse_rejected_total;
+static uint64_t s_sse_failures_total;
+static uint64_t s_sse_cleanups_total;
+static sse_diagnostic_slot_t s_sse_diagnostic_slots[SSE_MAX_CLIENTS];
+
+static bool sse_peer_identity(int socket_fd, uint32_t *ipv4, uint16_t *port)
+{
+    struct sockaddr_in peer = {0};
+    socklen_t peer_len = sizeof peer;
+    errno = 0;
+    if (getpeername(socket_fd, (struct sockaddr *)&peer, &peer_len) != 0
+            || peer.sin_family != AF_INET)
+        return false;
+    *ipv4 = peer.sin_addr.s_addr;
+    *port = ntohs(peer.sin_port);
+    return true;
+}
 
 void pb_httpd_ctl_token(char *out, size_t outsz)
 {
@@ -598,12 +637,18 @@ static esp_err_t heartbeat_post(httpd_req_t *req)
 static esp_err_t health_get(httpd_req_t *req)
 {
     wifi_ap_record_t ap = {0};
+    sse_diagnostic_slot_t slots[SSE_MAX_CLIENTS] = {0};
     cJSON *o = cJSON_CreateObject();
     cJSON_AddNumberToObject(o, "api_version", API_VERSION);
     cJSON_AddStringToObject(o, "boot_id", s_boot_id);
     cJSON_AddNumberToObject(o, "uptime_ms", esp_timer_get_time() / 1000);
     cJSON_AddNumberToObject(o, "free_heap_bytes", esp_get_free_heap_size());
     cJSON_AddNumberToObject(o, "minimum_free_heap_bytes", esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(o, "largest_free_block_bytes",
+                            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(o, "http_task_stack_high_water_mark_bytes",
+                            uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t));
+    cJSON_AddNumberToObject(o, "task_count", uxTaskGetNumberOfTasks());
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         cJSON_AddNumberToObject(o, "wifi_rssi_dbm", ap.rssi);
         cJSON_AddNumberToObject(o, "wifi_channel", ap.primary);
@@ -613,40 +658,253 @@ static esp_err_t health_get(httpd_req_t *req)
     }
     portENTER_CRITICAL(&s_sse_mux);
     unsigned clients = s_sse_clients;
+    uint64_t accepted_total = s_sse_accepted_total;
+    uint64_t rejected_total = s_sse_rejected_total;
+    uint64_t failures_total = s_sse_failures_total;
+    uint64_t cleanups_total = s_sse_cleanups_total;
+    memcpy(slots, s_sse_diagnostic_slots, sizeof slots);
     portEXIT_CRITICAL(&s_sse_mux);
     cJSON_AddNumberToObject(o, "sse_clients", clients);
+    cJSON_AddNumberToObject(o, "sse_accepted_total", (double)accepted_total);
+    cJSON_AddNumberToObject(o, "sse_rejected_total", (double)rejected_total);
+    cJSON_AddNumberToObject(o, "sse_failures_total", (double)failures_total);
+    cJSON_AddNumberToObject(o, "sse_cleanups_total", (double)cleanups_total);
+    cJSON *connections = cJSON_AddArrayToObject(o, "sse_connections");
+    int64_t now_us = esp_timer_get_time();
+    if (connections) {
+        for (size_t i = 0; i < SSE_MAX_CLIENTS; i++) {
+            if (!slots[i].active) continue;
+            cJSON *connection = cJSON_CreateObject();
+            if (!connection) break;
+            cJSON_AddNumberToObject(connection, "slot", i);
+            cJSON_AddNumberToObject(connection, "connection_id",
+                                    (double)slots[i].connection_id);
+            cJSON_AddNumberToObject(connection, "socket_fd", slots[i].socket_fd);
+            if (slots[i].peer_valid) {
+                cJSON_AddNumberToObject(connection, "peer_ipv4",
+                                        (double)ntohl(slots[i].peer_ipv4));
+                cJSON_AddNumberToObject(connection, "peer_port",
+                                        slots[i].peer_port);
+            } else {
+                cJSON_AddNullToObject(connection, "peer_ipv4");
+                cJSON_AddNullToObject(connection, "peer_port");
+            }
+            cJSON_AddBoolToObject(connection, "task_started", slots[i].task_started);
+            cJSON_AddBoolToObject(connection, "first_event_sent",
+                                  slots[i].first_event_sent);
+            cJSON_AddNumberToObject(connection, "successful_events",
+                                    slots[i].successful_events);
+            cJSON_AddNumberToObject(connection, "registered_age_ms",
+                                    (now_us - slots[i].registered_us) / 1000);
+            if (slots[i].task_started_us > 0)
+                cJSON_AddNumberToObject(connection, "task_start_age_ms",
+                                        (now_us - slots[i].task_started_us) / 1000);
+            else
+                cJSON_AddNullToObject(connection, "task_start_age_ms");
+            if (slots[i].last_event_us > 0)
+                cJSON_AddNumberToObject(connection, "last_event_age_ms",
+                                        (now_us - slots[i].last_event_us) / 1000);
+            else
+                cJSON_AddNullToObject(connection, "last_event_age_ms");
+            cJSON_AddItemToArray(connections, connection);
+        }
+    }
     return send_json(req, o);
+}
+
+static void sse_log_failure(uint64_t connection_id, int socket_fd,
+                            const char *operation, esp_err_t result,
+                            int socket_errno)
+{
+    portENTER_CRITICAL(&s_sse_mux);
+    s_sse_failures_total++;
+    portEXIT_CRITICAL(&s_sse_mux);
+    ESP_LOGE(TAG,
+             "SSE connection=%" PRIu64 " fd=%d operation=%s failed "
+             "result=%s (0x%x) errno=%d free_heap=%lu min_free_heap=%lu "
+             "largest_free_block=%lu",
+             connection_id, socket_fd, operation, esp_err_to_name(result),
+             (unsigned)result, socket_errno,
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)esp_get_minimum_free_heap_size(),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+static esp_err_t sse_send_checked_chunk(
+    httpd_req_t *req,
+    uint64_t connection_id,
+    int socket_fd,
+    bool peer_valid,
+    uint32_t peer_ipv4,
+    uint16_t peer_port,
+    const char *operation,
+    const char *data,
+    size_t data_len)
+{
+    uint32_t current_ipv4 = 0;
+    uint16_t current_port = 0;
+    bool current_valid = sse_peer_identity(
+        socket_fd, &current_ipv4, &current_port);
+    if (!peer_valid || !current_valid
+            || current_ipv4 != peer_ipv4 || current_port != peer_port) {
+        int socket_errno = errno;
+        ESP_LOGE(TAG,
+                 "SSE connection=%" PRIu64 " fd=%d socket ownership lost "
+                 "before %s expected_peer=%08lx:%u current_valid=%s "
+                 "current_peer=%08lx:%u errno=%d",
+                 connection_id, socket_fd, operation,
+                 (unsigned long)ntohl(peer_ipv4), peer_port,
+                 current_valid ? "true" : "false",
+                 (unsigned long)ntohl(current_ipv4), current_port,
+                 socket_errno);
+        sse_log_failure(connection_id, socket_fd, "socket ownership check",
+                        ESP_ERR_INVALID_STATE, socket_errno);
+        return ESP_ERR_INVALID_STATE;
+    }
+    errno = 0;
+    esp_err_t result = httpd_resp_send_chunk(req, data, data_len);
+    if (result != ESP_OK)
+        sse_log_failure(connection_id, socket_fd, operation, result, errno);
+    return result;
 }
 
 static esp_err_t sse_send(
     httpd_req_t *req,
+    uint64_t connection_id,
+    int socket_fd,
+    bool peer_valid,
+    uint32_t peer_ipv4,
+    uint16_t peer_port,
     const char *event,
     uint32_t id,
     const pb_policy_snapshot_t *snap)
 {
     cJSON *o = state_json(snap);
-    if (!o) return ESP_ERR_NO_MEM;
+    if (!o) {
+        sse_log_failure(connection_id, socket_fd, "state JSON creation",
+                        ESP_ERR_NO_MEM, 0);
+        return ESP_ERR_NO_MEM;
+    }
     char *json = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
-    if (!json) return ESP_ERR_NO_MEM;
+    if (!json) {
+        sse_log_failure(connection_id, socket_fd, "state JSON serialization",
+                        ESP_ERR_NO_MEM, 0);
+        return ESP_ERR_NO_MEM;
+    }
     char head[64];
     int n = id == UINT32_MAX
         ? snprintf(head, sizeof head, "event: %s\n", event)
         : snprintf(head, sizeof head, "event: %s\nid: %lu\n", event, (unsigned long)id);
-    esp_err_t r = httpd_resp_send_chunk(req, head, n);
-    if (r == ESP_OK) r = httpd_resp_send_chunk(req, "data: ", 6);
-    if (r == ESP_OK) r = httpd_resp_send_chunk(req, json, strlen(json));
-    if (r == ESP_OK) r = httpd_resp_send_chunk(req, "\n\n", 2);
+    esp_err_t r = sse_send_checked_chunk(
+        req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+        "event header send", head, n);
+    if (r == ESP_OK)
+        r = sse_send_checked_chunk(
+            req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+            "data prefix send", "data: ", 6);
+    if (r == ESP_OK)
+        r = sse_send_checked_chunk(
+            req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+            "JSON payload send", json, strlen(json));
+    if (r == ESP_OK)
+        r = sse_send_checked_chunk(
+            req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+            "event terminator send", "\n\n", 2);
     cJSON_free(json);
     return r;
+}
+
+static bool sse_diagnostic_lookup(httpd_req_t *req, size_t *slot,
+                                  uint64_t *connection_id,
+                                  int64_t *registered_us,
+                                  bool *peer_valid,
+                                  uint32_t *peer_ipv4,
+                                  uint16_t *peer_port)
+{
+    bool found = false;
+    int64_t now_us = esp_timer_get_time();
+    portENTER_CRITICAL(&s_sse_mux);
+    for (size_t i = 0; i < SSE_MAX_CLIENTS; i++) {
+        if (s_sse_diagnostic_slots[i].active
+                && s_sse_diagnostic_slots[i].request == req) {
+            *slot = i;
+            *connection_id = s_sse_diagnostic_slots[i].connection_id;
+            *registered_us = s_sse_diagnostic_slots[i].registered_us;
+            *peer_valid = s_sse_diagnostic_slots[i].peer_valid;
+            *peer_ipv4 = s_sse_diagnostic_slots[i].peer_ipv4;
+            *peer_port = s_sse_diagnostic_slots[i].peer_port;
+            s_sse_diagnostic_slots[i].task_started = true;
+            s_sse_diagnostic_slots[i].task_started_us = now_us;
+            found = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&s_sse_mux);
+    return found;
+}
+
+static void sse_diagnostic_note_event(size_t slot, uint64_t connection_id,
+                                      int64_t now_us)
+{
+    portENTER_CRITICAL(&s_sse_mux);
+    if (slot < SSE_MAX_CLIENTS
+            && s_sse_diagnostic_slots[slot].active
+            && s_sse_diagnostic_slots[slot].connection_id == connection_id) {
+        s_sse_diagnostic_slots[slot].first_event_sent = true;
+        s_sse_diagnostic_slots[slot].last_event_us = now_us;
+        s_sse_diagnostic_slots[slot].successful_events++;
+    }
+    portEXIT_CRITICAL(&s_sse_mux);
+}
+
+static void sse_diagnostic_release(size_t slot, uint64_t connection_id,
+                                   unsigned *clients_before,
+                                   unsigned *clients_after,
+                                   bool *slot_matched)
+{
+    portENTER_CRITICAL(&s_sse_mux);
+    *clients_before = s_sse_clients;
+    *slot_matched = slot < SSE_MAX_CLIENTS
+        && s_sse_diagnostic_slots[slot].active
+        && s_sse_diagnostic_slots[slot].connection_id == connection_id;
+    if (*slot_matched) {
+        memset(&s_sse_diagnostic_slots[slot], 0,
+               sizeof s_sse_diagnostic_slots[slot]);
+        if (s_sse_clients > 0) s_sse_clients--;
+        s_sse_cleanups_total++;
+    }
+    *clients_after = s_sse_clients;
+    portEXIT_CRITICAL(&s_sse_mux);
 }
 
 static void sse_task(void *arg)
 {
     httpd_req_t *req = arg;
     int sockfd = httpd_req_to_sockfd(req);
+    size_t slot = SSE_MAX_CLIENTS;
+    uint64_t connection_id = 0;
+    int64_t registered_us = 0;
+    bool peer_valid = false;
+    uint32_t peer_ipv4 = 0;
+    uint16_t peer_port = 0;
+    int64_t task_started_us = esp_timer_get_time();
+    bool diagnostic_found = sse_diagnostic_lookup(
+        req, &slot, &connection_id, &registered_us,
+        &peer_valid, &peer_ipv4, &peer_port);
     uint32_t last_revision = UINT32_MAX;
     int64_t last_telemetry_us = 0;
+    int64_t exit_detected_us = 0;
+    bool first_state_attempted = false;
+    bool first_state_delivered = false;
+    const char *exit_reason = "unknown";
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d task started slot=%u "
+             "diagnostic_found=%s registration_to_task_ms=%lld",
+             connection_id, sockfd, (unsigned)slot,
+             diagnostic_found ? "true" : "false",
+             registered_us > 0
+                 ? (long long)((task_started_us - registered_us) / 1000) : -1LL);
     for (;;) {
         // Detect a client that closed the stream (FIN) or reset it, so the SSE
         // slot is freed promptly instead of waiting for a telemetry send to fail.
@@ -656,62 +914,226 @@ static void sse_task(void *arg)
         // no FIN by erroring the socket after ~25 s of unacked traffic.)
         if (sockfd >= 0) {
             char probe;
+            errno = 0;
             int pk = recv(sockfd, &probe, 1, MSG_DONTWAIT | MSG_PEEK);
-            if (pk == 0 || (pk < 0 && errno != EWOULDBLOCK && errno != EAGAIN))
+            int socket_errno = errno;
+            if (pk == 0) {
+                exit_detected_us = esp_timer_get_time();
+                exit_reason = "peer_disconnected";
+                ESP_LOGI(TAG,
+                         "SSE connection=%" PRIu64 " fd=%d peer disconnected",
+                         connection_id, sockfd);
                 break;
+            }
+            if (pk < 0 && socket_errno != EWOULDBLOCK
+                    && socket_errno != EAGAIN) {
+                exit_detected_us = esp_timer_get_time();
+                exit_reason = "disconnect_peek_failure";
+                ESP_LOGW(TAG,
+                         "SSE connection=%" PRIu64 " fd=%d disconnect peek "
+                         "failed result=%d errno=%d",
+                         connection_id, sockfd, pk, socket_errno);
+                break;
+            }
         }
         pb_policy_snapshot_t snap;
         pb_policy_get_snapshot(&snap);
         int64_t now = esp_timer_get_time();
         esp_err_t r = ESP_OK;
+        const char *sent_event = NULL;
         if (snap.state_revision != last_revision) {
-            r = sse_send(req, "state", snap.state_revision, &snap);
+            sent_event = "state";
+            if (!first_state_attempted) {
+                first_state_attempted = true;
+                ESP_LOGI(TAG,
+                         "SSE connection=%" PRIu64 " fd=%d first state send "
+                         "attempt revision=%lu",
+                         connection_id, sockfd,
+                         (unsigned long)snap.state_revision);
+            }
+            r = sse_send(req, connection_id, sockfd,
+                         peer_valid, peer_ipv4, peer_port, "state",
+                         snap.state_revision, &snap);
+            if (r == ESP_OK && !first_state_delivered) {
+                first_state_delivered = true;
+                ESP_LOGI(TAG,
+                         "SSE connection=%" PRIu64 " fd=%d first state send "
+                         "succeeded revision=%lu",
+                         connection_id, sockfd,
+                         (unsigned long)snap.state_revision);
+            }
             last_revision = snap.state_revision;
             last_telemetry_us = now;
         } else if (now - last_telemetry_us >= 2000000) {
-            r = sse_send(req, "telemetry", UINT32_MAX, &snap);
+            sent_event = "telemetry";
+            r = sse_send(req, connection_id, sockfd,
+                         peer_valid, peer_ipv4, peer_port,
+                         "telemetry", UINT32_MAX, &snap);
             last_telemetry_us = now;
         }
-        if (r != ESP_OK) break;
+        if (r != ESP_OK) {
+            exit_detected_us = esp_timer_get_time();
+            exit_reason = first_state_delivered
+                ? "subsequent_send_failure" : "first_state_send_failure";
+            ESP_LOGE(TAG,
+                     "SSE connection=%" PRIu64 " fd=%d %s send failed "
+                     "result=%s (0x%x) first_state_delivered=%s",
+                     connection_id, sockfd,
+                     sent_event ? sent_event : "unknown",
+                     esp_err_to_name(r), (unsigned)r,
+                     first_state_delivered ? "true" : "false");
+            break;
+        }
+        if (sent_event)
+            sse_diagnostic_note_event(slot, connection_id,
+                                      esp_timer_get_time());
         vTaskDelay(pdMS_TO_TICKS(250));
     }
-    httpd_req_async_handler_complete(req);
-    portENTER_CRITICAL(&s_sse_mux);
-    s_sse_clients--;
-    portEXIT_CRITICAL(&s_sse_mux);
+    if (exit_detected_us == 0) exit_detected_us = esp_timer_get_time();
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d cleanup starting "
+             "exit_reason=%s",
+             connection_id, sockfd, exit_reason);
+    esp_err_t complete_result = httpd_req_async_handler_complete(req);
+    unsigned clients_before;
+    unsigned clients_after;
+    bool slot_matched;
+    sse_diagnostic_release(slot, connection_id, &clients_before,
+                           &clients_after, &slot_matched);
+    int64_t cleanup_completed_us = esp_timer_get_time();
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d cleanup complete "
+             "async_result=%s (0x%x) clients=%u->%u slot_matched=%s "
+             "cleanup_latency_ms=%lld exit_reason=%s",
+             connection_id, sockfd, esp_err_to_name(complete_result),
+             (unsigned)complete_result, clients_before, clients_after,
+             slot_matched ? "true" : "false",
+             (long long)((cleanup_completed_us - exit_detected_us) / 1000),
+             exit_reason);
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d task exiting "
+             "exit_reason=%s",
+             connection_id, sockfd, exit_reason);
     vTaskDelete(NULL);
 }
 
 static esp_err_t events_get(httpd_req_t *req)
 {
+    int socket_fd = httpd_req_to_sockfd(req);
+    uint32_t peer_ipv4 = 0;
+    uint16_t peer_port = 0;
+    bool peer_valid = sse_peer_identity(socket_fd, &peer_ipv4, &peer_port);
+    uint64_t connection_id;
+    size_t slot = SSE_MAX_CLIENTS;
+    unsigned clients_before;
+    unsigned clients_after;
+    int64_t registered_us = esp_timer_get_time();
     portENTER_CRITICAL(&s_sse_mux);
+    connection_id = ++s_sse_next_connection_id;
+    if (connection_id == 0) connection_id = ++s_sse_next_connection_id;
+    clients_before = s_sse_clients;
     bool full = s_sse_clients >= SSE_MAX_CLIENTS;
-    if (!full) s_sse_clients++;
+    if (!full) {
+        s_sse_clients++;
+        s_sse_accepted_total++;
+        for (size_t i = 0; i < SSE_MAX_CLIENTS; i++) {
+            if (!s_sse_diagnostic_slots[i].active) {
+                slot = i;
+                s_sse_diagnostic_slots[i] = (sse_diagnostic_slot_t) {
+                    .active = true,
+                    .peer_valid = peer_valid,
+                    .connection_id = connection_id,
+                    .socket_fd = socket_fd,
+                    .peer_ipv4 = peer_ipv4,
+                    .peer_port = peer_port,
+                    .registered_us = registered_us,
+                };
+                break;
+            }
+        }
+    } else {
+        s_sse_rejected_total++;
+    }
+    clients_after = s_sse_clients;
     portEXIT_CRITICAL(&s_sse_mux);
-    if (full)
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d registration attempt "
+             "peer_valid=%s peer=%08lx:%u clients=%u",
+             connection_id, socket_fd, peer_valid ? "true" : "false",
+             (unsigned long)ntohl(peer_ipv4), peer_port, clients_before);
+    if (full) {
+        ESP_LOGW(TAG,
+                 "SSE connection=%" PRIu64 " fd=%d registration rejected "
+                 "clients=%u->%u free_heap=%lu min_free_heap=%lu "
+                 "largest_free_block=%lu",
+                 connection_id, socket_fd, clients_before, clients_after,
+                 (unsigned long)esp_get_free_heap_size(),
+                 (unsigned long)esp_get_minimum_free_heap_size(),
+                 (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
         return api_error(req, "503 Service Unavailable", "busy",
                          "event stream client limit reached", NULL);
+    }
+    if (slot == SSE_MAX_CLIENTS)
+        sse_log_failure(connection_id, socket_fd,
+                        "diagnostic slot assignment",
+                        ESP_ERR_INVALID_STATE, 0);
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d registration accepted "
+             "slot=%u clients=%u->%u",
+             connection_id, socket_fd, (unsigned)slot, clients_before,
+             clients_after);
 
     httpd_req_t *async_req = NULL;
-    if (httpd_req_async_handler_begin(req, &async_req) != ESP_OK) {
-        portENTER_CRITICAL(&s_sse_mux);
-        s_sse_clients--;
-        portEXIT_CRITICAL(&s_sse_mux);
+    esp_err_t begin_result = httpd_req_async_handler_begin(req, &async_req);
+    if (begin_result != ESP_OK) {
+        sse_log_failure(connection_id, socket_fd, "async handler begin",
+                        begin_result, 0);
+        bool slot_matched;
+        sse_diagnostic_release(slot, connection_id, &clients_before,
+                               &clients_after, &slot_matched);
+        ESP_LOGW(TAG,
+                 "SSE connection=%" PRIu64 " fd=%d async begin rollback "
+                 "clients=%u->%u slot_matched=%s",
+                 connection_id, socket_fd, clients_before, clients_after,
+                 slot_matched ? "true" : "false");
         return api_error(req, "503 Service Unavailable", "busy",
                          "cannot start event stream", NULL);
     }
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d async request created "
+             "result=%s (0x%x) slot=%u",
+             connection_id, socket_fd, esp_err_to_name(begin_result),
+             (unsigned)begin_result, (unsigned)slot);
+    portENTER_CRITICAL(&s_sse_mux);
+    if (slot < SSE_MAX_CLIENTS
+            && s_sse_diagnostic_slots[slot].active
+            && s_sse_diagnostic_slots[slot].connection_id == connection_id)
+        s_sse_diagnostic_slots[slot].request = async_req;
+    portEXIT_CRITICAL(&s_sse_mux);
     httpd_resp_set_type(async_req, "text/event-stream");
     httpd_resp_set_hdr(async_req, "Cache-Control", "no-cache");
     httpd_resp_set_hdr(async_req, "Connection", "keep-alive");
     if (xTaskCreate(sse_task, "db_sse", 6144, async_req, 3, NULL) != pdPASS) {
+        sse_log_failure(connection_id, socket_fd, "SSE task creation",
+                        ESP_ERR_NO_MEM, 0);
         api_error(async_req, "503 Service Unavailable", "busy",
                   "cannot start event stream task", NULL);
-        httpd_req_async_handler_complete(async_req);
-        portENTER_CRITICAL(&s_sse_mux);
-        s_sse_clients--;
-        portEXIT_CRITICAL(&s_sse_mux);
+        esp_err_t complete_result = httpd_req_async_handler_complete(async_req);
+        bool slot_matched;
+        sse_diagnostic_release(slot, connection_id, &clients_before,
+                               &clients_after, &slot_matched);
+        ESP_LOGW(TAG,
+                 "SSE connection=%" PRIu64 " fd=%d task start rollback "
+                 "async_result=%s (0x%x) clients=%u->%u slot_matched=%s",
+                 connection_id, socket_fd, esp_err_to_name(complete_result),
+                 (unsigned)complete_result, clients_before, clients_after,
+                 slot_matched ? "true" : "false");
         return ESP_OK;
     }
+    ESP_LOGI(TAG,
+             "SSE connection=%" PRIu64 " fd=%d task creation succeeded "
+             "slot=%u",
+             connection_id, socket_fd, (unsigned)slot);
     return ESP_OK;
 }
 
