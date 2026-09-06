@@ -44,14 +44,20 @@ static unsigned s_sse_clients;
 #define SSE_MAX_CLIENTS 2
 
 typedef struct {
+    bool valid;
+    sa_family_t family;
+    uint16_t port;
+    uint32_t scope_id;
+    uint8_t address[sizeof(struct in6_addr)];
+} sse_peer_identity_t;
+
+typedef struct {
     bool active;
     bool task_started;
     bool first_event_sent;
-    bool peer_valid;
     uint64_t connection_id;
     int socket_fd;
-    uint32_t peer_ipv4;
-    uint16_t peer_port;
+    sse_peer_identity_t peer;
     httpd_req_t *request;
     int64_t registered_us;
     int64_t task_started_us;
@@ -66,17 +72,50 @@ static uint64_t s_sse_failures_total;
 static uint64_t s_sse_cleanups_total;
 static sse_diagnostic_slot_t s_sse_diagnostic_slots[SSE_MAX_CLIENTS];
 
-static bool sse_peer_identity(int socket_fd, uint32_t *ipv4, uint16_t *port)
+static bool sse_peer_identity(int socket_fd, sse_peer_identity_t *identity)
 {
-    struct sockaddr_in peer = {0};
+    struct sockaddr_storage peer = {0};
     socklen_t peer_len = sizeof peer;
+    memset(identity, 0, sizeof *identity);
     errno = 0;
-    if (getpeername(socket_fd, (struct sockaddr *)&peer, &peer_len) != 0
-            || peer.sin_family != AF_INET)
+    if (getpeername(socket_fd, (struct sockaddr *)&peer, &peer_len) != 0)
         return false;
-    *ipv4 = peer.sin_addr.s_addr;
-    *port = ntohs(peer.sin_port);
+    if (peer.ss_family == AF_INET) {
+        const struct sockaddr_in *peer4 = (const struct sockaddr_in *)&peer;
+        identity->family = AF_INET;
+        identity->port = ntohs(peer4->sin_port);
+        memcpy(identity->address, &peer4->sin_addr, sizeof peer4->sin_addr);
+    } else if (peer.ss_family == AF_INET6) {
+        const struct sockaddr_in6 *peer6 = (const struct sockaddr_in6 *)&peer;
+        identity->family = AF_INET6;
+        identity->port = ntohs(peer6->sin6_port);
+        identity->scope_id = peer6->sin6_scope_id;
+        memcpy(identity->address, &peer6->sin6_addr, sizeof peer6->sin6_addr);
+    } else {
+        return false;
+    }
+    identity->valid = true;
     return true;
+}
+
+static bool sse_peer_identity_equal(const sse_peer_identity_t *left,
+                                    const sse_peer_identity_t *right)
+{
+    if (!left->valid || !right->valid || left->family != right->family
+            || left->port != right->port || left->scope_id != right->scope_id)
+        return false;
+    size_t address_size = left->family == AF_INET
+        ? sizeof(struct in_addr) : sizeof(struct in6_addr);
+    return memcmp(left->address, right->address, address_size) == 0;
+}
+
+static void sse_peer_identity_format(const sse_peer_identity_t *identity,
+                                     char *text, size_t text_size)
+{
+    if (!identity->valid
+            || !inet_ntop(identity->family, identity->address,
+                          text, text_size))
+        snprintf(text, text_size, "unavailable");
 }
 
 void pb_httpd_ctl_token(char *out, size_t outsz)
@@ -680,13 +719,19 @@ static esp_err_t health_get(httpd_req_t *req)
             cJSON_AddNumberToObject(connection, "connection_id",
                                     (double)slots[i].connection_id);
             cJSON_AddNumberToObject(connection, "socket_fd", slots[i].socket_fd);
-            if (slots[i].peer_valid) {
-                cJSON_AddNumberToObject(connection, "peer_ipv4",
-                                        (double)ntohl(slots[i].peer_ipv4));
+            if (slots[i].peer.valid) {
+                char peer_address[INET6_ADDRSTRLEN];
+                sse_peer_identity_format(&slots[i].peer, peer_address,
+                                         sizeof peer_address);
+                cJSON_AddNumberToObject(connection, "peer_family",
+                                        slots[i].peer.family);
+                cJSON_AddStringToObject(connection, "peer_address",
+                                        peer_address);
                 cJSON_AddNumberToObject(connection, "peer_port",
-                                        slots[i].peer_port);
+                                        slots[i].peer.port);
             } else {
-                cJSON_AddNullToObject(connection, "peer_ipv4");
+                cJSON_AddNullToObject(connection, "peer_family");
+                cJSON_AddNullToObject(connection, "peer_address");
                 cJSON_AddNullToObject(connection, "peer_port");
             }
             cJSON_AddBoolToObject(connection, "task_started", slots[i].task_started);
@@ -734,28 +779,28 @@ static esp_err_t sse_send_checked_chunk(
     httpd_req_t *req,
     uint64_t connection_id,
     int socket_fd,
-    bool peer_valid,
-    uint32_t peer_ipv4,
-    uint16_t peer_port,
+    const sse_peer_identity_t *peer,
     const char *operation,
     const char *data,
     size_t data_len)
 {
-    uint32_t current_ipv4 = 0;
-    uint16_t current_port = 0;
-    bool current_valid = sse_peer_identity(
-        socket_fd, &current_ipv4, &current_port);
-    if (!peer_valid || !current_valid
-            || current_ipv4 != peer_ipv4 || current_port != peer_port) {
+    sse_peer_identity_t current_peer;
+    bool current_valid = sse_peer_identity(socket_fd, &current_peer);
+    if (!current_valid || !sse_peer_identity_equal(peer, &current_peer)) {
         int socket_errno = errno;
+        char expected_text[INET6_ADDRSTRLEN];
+        char current_text[INET6_ADDRSTRLEN];
+        sse_peer_identity_format(peer, expected_text, sizeof expected_text);
+        sse_peer_identity_format(&current_peer, current_text,
+                                 sizeof current_text);
         ESP_LOGE(TAG,
                  "SSE connection=%" PRIu64 " fd=%d socket ownership lost "
-                 "before %s expected_peer=%08lx:%u current_valid=%s "
-                 "current_peer=%08lx:%u errno=%d",
+                 "before %s expected_peer=%s:%u family=%d "
+                 "current_valid=%s current_peer=%s:%u family=%d errno=%d",
                  connection_id, socket_fd, operation,
-                 (unsigned long)ntohl(peer_ipv4), peer_port,
+                 expected_text, peer->port, peer->family,
                  current_valid ? "true" : "false",
-                 (unsigned long)ntohl(current_ipv4), current_port,
+                 current_text, current_peer.port, current_peer.family,
                  socket_errno);
         sse_log_failure(connection_id, socket_fd, "socket ownership check",
                         ESP_ERR_INVALID_STATE, socket_errno);
@@ -772,9 +817,7 @@ static esp_err_t sse_send(
     httpd_req_t *req,
     uint64_t connection_id,
     int socket_fd,
-    bool peer_valid,
-    uint32_t peer_ipv4,
-    uint16_t peer_port,
+    const sse_peer_identity_t *peer,
     const char *event,
     uint32_t id,
     const pb_policy_snapshot_t *snap)
@@ -797,19 +840,19 @@ static esp_err_t sse_send(
         ? snprintf(head, sizeof head, "event: %s\n", event)
         : snprintf(head, sizeof head, "event: %s\nid: %lu\n", event, (unsigned long)id);
     esp_err_t r = sse_send_checked_chunk(
-        req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+        req, connection_id, socket_fd, peer,
         "event header send", head, n);
     if (r == ESP_OK)
         r = sse_send_checked_chunk(
-            req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+            req, connection_id, socket_fd, peer,
             "data prefix send", "data: ", 6);
     if (r == ESP_OK)
         r = sse_send_checked_chunk(
-            req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+            req, connection_id, socket_fd, peer,
             "JSON payload send", json, strlen(json));
     if (r == ESP_OK)
         r = sse_send_checked_chunk(
-            req, connection_id, socket_fd, peer_valid, peer_ipv4, peer_port,
+            req, connection_id, socket_fd, peer,
             "event terminator send", "\n\n", 2);
     cJSON_free(json);
     return r;
@@ -818,9 +861,7 @@ static esp_err_t sse_send(
 static bool sse_diagnostic_lookup(httpd_req_t *req, size_t *slot,
                                   uint64_t *connection_id,
                                   int64_t *registered_us,
-                                  bool *peer_valid,
-                                  uint32_t *peer_ipv4,
-                                  uint16_t *peer_port)
+                                  sse_peer_identity_t *peer)
 {
     bool found = false;
     int64_t now_us = esp_timer_get_time();
@@ -831,9 +872,7 @@ static bool sse_diagnostic_lookup(httpd_req_t *req, size_t *slot,
             *slot = i;
             *connection_id = s_sse_diagnostic_slots[i].connection_id;
             *registered_us = s_sse_diagnostic_slots[i].registered_us;
-            *peer_valid = s_sse_diagnostic_slots[i].peer_valid;
-            *peer_ipv4 = s_sse_diagnostic_slots[i].peer_ipv4;
-            *peer_port = s_sse_diagnostic_slots[i].peer_port;
+            *peer = s_sse_diagnostic_slots[i].peer;
             s_sse_diagnostic_slots[i].task_started = true;
             s_sse_diagnostic_slots[i].task_started_us = now_us;
             found = true;
@@ -885,13 +924,11 @@ static void sse_task(void *arg)
     size_t slot = SSE_MAX_CLIENTS;
     uint64_t connection_id = 0;
     int64_t registered_us = 0;
-    bool peer_valid = false;
-    uint32_t peer_ipv4 = 0;
-    uint16_t peer_port = 0;
+    sse_peer_identity_t peer = {0};
     int64_t task_started_us = esp_timer_get_time();
     bool diagnostic_found = sse_diagnostic_lookup(
         req, &slot, &connection_id, &registered_us,
-        &peer_valid, &peer_ipv4, &peer_port);
+        &peer);
     uint32_t last_revision = UINT32_MAX;
     int64_t last_telemetry_us = 0;
     int64_t exit_detected_us = 0;
@@ -952,7 +989,7 @@ static void sse_task(void *arg)
                          (unsigned long)snap.state_revision);
             }
             r = sse_send(req, connection_id, sockfd,
-                         peer_valid, peer_ipv4, peer_port, "state",
+                         &peer, "state",
                          snap.state_revision, &snap);
             if (r == ESP_OK && !first_state_delivered) {
                 first_state_delivered = true;
@@ -967,7 +1004,7 @@ static void sse_task(void *arg)
         } else if (now - last_telemetry_us >= 2000000) {
             sent_event = "telemetry";
             r = sse_send(req, connection_id, sockfd,
-                         peer_valid, peer_ipv4, peer_port,
+                         &peer,
                          "telemetry", UINT32_MAX, &snap);
             last_telemetry_us = now;
         }
@@ -1020,9 +1057,8 @@ static void sse_task(void *arg)
 static esp_err_t events_get(httpd_req_t *req)
 {
     int socket_fd = httpd_req_to_sockfd(req);
-    uint32_t peer_ipv4 = 0;
-    uint16_t peer_port = 0;
-    bool peer_valid = sse_peer_identity(socket_fd, &peer_ipv4, &peer_port);
+    sse_peer_identity_t peer;
+    bool peer_valid = sse_peer_identity(socket_fd, &peer);
     uint64_t connection_id;
     size_t slot = SSE_MAX_CLIENTS;
     unsigned clients_before;
@@ -1041,11 +1077,9 @@ static esp_err_t events_get(httpd_req_t *req)
                 slot = i;
                 s_sse_diagnostic_slots[i] = (sse_diagnostic_slot_t) {
                     .active = true,
-                    .peer_valid = peer_valid,
                     .connection_id = connection_id,
                     .socket_fd = socket_fd,
-                    .peer_ipv4 = peer_ipv4,
-                    .peer_port = peer_port,
+                    .peer = peer,
                     .registered_us = registered_us,
                 };
                 break;
@@ -1056,11 +1090,13 @@ static esp_err_t events_get(httpd_req_t *req)
     }
     clients_after = s_sse_clients;
     portEXIT_CRITICAL(&s_sse_mux);
+    char peer_text[INET6_ADDRSTRLEN];
+    sse_peer_identity_format(&peer, peer_text, sizeof peer_text);
     ESP_LOGI(TAG,
              "SSE connection=%" PRIu64 " fd=%d registration attempt "
-             "peer_valid=%s peer=%08lx:%u clients=%u",
+             "peer_valid=%s peer=%s:%u family=%d clients=%u",
              connection_id, socket_fd, peer_valid ? "true" : "false",
-             (unsigned long)ntohl(peer_ipv4), peer_port, clients_before);
+             peer_text, peer.port, peer.family, clients_before);
     if (full) {
         ESP_LOGW(TAG,
                  "SSE connection=%" PRIu64 " fd=%d registration rejected "

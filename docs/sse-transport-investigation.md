@@ -14,7 +14,7 @@ client and evidence recorder. Dragon-core only supplies an optional browser
 
 The firmware logs one lifecycle sequence per monotonically increasing connection
 ID. `/api/v2/health` exposes current slots, cumulative accept/reject/failure/cleanup
-counters, the registered IPv4 peer identity, heap headroom, HTTP-task stack
+counters, the registered IPv4/IPv6 peer identity, heap headroom, HTTP-task stack
 headroom, and total task count. Before every response chunk, the instrumented
 build verifies that the descriptor still names the connection's original peer.
 An ownership mismatch is logged and the write is rejected before data can reach a

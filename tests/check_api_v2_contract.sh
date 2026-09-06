@@ -41,7 +41,8 @@ for field in \
     sse_connections \
     connection_id \
     socket_fd \
-    peer_ipv4 \
+    peer_family \
+    peer_address \
     peer_port \
     registered_age_ms \
     last_event_age_ms
