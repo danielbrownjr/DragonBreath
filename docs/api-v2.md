@@ -59,7 +59,13 @@ The complete snapshot, not locally remembered intent, is the source of truth:
     "max_abs": 70.0,
     "comms_ms": 300000
   },
-  "heater": {"demand": true, "output": true},
+  "heater": {
+    "demand": true,
+    "output": true,
+    "commanded_duty": 0.700,
+    "approach_limit": 0.700,
+    "constraint": "approach_limit"
+  },
   "fan": {
     "requested_percent": 100,
     "effective_percent": 100,
@@ -94,13 +100,13 @@ The complete snapshot, not locally remembered intent, is the source of truth:
   },
   "control": {
     "loop": {
-      "controller": "bang_bang",
+      "controller": "pid",
       "preferred_source": "local_ntc",
       "effective_source": "local_ntc",
       "process_variable_c": 44.8,
-      "controller_request": 1.0,
-      "allowed_output": 1.0,
-      "constraint": "none"
+      "controller_request": 0.700,
+      "allowed_output": 0.700,
+      "constraint": "approach_limit"
     },
     "lease": {
       "active": true,
@@ -115,6 +121,25 @@ The complete snapshot, not locally remembered intent, is the source of truth:
   }
 }
 ```
+
+`heater.commanded_duty` is the normalized duty admitted to the 10-second SSR
+window after the PID approach policy and non-latching thermal governors. It is
+not phase-angle modulation; `heater.output` remains the instantaneous on/off SSR
+command. `heater.approach_limit` reports the product-owned duty ceiling selected
+for the current control error. `heater.constraint` is one of `off`, `none`,
+`approach_limit`, `target_reached`, `local_foldback`, `element_foldback`,
+`pid_error`, `safety_inhibited`, or `unknown`.
+
+`control.loop` is a read-only explanation of the latest active control tick.
+`controller` identifies the controller implementation. `preferred_source`
+reports the persisted chamber-source preference, while `effective_source` and
+`process_variable_c` report the source and temperature actually supplied to
+`dc_pid`; they are `unavailable`/`null` while the controller is not running.
+`controller_request` is the normalized PID request after the active approach
+ceiling but before the local thermal governors. `allowed_output` is the same
+request after those governors and is therefore identical to
+`heater.commanded_duty`. `heater.output` remains the instantaneous SSR state.
+All fields are observational and have no effect on control or safety decisions.
 
 Temperatures are JSON `null` when their sensor status is not `ok`. Public
 state and SSE snapshots intentionally omit the raw lease ID; only the
@@ -142,7 +167,7 @@ cutoff.
 (residual-heat cooldown purge), `auto_filter` (the fan-only filtration band),
 `requested` (the manual filtration fan), or `fault` (safety airflow).
 `environment.auto_filtering` is `true` while the fan-only filtration band is driving
-the blower — whenever `filter_auto` is enabled, Moonraker is connected, and the bed
+the blower — whenever `filter_auto` is enabled, the selected printer source is connected, and the bed
 **setpoint** is at/above `filter_temp_c`. This is a **standing** band, independent of
 mode (it runs even while idle); the heater still engages only in AUTO at the higher
 bed threshold.

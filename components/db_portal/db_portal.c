@@ -60,13 +60,13 @@ extern const unsigned char diagnostics_html_start[] asm("_binary_diagnostics_htm
 extern const unsigned char diagnostics_html_end[] asm("_binary_diagnostics_html_end");
 extern const unsigned char consequential_toggle_js_start[] asm("_binary_consequential_toggle_js_start");
 extern const unsigned char consequential_toggle_js_end[] asm("_binary_consequential_toggle_js_end");
+extern const unsigned char control_diagnostics_js_start[] asm("_binary_control_diagnostics_js_start");
+extern const unsigned char control_diagnostics_js_end[] asm("_binary_control_diagnostics_js_end");
 
 // ---- product-local diagnostics page (/diag) ---------------------------------
 // The shared dc_ui SPA owns the dashboard and dc_portal owns the generic /console;
 // /diag is device-specific (chamber/element/PTC/SSR/fault chain) so it stays here,
-// rendering DragonBreath's own /api/v2 telemetry. Compact copy of the portal chrome
-// since dc_portal owns the shared head. Restored after the pb_portal->db_portal
-// extraction dropped it.
+// rendering DragonBreath's own /api/v2 telemetry as a small embedded product asset.
 
 static esp_err_t embedded_text(httpd_req_t *req, const char *content_type,
                                const unsigned char *start,
@@ -88,6 +88,13 @@ static esp_err_t consequential_toggle_js_get(httpd_req_t *req)
     return embedded_text(req, "text/javascript; charset=utf-8",
                          consequential_toggle_js_start,
                          consequential_toggle_js_end);
+}
+
+static esp_err_t control_diagnostics_js_get(httpd_req_t *req)
+{
+    return embedded_text(req, "text/javascript; charset=utf-8",
+                         control_diagnostics_js_start,
+                         control_diagnostics_js_end);
 }
 
 static cJSON *field(const char *key, const char *label, const char *type,
@@ -776,6 +783,13 @@ static esp_err_t register_product_routes(httpd_handle_t server, void *ctx)
         .handler = consequential_toggle_js_get,
     };
     err = httpd_register_uri_handler(server, &consequential_toggle);
+    if (err != ESP_OK) return err;
+    const httpd_uri_t control_diagnostics = {
+        .uri = "/ui/control-diagnostics.js",
+        .method = HTTP_GET,
+        .handler = control_diagnostics_js_get,
+    };
+    err = httpd_register_uri_handler(server, &control_diagnostics);
     if (err != ESP_OK) return err;
     const httpd_uri_t favicon = { .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_get };
     return httpd_register_uri_handler(server, &favicon);

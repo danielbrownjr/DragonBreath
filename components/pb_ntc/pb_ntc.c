@@ -8,7 +8,7 @@
 #include <stdatomic.h>
 #include "esp_log.h"
 #include "nvs.h"
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
 #include "freertos/FreeRTOS.h"
 #else
 #include "esp_adc/adc_oneshot.h"
@@ -91,7 +91,7 @@ esp_err_t pb_ntc_set_offset_c(pb_ntc_channel_t ch, float offset_c)
 
 float pb_ntc_get_offset_c(pb_ntc_channel_t ch) { return ntc_offset_c(ch); }
 
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
 
 static portMUX_TYPE s_hil_mux = portMUX_INITIALIZER_UNLOCKED;
 static float s_hil_temp[2];
@@ -124,7 +124,7 @@ esp_err_t pb_ntc_init(void)
 {
     pb_ntc_hil_reset();
     s_ready = true;
-    ESP_LOGW(TAG, "HIL dev-board backend: ADC disabled; temperatures are injected");
+    ESP_LOGW(TAG, "safe dev-board backend: ADC disabled; temperatures default to nominal");
     return ESP_OK;
 }
 

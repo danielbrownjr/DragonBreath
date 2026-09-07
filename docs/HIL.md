@@ -81,6 +81,30 @@ CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 | Devboard | USB-to-UART bridge | `sdkconfig.hil-devboard-uart` | `/dev/ttyUSB0` | Panda I/O compiled out |
 | Panda | On-board UART bridge | `sdkconfig.hil-panda` | `/dev/ttyUSB0` | Real hardware active |
 
+## Native-USB production-network debugging
+
+`sdkconfig.debug-devboard-native` is a non-HIL debug profile for a generic
+ESP32-C3 development board. It runs DragonBreath's production networking, portal,
+dashboard, and control-source clients with normal ESP-IDF logs on native USB
+Serial/JTAG. Panda-specific relay, fan, ADC, LED, button, and strap backends are
+compiled out, so GPIO18/19 remain available to USB and the image cannot drive
+Panda mains hardware. The HIL JSON command console is disabled.
+
+Build, audit, flash, and monitor it with:
+
+```bash
+source ~/esp/esp-idf/export.sh
+idf.py -B build-debug-devboard-native \
+  -DSDKCONFIG="$PWD/build-debug-devboard-native/sdkconfig.profile" \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.debug-devboard-native" \
+  build
+sh tests/check_devboard_compileout.sh build-debug-devboard-native
+idf.py -B build-debug-devboard-native -p /dev/ttyACM0 flash monitor
+```
+
+This profile is for development boards only. Do not flash it onto a Panda Breath:
+its physical sensors, buttons, LEDs, fan, and heater are intentionally unavailable.
+
 When `--transport` is omitted, the runner infers `native` from `/dev/ttyACM*`
 and `uart` from `/dev/ttyUSB*`. Pass it explicitly for other device naming
 schemes.

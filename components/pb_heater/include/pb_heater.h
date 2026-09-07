@@ -32,26 +32,40 @@ typedef enum {
                                   // corrupt and mapped to a generic latched fault
 } pb_fault_reason_t;
 
-// Read-only, controller-agnostic explanation of the latest control tick. This is
-// diagnostics only: it mirrors decisions already made by the heater and never
-// participates in control or safety policy.
+// Read-only control telemetry for diagnostics and hardware validation. These
+// values describe DragonBreath's product-owned control path; dc_pid remains a
+// board-neutral math primitive with no knowledge of approach limits, safety
+// governors, or the physical SSR.
 typedef enum {
-    PB_HEATER_CONSTRAINT_NONE = 0,
-    PB_HEATER_CONSTRAINT_IDLE,
+    PB_HEATER_CONSTRAINT_OFF = 0,
+    PB_HEATER_CONSTRAINT_NONE,
+    PB_HEATER_CONSTRAINT_APPROACH_LIMIT,
+    PB_HEATER_CONSTRAINT_TARGET_REACHED,
     PB_HEATER_CONSTRAINT_LOCAL_FOLDBACK,
     PB_HEATER_CONSTRAINT_ELEMENT_FOLDBACK,
+    PB_HEATER_CONSTRAINT_PID_ERROR,
     PB_HEATER_CONSTRAINT_SAFETY_INHIBITED,
 } pb_heater_constraint_t;
 
 typedef struct {
+    // Persisted preference is observational only; eligibility and source
+    // selection remain product-owned by app_main/pb_policy.
     bool preferred_external;
+    // Source and process variable actually supplied to dc_pid on the latest
+    // active control tick. Invalid while the controller is not running.
     bool effective_external;
     bool process_variable_valid;
     float process_variable_c;
-    float controller_request; // normalized request before product foldbacks
-    float allowed_output;     // normalized request after product foldbacks
+    // PID request after its active approach ceiling, before downstream thermal
+    // governors (normalized 0..1).
+    float requested_duty;
+    // PID output after DragonBreath's active approach limit (normalized 0..1).
+    // This is the request admitted to the SSR window after thermal governors.
+    float commanded_duty;
+    // Product-owned maximum duty for the current temperature error (0..1).
+    float approach_limit;
     pb_heater_constraint_t constraint;
-} pb_heater_control_snapshot_t;
+} pb_heater_telemetry_t;
 
 // Pure fail-safe decision for the boot-time fault restore (pb_heater_load_fault),
 // inline so it can be host-tested without an NVS backend. Given the outcome of
@@ -197,7 +211,7 @@ static inline bool pb_heater_foldback_cut(bool ptc_ok, float ptc_c, bool prev_cu
 // priority ordering can be host-tested without the ADC/SSR/RTOS backend. Given the
 // freshest per-channel sensor reads (status-OK flags + instantaneous °C), whether a
 // target is armed, and whether the comms deadman has expired, returns the fault the
-// tick must latch — or PB_FAULT_NONE if it is safe to run the bang-bang loop. The
+// tick must latch — or PB_FAULT_NONE if it is safe to run the control loop. The
 // order is load-bearing and MUST stay identical to pb_heater_tick():
 //   1. PTC over-temp     — only trusted when the PTC sensor reads valid
 //   2. chamber over-temp — only trusted when the chamber sensor reads valid
@@ -235,6 +249,11 @@ esp_err_t pb_heater_init(void);
 esp_err_t pb_heater_set_target_c(float target_c);
 float pb_heater_get_target_c(void);
 
+// Copy one lock-consistent diagnostic snapshot. This is observational only and
+// has no effect on PID state, watchdogs, leases, or heater output.
+void pb_heater_get_telemetry(pb_heater_telemetry_t *out);
+const char *pb_heater_constraint_str(pb_heater_constraint_t constraint);
+
 // Optional external chamber measurement used ONLY for set-point regulation.
 // Pass NAN to fall back to the local chamber NTC. The local chamber NTC and PTC
 // remain authoritative for over-temperature trips, sensor-fault detection, and
@@ -244,7 +263,6 @@ void pb_heater_set_control_chamber_c(float temp_c);
 // Mirror the separately persisted Bambu preference into diagnostics. Eligibility
 // and source selection remain entirely product-owned by app_main/pb_policy.
 void pb_heater_set_external_preference(bool enabled);
-void pb_heater_get_control_snapshot(pb_heater_control_snapshot_t *snapshot);
 
 // --- Runtime-configurable, persisted settings (pb_heater is the sole owner) ---
 // Load persisted settings from NVS (namespace app_nvs). MUST be called AFTER
@@ -283,10 +301,10 @@ float     pb_heater_get_fb_cut_c(void);
 // pb_heater_get_comms_timeout_ms() while heating, the heater latches off.
 void pb_heater_notify_link_alive(void);
 
-// Periodic control tick (call at ~1-2 Hz). Reads the local chamber + PTC temps,
-// enforces all safety cutoffs from those local sensors, and drives the SSR with
-// hysteresis around the set-point using the optional external regulation
-// temperature when one is supplied.
+// Periodic control tick (call at ~2 Hz). Reads the local chamber + PTC temps,
+// enforces all safety cutoffs from those local sensors, and drives the SSR from
+// the shared dc_pid controller using the optional external regulation temperature
+// when one is supplied (otherwise the local chamber NTC is the process variable).
 void pb_heater_tick(void);
 
 // Immediate, latching shutoff. Clears the target and latches off. Heat stays off
@@ -339,9 +357,9 @@ pb_fault_reason_t pb_heater_fault_code(void);
 // Canonical, stable string for a fault code (never NULL; out-of-range -> generic).
 const char *pb_heater_fault_str(pb_fault_reason_t code);
 
-// True if the SSR is currently commanded on (momentary bang-bang state).
+// True if the SSR is currently commanded on (momentary time-proportion state).
 bool pb_heater_is_on(void);
 
 // True in "heat mode": a target is armed and no fault is latched. Steady across
-// the SSR's bang-bang cycling — use this (not pb_heater_is_on) for the fan/LED.
+// the SSR's time-proportion cycling — use this (not pb_heater_is_on) for the fan/LED.
 bool pb_heater_heat_mode(void);

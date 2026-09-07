@@ -31,11 +31,11 @@
 #include "pb_hil.h"
 #include "dc_evlog.h"
 
-#include "esp_wifi.h"
 #include "esp_mac.h"
 #include "dc_wifi.h"
 #include "dc_moonraker.h"
 #include "dc_source.h"
+#include "pb_peer.h"
 #include "dc_bambu.h"
 #include "dc_prusa.h"
 #include "pb_ha.h"
@@ -187,6 +187,10 @@ static void seed_dev_config(void)
 #ifdef DB_WIFI_SSID
     nvs_set_str(h, "ssid", DB_WIFI_SSID);
     nvs_set_str(h, "password", DB_WIFI_PASS);
+    // Match a normal provisioning: FALLBACK = STA-only while connected (no concurrent
+    // AP). Without this the mode defaults to AP_ALWAYS, so a weak/flapping STA leaves
+    // the softAP up and the SPA bounces to /setup whenever network_mode reads "ap".
+    nvs_set_u8(h, "ap_mode", DC_WIFI_AP_FALLBACK);
 #endif
 #ifdef DB_MOONRAKER_HOST
     nvs_set_str(h, "mk_host", DB_MOONRAKER_HOST);
@@ -339,8 +343,8 @@ static void control_task(void *arg)
             bool net = s_net_up;
             pb_policy_snapshot_t snap;
             pb_policy_get_snapshot(&snap);
-            uint32_t zc = 0, zciv = 0;
-            pb_fan_zc_diag(&zc, &zciv);
+            uint32_t zc = 0, zciv = 0, zcrej = 0;
+            pb_fan_zc_diag(&zc, &zciv, &zcrej);
             // Build the status line WITHOUT the ZC counters (which change every
             // sample). Collapse consecutive identical states into a single
             // "repeated Nx" instead of spamming a line every 2 s — this keeps the
@@ -399,14 +403,16 @@ static void control_task(void *arg)
             if (strcmp(key, s_dbg_last) == 0) {
                 s_dbg_rep++;
                 if (s_dbg_rep % 30 == 0)   // ~60 s liveness flush during a long run
-                    ESP_LOGI(TAG, "%s | repeated %lux | ZC n=%lu dt=%luus",
+                    ESP_LOGI(TAG, "%s | repeated %lux | ZC n=%lu dt=%luus rejected=%lu",
                              line, (unsigned long)s_dbg_rep,
-                             (unsigned long)zc, (unsigned long)zciv);
+                             (unsigned long)zc, (unsigned long)zciv,
+                             (unsigned long)zcrej);
             } else {
                 if (s_dbg_rep > 0)
                     ESP_LOGI(TAG, "(previous line repeated %lux)", (unsigned long)s_dbg_rep);
-                ESP_LOGI(TAG, "%s | ZC n=%lu dt=%luus",
-                         line, (unsigned long)zc, (unsigned long)zciv);
+                ESP_LOGI(TAG, "%s | ZC n=%lu dt=%luus rejected=%lu",
+                         line, (unsigned long)zc, (unsigned long)zciv,
+                         (unsigned long)zcrej);
                 strncpy(s_dbg_last, key, sizeof s_dbg_last - 1);
                 s_dbg_last[sizeof s_dbg_last - 1] = '\0';
                 s_dbg_rep = 0;
@@ -501,9 +507,10 @@ void app_main(void)
     // abort/reboot and tear down the safety loop that's already running above.
     if ((e = dc_wifi_start()) != ESP_OK)
         ESP_LOGE(TAG, "dc_wifi_start: %s (continuing; safety loop unaffected)", esp_err_to_name(e));
-    // Mains-powered device: disable WiFi modem-sleep so the control API stays
-    // responsive (power-save adds ~0.5s latency spikes to incoming requests).
-    esp_wifi_set_ps(WIFI_PS_NONE);
+    // ESP-NOW peer provider: broadcast our heater capability for consumers (DragonVent).
+    // Advisory only; non-fatal like the rest of network bring-up.
+    if ((e = pb_peer_start()) != ESP_OK)
+        ESP_LOGW(TAG, "pb_peer_start: %s (continuing without peer broadcast)", esp_err_to_name(e));
     // Control-source selector: start ONLY the bound client. Klipper is the
     // default and the shipped path; Bambu/HA are opt-in. Each is log-and-continue
     // like the rest of network bring-up — a source that fails to init just leaves

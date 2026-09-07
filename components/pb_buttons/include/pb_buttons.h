@@ -43,7 +43,7 @@ typedef void (*pb_button_cb_t)(pb_button_id_t id, pb_button_event_t ev);
 // task — keep it short and non-blocking.
 esp_err_t pb_buttons_start(pb_button_cb_t cb);
 
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
 // HIL only: inject a raw electrical level (0/1) for a button, standing in for
 // gpio_get_level() so scenarios exercise the real debounce/long-press timing.
 void pb_buttons_hil_set_level(pb_button_id_t id, int level);

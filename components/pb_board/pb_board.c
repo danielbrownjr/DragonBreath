@@ -7,8 +7,8 @@ static const char *TAG = "pb_board";
 
 void pb_board_init(void)
 {
-#ifdef CONFIG_PB_HIL_DEVBOARD
-    ESP_LOGW(TAG, "HIL dev-board target: production board GPIO init compiled out");
+#ifdef CONFIG_PB_DEVBOARD_SAFE
+    ESP_LOGW(TAG, "safe dev-board target: production board GPIO init compiled out");
 #else
     const gpio_config_t leds = {
         .pin_bit_mask = (1ULL << PB_GPIO_LED_K1) |
@@ -36,7 +36,7 @@ void pb_board_init(void)
 
 int pb_board_rref_kohm(void)
 {
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
     return 82;
 #else
     // The Rref strap on GPIO19 selects the divider reference resistor (level 0 -> 82k,

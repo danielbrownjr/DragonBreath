@@ -1,0 +1,8 @@
+# ESP32-C3 native-USB debug profile with production networking and web UI.
+# Panda-specific GPIO and ADC backends are compiled out so GPIO18/19 remain
+# available to USB Serial/JTAG. The HIL JSON command console stays disabled.
+CONFIG_PB_DEVBOARD_SAFE=y
+# CONFIG_PB_HIL_CONSOLE is not set
+# CONFIG_PB_POWER_LED is not set
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

@@ -121,7 +121,7 @@ esp_err_t pb_ntc_set_offset_c(pb_ntc_channel_t ch, float offset_c);
 // Current (clamped) calibration offset for the channel, in °C.
 float pb_ntc_get_offset_c(pb_ntc_channel_t ch);
 
-#ifdef CONFIG_PB_HIL_DEVBOARD
+#ifdef CONFIG_PB_DEVBOARD_SAFE
 // Dev-board HIL backend. Production builds do not expose or compile this API.
 void pb_ntc_hil_set(pb_ntc_channel_t ch, pb_ntc_status_t status, float temp_c);
 void pb_ntc_hil_reset(void);

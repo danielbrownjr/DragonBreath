@@ -7,6 +7,7 @@ adapter="$root/components/db_portal/db_portal.c"
 core_portal="$root/managed_components/dc_portal/dc_portal.c"
 diagnostics="$root/components/db_portal/www/diagnostics.html"
 consequential_toggle="$root/components/db_portal/www/consequential-toggle.js"
+control_diagnostics="$root/components/db_portal/www/control-diagnostics.js"
 # The dashboard/control UI is supplied by the pinned dragon-core dc_ui component.
 portal="${DC_UI_HTML:-}"
 if [ -z "$portal" ]; then
@@ -123,6 +124,23 @@ grep -q 'input.checked = authoritative.value' "$consequential_toggle"
 grep -q "dialog.addEventListener('cancel'" "$consequential_toggle"
 grep -q 'document.activeElement !== confirm' "$consequential_toggle"
 grep -q '"/ui/consequential-toggle.js"' "$adapter"
+grep -q '"/ui/control-diagnostics.js"' "$adapter"
+grep -q 'DBControlDiagnostics.view' "$diagnostics"
+grep -q 'DBControlDiagnostics.connect' "$diagnostics"
+grep -q "value === 'pid'" "$control_diagnostics"
+
+# Product-owned heater diagnostics must make the PID command, approach policy,
+# and dominant constraint observable without moving actuator policy into core.
+for field in commanded_duty approach_limit constraint; do
+    grep -q "\"$field\"" "$httpd" || {
+        echo "state document is missing heater.$field" >&2
+        exit 1
+    }
+done
+grep -q 'heater_telemetry.requested_duty' "$httpd" || {
+    echo "control.loop.controller_request is not sourced from heater telemetry" >&2
+    exit 1
+}
 
 # Ownership boundary: core owns HTTP/provisioning/recovery; the product adapter
 # supplies API registration, authorization, heater safety and image identity.

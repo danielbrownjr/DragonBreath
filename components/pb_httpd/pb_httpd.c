@@ -102,6 +102,13 @@ static void add_num1(cJSON *o, const char *key, float v)
     cJSON_AddRawToObject(o, key, b);
 }
 
+static void add_num3(cJSON *o, const char *key, float v)
+{
+    char b[20];
+    snprintf(b, sizeof b, "%.3f", (double)v);
+    cJSON_AddRawToObject(o, key, b);
+}
+
 static const char *fan_reason(const pb_policy_snapshot_t *s)
 {
     if (s->fault_latched || s->inhibited) return "fault";
@@ -110,18 +117,6 @@ static const char *fan_reason(const pb_policy_snapshot_t *s)
     if (s->auto_filtering) return "auto_filter";   // AUTO fan-only band (no heat)
     if (s->effective_fan_percent) return "requested";
     return "off";
-}
-
-static const char *heater_constraint_str(pb_heater_constraint_t constraint)
-{
-    switch (constraint) {
-    case PB_HEATER_CONSTRAINT_NONE:             return "none";
-    case PB_HEATER_CONSTRAINT_IDLE:             return "idle";
-    case PB_HEATER_CONSTRAINT_LOCAL_FOLDBACK:   return "local_chamber_foldback";
-    case PB_HEATER_CONSTRAINT_ELEMENT_FOLDBACK: return "element_foldback";
-    case PB_HEATER_CONSTRAINT_SAFETY_INHIBITED: return "safety_inhibited";
-    default:                                    return "unknown";
-    }
 }
 
 static cJSON *state_json(const pb_policy_snapshot_t *s)
@@ -148,8 +143,15 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
         config, "comms_ms", pb_heater_get_comms_timeout_ms());
 
     cJSON *heater = cJSON_AddObjectToObject(o, "heater");
+    pb_heater_telemetry_t heater_telemetry;
+    pb_heater_get_telemetry(&heater_telemetry);
     cJSON_AddBoolToObject(heater, "demand", s->heater_demand);
     cJSON_AddBoolToObject(heater, "output", s->heater_output);
+    add_num3(heater, "commanded_duty", heater_telemetry.commanded_duty);
+    add_num3(heater, "approach_limit", heater_telemetry.approach_limit);
+    cJSON_AddStringToObject(
+        heater, "constraint",
+        pb_heater_constraint_str(heater_telemetry.constraint));
 
     cJSON *fan = cJSON_AddObjectToObject(o, "fan");
     cJSON_AddNumberToObject(fan, "requested_percent", s->requested_fan_percent);
@@ -226,23 +228,21 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
         cJSON_AddNumberToObject(lease, "expires_in_ms", 0);
     }
 
-    pb_heater_control_snapshot_t controller;
-    pb_heater_get_control_snapshot(&controller);
     cJSON *loop = cJSON_AddObjectToObject(control, "loop");
-    cJSON_AddStringToObject(loop, "controller", "bang_bang");
+    cJSON_AddStringToObject(loop, "controller", "pid");
     cJSON_AddStringToObject(loop, "preferred_source",
-                            controller.preferred_external ? "bambu" : "local_ntc");
+                            heater_telemetry.preferred_external ? "bambu" : "local_ntc");
     cJSON_AddStringToObject(loop, "effective_source",
-        !controller.process_variable_valid ? "unavailable" :
-        controller.effective_external ? "bambu" : "local_ntc");
-    if (controller.process_variable_valid)
-        add_num1(loop, "process_variable_c", controller.process_variable_c);
+        !heater_telemetry.process_variable_valid ? "unavailable" :
+        heater_telemetry.effective_external ? "bambu" : "local_ntc");
+    if (heater_telemetry.process_variable_valid)
+        add_num1(loop, "process_variable_c", heater_telemetry.process_variable_c);
     else
         cJSON_AddNullToObject(loop, "process_variable_c");
-    add_num1(loop, "controller_request", controller.controller_request);
-    add_num1(loop, "allowed_output", controller.allowed_output);
+    add_num3(loop, "controller_request", heater_telemetry.requested_duty);
+    add_num3(loop, "allowed_output", heater_telemetry.commanded_duty);
     cJSON_AddStringToObject(loop, "constraint",
-                            heater_constraint_str(controller.constraint));
+                            pb_heater_constraint_str(heater_telemetry.constraint));
 
     // Remembered mode parameters: what a mode is re-armed with when the caller
     // supplies no values of its own (front-panel buttons), and what the UI

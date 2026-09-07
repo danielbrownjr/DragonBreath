@@ -4,6 +4,7 @@
 #     -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.hil-devboard-uart" build
 CONFIG_PB_HIL_CONSOLE=y
 CONFIG_PB_HIL_DEVBOARD=y
+CONFIG_PB_DEVBOARD_SAFE=y
 
 # Match Panda hardware transport while retaining the GPIO-free devboard backend.
 # GPIO21 is UART0 TX, so the optional Panda power LED must remain disabled.

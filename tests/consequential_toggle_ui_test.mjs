@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
@@ -152,6 +153,22 @@ test('keyboard cancellation closes modal without mutation', async () => {
   await new Promise((resolve) => setTimeout(resolve, 1));
   assert.equal(event.defaultPrevented, true); assert.equal(f.mutations, 0); assert.equal(byClass(f.document.body, 'ct-dialog'), null);
   assert.equal(f.document.activeElement, f.api.elements.input);
+});
+
+test('Enter outside an explicit dialog action cannot confirm', async () => {
+  const f = fixture({ confirm: () => ({ title: 'Enable?' }) }); await settle();
+  const pending = f.api.request(true); await settle(); const dialog = byClass(f.document.body, 'ct-dialog');
+  f.document.activeElement = dialog;
+  const event = dialog.dispatch('keydown', { key: 'Enter' }); await settle();
+  assert.equal(event.defaultPrevented, true); assert.equal(f.mutations, 0);
+  byClass(f.document.body, 'ct-cancel').dispatch('click'); await pending;
+});
+
+test('diagnostics keeps an opaque backdrop and mobile dialog actions', () => {
+  const html = readFileSync('components/db_portal/www/diagnostics.html', 'utf8');
+  assert.match(html, /\.ct-dialog::backdrop\{background:#000c\}/);
+  assert.match(html, /@media\(max-width:650px\)/);
+  assert.match(html, /\.ct-dialog-actions\{flex-direction:column-reverse\}/);
 });
 
 test('server response differing from request wins', async () => {
