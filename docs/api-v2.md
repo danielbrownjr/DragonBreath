@@ -135,9 +135,9 @@ for the current control error. `heater.constraint` is one of `off`, `none`,
 reports the persisted chamber-source preference, while `effective_source` and
 `process_variable_c` report the source and temperature actually supplied to
 `dc_pid`; they are `unavailable`/`null` while the controller is not running.
-`controller_request` is the normalized PID request after the active approach
-ceiling but before the local thermal governors. `allowed_output` is the same
-request after those governors and is therefore identical to
+`controller_request` is the normalized PID P+I+D request before the active
+approach ceiling and local thermal governors. `allowed_output` is the request
+after those limits and is therefore identical to
 `heater.commanded_duty`. `heater.output` remains the instantaneous SSR state.
 All fields are observational and have no effect on control or safety decisions.
 

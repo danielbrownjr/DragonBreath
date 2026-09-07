@@ -41,8 +41,8 @@ static pb_heater_pid_state_t s_pid; // control-task only — shared dc_pid state
 static bool        s_effective_external; // guarded by s_mux; latest active PID source
 static bool        s_process_variable_valid; // guarded by s_mux
 static float       s_process_variable_c; // guarded by s_mux; value supplied to dc_pid
-static float       s_requested_duty; // guarded by s_mux; PID request before thermal governors
-static float       s_commanded_duty; // guarded by s_mux; PID output after approach limit
+static float       s_requested_duty; // guarded by s_mux; pre-clamp PID request
+static float       s_commanded_duty; // guarded by s_mux; duty admitted after all governors
 static float       s_approach_limit; // guarded by s_mux; product-owned active duty ceiling
 static pb_heater_constraint_t s_constraint; // guarded by s_mux
 static bool        s_fb_cut;        // control-task only — element-foldback hysteresis latch:
@@ -699,8 +699,10 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     // authoritative regardless of PID demand.
     bool safety_inhibited = s_local_cut || s_fb_cut;
     float duty = 0.0f;
-    bool pid_ok = pb_heater_pid_step(&s_pid, target, regulation_c,
-                                     !safety_inhibited, &duty);
+    float requested_duty = 0.0f;
+    bool pid_ok = pb_heater_pid_step_with_request(
+        &s_pid, target, regulation_c, !safety_inhibited, &duty,
+        &requested_duty);
     if (!pid_ok) {
         ESP_LOGE(TAG, "PID step rejected; forcing SSR off");
         duty = 0.0f;
@@ -723,7 +725,7 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     // thermal governors. Keep the underlying PID state private; diagnostics
     // should report the command the actuator was allowed to receive.
     float commanded_duty = safety_inhibited ? 0.0f : duty;
-    telemetry_set(external_regulation, true, regulation_c, duty,
+    telemetry_set(external_regulation, true, regulation_c, requested_duty,
                   commanded_duty, approach_limit, constraint);
 
     // Step 5 — time-proportion normalized duty through a slow 10 s window. This is
