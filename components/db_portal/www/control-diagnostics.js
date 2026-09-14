@@ -84,7 +84,7 @@
         (fallback ? ' · preferred Bambu telemetry unavailable' : ''),
       target: temperature(target.effective_c),
       mode: modeLabel(state.mode),
-      request: percent(loop.controller_request),
+      pidOutput: percent(loop.pid_output),
       allowed: percent(loop.allowed_output),
       delivered: heater.output ? 'ON' : 'OFF',
       constraint: constraint,
@@ -108,11 +108,20 @@
   }
 
   function connect(options) {
-    var stream = options.createEventSource('/api/v2/events');
+    var stream;
+    try { stream = options.createEventSource('/api/v2/events'); }
+    catch (_) {
+      options.status('Live stream unavailable — switching to polling');
+      options.poll();
+      return null;
+    }
     var failed = false;
+    var failures = 0;
     function receive(event) {
+      if (failed) return;
       try {
         options.apply(JSON.parse(event.data));
+        failures = 0;
         options.status('Telemetry: live');
       } catch (_) {}
     }
@@ -120,6 +129,14 @@
     stream.addEventListener('telemetry', receive);
     stream.onerror = function () {
       if (failed) return;
+      // CONNECTING (0) retries automatically. Give transient failures two
+      // retries; CLOSED (2), or three errors without a received update, falls
+      // back once. An open connection alone does not prove telemetry recovered.
+      failures += 1;
+      if (stream.readyState !== 2 && failures < 3) {
+        options.status('Telemetry interrupted — reconnecting');
+        return;
+      }
       failed = true;
       stream.close();
       options.status('Live stream unavailable — switching to polling');

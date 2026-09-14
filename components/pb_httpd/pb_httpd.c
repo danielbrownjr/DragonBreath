@@ -239,7 +239,7 @@ static cJSON *state_json(const pb_policy_snapshot_t *s)
         add_num1(loop, "process_variable_c", heater_telemetry.process_variable_c);
     else
         cJSON_AddNullToObject(loop, "process_variable_c");
-    add_num3(loop, "controller_request", heater_telemetry.requested_duty);
+    add_num3(loop, "pid_output", heater_telemetry.pid_duty);
     add_num3(loop, "allowed_output", heater_telemetry.commanded_duty);
     cJSON_AddStringToObject(loop, "constraint",
                             pb_heater_constraint_str(heater_telemetry.constraint));

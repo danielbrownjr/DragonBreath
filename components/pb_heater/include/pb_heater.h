@@ -56,9 +56,9 @@ typedef struct {
     bool effective_external;
     bool process_variable_valid;
     float process_variable_c;
-    // PID P+I+D request before the active approach ceiling and downstream
-    // thermal governors, normalized to the physical 0..1 actuator range.
-    float requested_duty;
+    // Authoritative PID duty after approach/target policy, before downstream
+    // thermal governors (0..1). Not demand independent of product limits.
+    float pid_duty;
     // PID output after DragonBreath's active approach limit (normalized 0..1).
     // This is the request admitted to the SSR window after thermal governors.
     float commanded_duty;

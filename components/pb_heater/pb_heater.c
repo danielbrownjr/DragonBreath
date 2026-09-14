@@ -41,7 +41,7 @@ static pb_heater_pid_state_t s_pid; // control-task only — shared dc_pid state
 static bool        s_effective_external; // guarded by s_mux; latest active PID source
 static bool        s_process_variable_valid; // guarded by s_mux
 static float       s_process_variable_c; // guarded by s_mux; value supplied to dc_pid
-static float       s_requested_duty; // guarded by s_mux; pre-clamp PID request
+static float       s_pid_duty; // guarded by s_mux; post-approach/target PID output
 static float       s_commanded_duty; // guarded by s_mux; duty admitted after all governors
 static float       s_approach_limit; // guarded by s_mux; product-owned active duty ceiling
 static pb_heater_constraint_t s_constraint; // guarded by s_mux
@@ -107,7 +107,7 @@ static void ssr_set(bool on)        // control-task context only
 static void telemetry_set(bool effective_external,
                           bool process_variable_valid,
                           float process_variable_c,
-                          float requested_duty,
+                          float pid_duty,
                           float commanded_duty,
                           float approach_limit,
                           pb_heater_constraint_t constraint)
@@ -116,7 +116,7 @@ static void telemetry_set(bool effective_external,
     s_effective_external = effective_external;
     s_process_variable_valid = process_variable_valid;
     s_process_variable_c = process_variable_c;
-    s_requested_duty = requested_duty;
+    s_pid_duty = pid_duty;
     s_commanded_duty = commanded_duty;
     s_approach_limit = approach_limit;
     s_constraint = constraint;
@@ -131,7 +131,7 @@ void pb_heater_get_telemetry(pb_heater_telemetry_t *out)
     out->effective_external = s_effective_external;
     out->process_variable_valid = s_process_variable_valid;
     out->process_variable_c = s_process_variable_c;
-    out->requested_duty = s_requested_duty;
+    out->pid_duty = s_pid_duty;
     out->commanded_duty = s_commanded_duty;
     out->approach_limit = s_approach_limit;
     out->constraint = s_constraint;
@@ -180,7 +180,7 @@ esp_err_t pb_heater_init(void)
     s_effective_external = false;
     s_process_variable_valid = false;
     s_process_variable_c = 0.0f;
-    s_requested_duty = 0.0f;
+    s_pid_duty = 0.0f;
     s_commanded_duty = 0.0f;
     s_approach_limit = 0.0f;
     s_constraint = PB_HEATER_CONSTRAINT_OFF;
@@ -440,7 +440,7 @@ static void do_latch(pb_fault_reason_t code, const char *reason,
     s_effective_external = false;
     s_process_variable_valid = false;
     s_process_variable_c = 0.0f;
-    s_requested_duty = 0.0f;
+    s_pid_duty = 0.0f;
     s_commanded_duty = 0.0f;
     s_approach_limit = 0.0f;
     s_constraint = PB_HEATER_CONSTRAINT_SAFETY_INHIBITED;
@@ -699,10 +699,8 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     // authoritative regardless of PID demand.
     bool safety_inhibited = s_local_cut || s_fb_cut;
     float duty = 0.0f;
-    float requested_duty = 0.0f;
-    bool pid_ok = pb_heater_pid_step_with_request(
-        &s_pid, target, regulation_c, !safety_inhibited, &duty,
-        &requested_duty);
+    bool pid_ok = pb_heater_pid_step(
+        &s_pid, target, regulation_c, !safety_inhibited, &duty);
     if (!pid_ok) {
         ESP_LOGE(TAG, "PID step rejected; forcing SSR off");
         duty = 0.0f;
@@ -725,7 +723,7 @@ void pb_heater_tick(void)          // control-task context; sole writer of s_on
     // thermal governors. Keep the underlying PID state private; diagnostics
     // should report the command the actuator was allowed to receive.
     float commanded_duty = safety_inhibited ? 0.0f : duty;
-    telemetry_set(external_regulation, true, regulation_c, requested_duty,
+    telemetry_set(external_regulation, true, regulation_c, duty,
                   commanded_duty, approach_limit, constraint);
 
     // Step 5 — time-proportion normalized duty through a slow 10 s window. This is

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "db_portal.h"
 #include "db_portal_config.h"
+#include "db_portal_assets.h"
 
 #include "db_klipper_mqtt.h"
 #include "dc_bambu.h"
@@ -68,31 +69,22 @@ extern const unsigned char control_diagnostics_js_end[] asm("_binary_control_dia
 // /diag is device-specific (chamber/element/PTC/SSR/fault chain) so it stays here,
 // rendering DragonBreath's own /api/v2 telemetry as a small embedded product asset.
 
-static esp_err_t embedded_text(httpd_req_t *req, const char *content_type,
-                               const unsigned char *start,
-                               const unsigned char *end)
-{
-    httpd_resp_set_type(req, content_type);
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, (const char *)start, (size_t)(end - start));
-}
-
 static esp_err_t diag_page(httpd_req_t *req)
 {
-    return embedded_text(req, "text/html; charset=utf-8",
+    return db_portal_send_text(req, "text/html; charset=utf-8", DB_PORTAL_HTML_CACHE,
                          diagnostics_html_start, diagnostics_html_end);
 }
 
 static esp_err_t consequential_toggle_js_get(httpd_req_t *req)
 {
-    return embedded_text(req, "text/javascript; charset=utf-8",
+    return db_portal_send_text(req, "text/javascript; charset=utf-8", DB_PORTAL_JS_CACHE,
                          consequential_toggle_js_start,
                          consequential_toggle_js_end);
 }
 
 static esp_err_t control_diagnostics_js_get(httpd_req_t *req)
 {
-    return embedded_text(req, "text/javascript; charset=utf-8",
+    return db_portal_send_text(req, "text/javascript; charset=utf-8", DB_PORTAL_JS_CACHE,
                          control_diagnostics_js_start,
                          control_diagnostics_js_end);
 }

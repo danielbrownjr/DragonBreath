@@ -103,15 +103,15 @@ for field in printer_chamber_temperature_c printer_chamber_age_ms; do
 done
 
 # Controller-agnostic HMI contract: the product publishes the process variable,
-# normalized request/allowed output and one derived constraint. The sparse /diag
+# post-approach PID/allowed output and one derived constraint. The sparse /diag
 # page consumes those fields rather than exposing raw controller internals.
-for field in controller preferred_source effective_source process_variable_c controller_request allowed_output constraint; do
+for field in controller preferred_source effective_source process_variable_c pid_output allowed_output constraint; do
     grep -q "\"$field\"" "$httpd" || {
         echo "state document is missing control.loop.$field" >&2
         exit 1
     }
 done
-for field in control-source target request allowed delivered constraint safety; do
+for field in control-source target pid-output allowed delivered constraint safety; do
     grep -q "id=\"$field\"" "$diagnostics" || {
         echo "diagnostics instrument panel is missing $field" >&2
         exit 1
@@ -137,8 +137,8 @@ for field in commanded_duty approach_limit constraint; do
         exit 1
     }
 done
-grep -q 'heater_telemetry.requested_duty' "$httpd" || {
-    echo "control.loop.controller_request is not sourced from heater telemetry" >&2
+grep -q 'heater_telemetry.pid_duty' "$httpd" || {
+    echo "control.loop.pid_output is not sourced from heater telemetry" >&2
     exit 1
 }
 

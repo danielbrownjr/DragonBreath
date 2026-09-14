@@ -104,7 +104,7 @@ The complete snapshot, not locally remembered intent, is the source of truth:
       "preferred_source": "local_ntc",
       "effective_source": "local_ntc",
       "process_variable_c": 44.8,
-      "controller_request": 0.700,
+      "pid_output": 0.700,
       "allowed_output": 0.700,
       "constraint": "approach_limit"
     },
@@ -135,11 +135,15 @@ for the current control error. `heater.constraint` is one of `off`, `none`,
 reports the persisted chamber-source preference, while `effective_source` and
 `process_variable_c` report the source and temperature actually supplied to
 `dc_pid`; they are `unavailable`/`null` while the controller is not running.
-`controller_request` is the normalized PID P+I+D request before the active
-approach ceiling and local thermal governors. `allowed_output` is the request
-after those limits and is therefore identical to
-`heater.commanded_duty`. `heater.output` remains the instantaneous SSR state.
+`pid_output` is the authoritative normalized duty after PID approach limiting
+and heater-only target policy, before downstream thermal governors. Its integral
+and anti-windup history already reflect product limits; it is **not** an
+unconstrained controller demand. This replaces the prototype's misleading
+`controller_request` field. `allowed_output` is the duty after thermal governors
+and is identical to `heater.commanded_duty`. `heater.output` remains the
+instantaneous SSR command, not electrical/current feedback.
 All fields are observational and have no effect on control or safety decisions.
+See [diagnostics review notes](control-diagnostics.md) for the demand boundary.
 
 Temperatures are JSON `null` when their sensor status is not `ok`. Public
 state and SSE snapshots intentionally omit the raw lease ID; only the
