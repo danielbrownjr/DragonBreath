@@ -104,6 +104,7 @@ static void add_num1(cJSON *o, const char *key, float v)
 
 static void add_num3(cJSON *o, const char *key, float v)
 {
+    if (!isfinite(v)) { cJSON_AddNullToObject(o, key); return; }
     char b[20];
     snprintf(b, sizeof b, "%.3f", (double)v);
     cJSON_AddRawToObject(o, key, b);

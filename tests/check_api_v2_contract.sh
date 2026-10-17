@@ -4,6 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 httpd="$root/components/pb_httpd/pb_httpd.c"
 adapter="$root/components/db_portal/db_portal.c"
+assets_header="$root/components/db_portal/include/db_portal_assets.h"
 core_portal="$root/managed_components/dc_portal/dc_portal.c"
 diagnostics="$root/components/db_portal/www/diagnostics.html"
 consequential_toggle="$root/components/db_portal/www/consequential-toggle.js"
@@ -128,6 +129,23 @@ grep -q '"/ui/control-diagnostics.js"' "$adapter"
 grep -q 'DBControlDiagnostics.view' "$diagnostics"
 grep -q 'DBControlDiagnostics.connect' "$diagnostics"
 grep -q "value === 'pid'" "$control_diagnostics"
+
+# Product-local JS must revalidate against the firmware build so a no-store
+# diagnostics page cannot execute stale pre-OTA JavaScript.
+grep -q '#define DB_PORTAL_JS_CACHE "no-cache"' "$assets_header"
+grep -q '"If-None-Match"' "$adapter"
+grep -q '"ETag"' "$adapter"
+
+# /diag must recover from a configured control token just like the shared SPA.
+grep -q 'r.status===403&&!retried' "$diagnostics"
+grep -q "prompt('DragonBreath control token')" "$diagnostics"
+
+# Canvas colors must still follow the rendered page theme when matchMedia is
+# unavailable.
+grep -q 'window.getComputedStyle' "$diagnostics"
+
+# Three-decimal API values must never emit NaN/Inf as invalid raw JSON.
+sed -n '/static void add_num3/,/^}/p' "$httpd" | grep -q 'isfinite'
 
 # Product-owned heater diagnostics must make the PID command, approach policy,
 # and dominant constraint observable without moving actuator policy into core.

@@ -43,7 +43,7 @@ int main(void)
                                raw, raw + sizeof(raw)) == ESP_OK);
     assert(sent_length == 2 && memcmp(sent_body, "js", 2) == 0);
     assert(strcmp(sent_type, "text/javascript") == 0);
-    assert(strcmp(sent_cache, "public, max-age=60, must-revalidate") == 0);
+    assert(strcmp(sent_cache, "no-cache") == 0);
     assert(db_portal_send_text(&req, "text/html", DB_PORTAL_HTML_CACHE,
                                empty, empty + sizeof(empty)) == ESP_OK);
     assert(sent_length == 0);

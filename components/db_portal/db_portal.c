@@ -69,6 +69,34 @@ extern const unsigned char control_diagnostics_js_end[] asm("_binary_control_dia
 // /diag is device-specific (chamber/element/PTC/SSR/fault chain) so it stays here,
 // rendering DragonBreath's own /api/v2 telemetry as a small embedded product asset.
 
+// Product-local JS URLs are stable across OTA. Revalidate them against a short
+// build ETag so a fresh no-store diagnostics page cannot execute pre-OTA assets.
+static esp_err_t versioned_text_asset(httpd_req_t *req, const char *content_type,
+                                      const unsigned char *start,
+                                      const unsigned char *end)
+{
+    char etag[20] = "\"0000000000000000\"";
+    const esp_app_desc_t *desc = esp_app_get_description();
+    if (desc) {
+        for (int i = 0; i < 8; i++)
+            snprintf(etag + 1 + i * 2, 3, "%02x", desc->app_elf_sha256[i]);
+        etag[17] = '"';
+    }
+
+    char inm[24] = {0};
+    if (httpd_req_get_hdr_value_str(req, "If-None-Match", inm, sizeof(inm)) == ESP_OK
+        && strcmp(inm, etag) == 0) {
+        httpd_resp_set_status(req, "304 Not Modified");
+        httpd_resp_set_hdr(req, "ETag", etag);
+        httpd_resp_set_hdr(req, "Cache-Control", DB_PORTAL_JS_CACHE);
+        return httpd_resp_send(req, NULL, 0);
+    }
+
+    esp_err_t err = httpd_resp_set_hdr(req, "ETag", etag);
+    if (err != ESP_OK) return err;
+    return db_portal_send_text(req, content_type, DB_PORTAL_JS_CACHE, start, end);
+}
+
 static esp_err_t diag_page(httpd_req_t *req)
 {
     return db_portal_send_text(req, "text/html; charset=utf-8", DB_PORTAL_HTML_CACHE,
@@ -77,16 +105,16 @@ static esp_err_t diag_page(httpd_req_t *req)
 
 static esp_err_t consequential_toggle_js_get(httpd_req_t *req)
 {
-    return db_portal_send_text(req, "text/javascript; charset=utf-8", DB_PORTAL_JS_CACHE,
-                         consequential_toggle_js_start,
-                         consequential_toggle_js_end);
+    return versioned_text_asset(req, "text/javascript; charset=utf-8",
+                                consequential_toggle_js_start,
+                                consequential_toggle_js_end);
 }
 
 static esp_err_t control_diagnostics_js_get(httpd_req_t *req)
 {
-    return db_portal_send_text(req, "text/javascript; charset=utf-8", DB_PORTAL_JS_CACHE,
-                         control_diagnostics_js_start,
-                         control_diagnostics_js_end);
+    return versioned_text_asset(req, "text/javascript; charset=utf-8",
+                                control_diagnostics_js_start,
+                                control_diagnostics_js_end);
 }
 
 static cJSON *field(const char *key, const char *label, const char *type,
