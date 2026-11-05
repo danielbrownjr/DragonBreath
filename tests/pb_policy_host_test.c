@@ -1309,6 +1309,39 @@ static void test_auto_source_zone_overrides_bed_threshold(void)
     CHECK(snapshot().effective_target_c == 70.0f);
 }
 
+// Regression for Prusa AUTO: a configured bed-follow target (50 C) must not
+// silently take over when material is missing, unknown, or the source drops.
+// The app passes the resolved filament zone as src_target_c; zero means no zone.
+static void test_prusa_auto_missing_zone_fails_idle(void)
+{
+    reset_fixture();
+    CHECK(pb_policy_set_auto(50.0f, 60.0f, DB_SOURCE_WEB, 1) == PB_POLICY_OK);
+
+    // Even with a hot bed setpoint, missing material must not select 50 C.
+    pb_policy_set_env(65.0f, 100.0f, true, 0.0f, NAN);
+    pb_policy_tick();
+    CHECK(!snapshot().auto_engaged);
+    CHECK(snapshot().effective_target_c == 0.0f);
+
+    // Resolved PP zone at 60 C, not the legacy Auto-card target at 50 C.
+    pb_policy_set_env(65.0f, 100.0f, true, 60.0f, NAN);
+    pb_policy_tick();
+    CHECK(snapshot().auto_engaged);
+    CHECK(snapshot().effective_target_c == 60.0f);
+
+    // Material disappears while the printer remains online: fail idle.
+    pb_policy_set_env(65.0f, 100.0f, true, 0.0f, NAN);
+    pb_policy_tick();
+    CHECK(!snapshot().auto_engaged);
+    CHECK(snapshot().effective_target_c == 0.0f);
+
+    // A disconnected source must not heat even if its old zone is supplied.
+    pb_policy_set_env(65.0f, 100.0f, false, 60.0f, NAN);
+    pb_policy_tick();
+    CHECK(!snapshot().auto_engaged);
+    CHECK(snapshot().effective_target_c == 0.0f);
+}
+
 // #72: a one-off manual run started while AUTO returns to AUTO "waiting" when it
 // ends as a run (local timer completion OR the on-device On-button toggle-off),
 // instead of dropping to idle.
@@ -1425,6 +1458,7 @@ int main(void)
     test_auto_requires_live_source();
     test_klipper_helper_suppresses_auto();
     test_auto_source_zone_overrides_bed_threshold();
+    test_prusa_auto_missing_zone_fails_idle();
     test_external_chamber_control_forwarding();
     test_auto_filtration_band_fan_only_not_cooldown();
     test_filtration_band_runs_outside_auto();
